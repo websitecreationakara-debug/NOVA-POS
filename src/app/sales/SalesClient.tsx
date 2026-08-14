@@ -15,15 +15,17 @@ export default function SalesClient({
   currentBrand,
   categories,
   products,
+  initialSearch,
 }: {
   brands: Brand[];
   currentBrand: Brand;
   categories: Category[];
   products: ProductWithStock[];
+  initialSearch: string;
 }) {
   const router = useRouter();
   const [activeCategoryId, setActiveCategoryId] = useState<string | "all">("all");
-  const [search, setSearch] = useState("");
+  const [search, setSearch] = useState(initialSearch);
   const [cart, setCart] = useState<CartLine[]>([]);
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("cash");
   const [paymentReference, setPaymentReference] = useState("");
@@ -133,7 +135,7 @@ export default function SalesClient({
   }
 
   return (
-    <div className="flex h-screen flex-col">
+    <div className="flex h-full flex-col">
       <header className="flex items-center gap-3 border-b border-black/[.08] px-6 py-3 dark:border-white/[.145]">
         <select
           className="rounded border border-black/[.15] bg-transparent px-3 py-1.5 text-sm dark:border-white/[.2]"

@@ -1,12 +1,4 @@
-import Link from "next/link";
-import {
-  AlertTriangle,
-  Calculator,
-  DollarSign,
-  Megaphone,
-  Package,
-  ShoppingCart,
-} from "lucide-react";
+import { AlertTriangle, DollarSign, Package, ShoppingCart } from "lucide-react";
 import { getDashboardStats } from "@/lib/supabase/queries";
 
 export const dynamic = "force-dynamic";
@@ -14,13 +6,6 @@ export const dynamic = "force-dynamic";
 function formatMoney(n: number) {
   return `$${n.toFixed(2)}`;
 }
-
-const roles = [
-  { href: "/sales", label: "Sales", description: "Checkout & orders", icon: ShoppingCart },
-  { href: "/stock", label: "Stock", description: "Stock levels & adjustments", icon: Package },
-  { href: "/accountance", label: "Accountance", description: "Reconciliation & reports", icon: Calculator },
-  { href: "/marketing", label: "Marketing", description: "Promotions & customers", icon: Megaphone },
-];
 
 export default async function Home() {
   const stats = await getDashboardStats();
@@ -134,22 +119,6 @@ export default async function Home() {
           </tbody>
         </table>
       </section>
-
-      <div className="grid w-full grid-cols-2 gap-4 lg:grid-cols-4">
-        {roles.map((role) => (
-          <Link
-            key={role.href}
-            href={role.href}
-            className="rounded-2xl border border-border bg-card p-5 transition-colors hover:bg-muted"
-          >
-            <div className="mb-4 grid size-10 place-items-center rounded-xl bg-accent-bg text-brand">
-              <role.icon className="size-5" />
-            </div>
-            <div className="font-display font-bold">{role.label}</div>
-            <div className="mt-1 text-sm text-muted-foreground">{role.description}</div>
-          </Link>
-        ))}
-      </div>
     </main>
   );
 }

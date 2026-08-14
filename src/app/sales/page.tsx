@@ -4,9 +4,9 @@ import SalesClient from "./SalesClient";
 export default async function SalesPage({
   searchParams,
 }: {
-  searchParams: Promise<{ brand?: string }>;
+  searchParams: Promise<{ brand?: string; q?: string }>;
 }) {
-  const { brand: brandIdParam } = await searchParams;
+  const { brand: brandIdParam, q } = await searchParams;
   const brands = await getBrands();
 
   if (brands.length === 0) {
@@ -23,10 +23,12 @@ export default async function SalesPage({
 
   return (
     <SalesClient
+      key={q ?? ""}
       brands={brands}
       currentBrand={currentBrand}
       categories={categories}
       products={products}
+      initialSearch={q ?? ""}
     />
   );
 }
