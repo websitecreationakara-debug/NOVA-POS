@@ -11,7 +11,7 @@ const ROLE_HOME: Record<StaffRole, string> = {
 };
 
 const ROLE_ALLOWED_PREFIXES: Record<StaffRole, string[]> = {
-  admin: ["/", "/sales", "/stock", "/accountance", "/marketing", "/invoice"],
+  admin: ["/", "/sales", "/stock", "/accountance", "/marketing", "/invoice", "/users"],
   sales: ["/sales", "/invoice"],
   stock: ["/stock"],
   accountance: ["/accountance", "/invoice"],
