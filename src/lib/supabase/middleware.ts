@@ -47,8 +47,10 @@ export async function updateSession(request: NextRequest) {
 
   const { pathname } = request.nextUrl;
 
-  // The OAuth code exchange happens here before any session cookie exists --
-  // let it through unconditionally, it handles its own redirect afterward.
+  // This client-side page reads the recovery tokens out of the URL hash
+  // fragment (never sent to the server) and calls setSession() itself --
+  // there's no cookie session yet when it first loads, so let it through
+  // unconditionally; it redirects to /reset-password once setSession() succeeds.
   if (pathname.startsWith("/auth/callback")) {
     return response;
   }
