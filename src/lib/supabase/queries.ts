@@ -1,5 +1,5 @@
 import { supabaseAdmin } from "@/lib/supabase/server";
-import type { Brand, Category, Product } from "@/types/database";
+import type { Brand, CashReconciliation, Category, Expense, Order, Product } from "@/types/database";
 
 export type ProductWithStock = Product & {
   stock_quantity: number;
@@ -50,4 +50,66 @@ export async function getCatalogForBrand(brandId: string): Promise<{
   });
 
   return { categories: categories ?? [], products: productsWithStock };
+}
+
+export type DailySalesSummary = {
+  cashTotal: number;
+  bankQrTotal: number;
+  orderCount: number;
+  total: number;
+};
+
+export async function getDailySales(
+  brandId: string,
+  date: string
+): Promise<{ summary: DailySalesSummary; orders: Order[] }> {
+  const { data, error } = await supabaseAdmin
+    .from("orders")
+    .select("*")
+    .eq("brand_id", brandId)
+    .eq("status", "paid")
+    .gte("paid_at", `${date}T00:00:00.000Z`)
+    .lte("paid_at", `${date}T23:59:59.999Z`)
+    .order("paid_at", { ascending: false });
+
+  if (error) throw error;
+  const orders = data ?? [];
+  const cashTotal = orders
+    .filter((o) => o.payment_method === "cash")
+    .reduce((sum, o) => sum + o.total, 0);
+  const bankQrTotal = orders
+    .filter((o) => o.payment_method === "bank_qr")
+    .reduce((sum, o) => sum + o.total, 0);
+
+  return {
+    summary: { cashTotal, bankQrTotal, orderCount: orders.length, total: cashTotal + bankQrTotal },
+    orders,
+  };
+}
+
+export async function getReconciliation(
+  brandId: string,
+  date: string
+): Promise<CashReconciliation | null> {
+  const { data, error } = await supabaseAdmin
+    .from("cash_reconciliations")
+    .select("*")
+    .eq("brand_id", brandId)
+    .eq("reconciliation_date", date)
+    .maybeSingle();
+
+  if (error) throw error;
+  return data;
+}
+
+export async function getExpensesForDate(brandId: string, date: string): Promise<Expense[]> {
+  const { data, error } = await supabaseAdmin
+    .from("expenses")
+    .select("*")
+    .eq("brand_id", brandId)
+    .eq("expense_date", date)
+    .order("created_at", { ascending: false });
+
+  if (error) throw error;
+  return data ?? [];
 }

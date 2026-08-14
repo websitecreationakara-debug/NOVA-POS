@@ -104,6 +104,30 @@ export type OrderItem = {
   line_total: number;
 };
 
+export type Expense = {
+  id: string;
+  brand_id: string;
+  description: string;
+  amount: number;
+  category: string | null;
+  expense_date: string;
+  created_by: string | null;
+  created_at: string;
+};
+
+export type CashReconciliation = {
+  id: string;
+  brand_id: string;
+  reconciliation_date: string;
+  expected_cash: number;
+  expected_bank_qr: number;
+  counted_cash: number;
+  variance: number;
+  notes: string | null;
+  created_by: string | null;
+  created_at: string;
+};
+
 type Table<Row, Insert, Relationships extends readonly unknown[] = []> = {
   Row: Row;
   Insert: Insert;
@@ -151,6 +175,14 @@ export type Database = {
       >;
       orders: Table<Order, Omit<Order, "id" | "created_at"> & Partial<Pick<Order, "id">>>;
       order_items: Table<OrderItem, Omit<OrderItem, "id"> & Partial<Pick<OrderItem, "id">>>;
+      expenses: Table<
+        Expense,
+        Omit<Expense, "id" | "created_at"> & Partial<Pick<Expense, "id" | "expense_date">>
+      >;
+      cash_reconciliations: Table<
+        CashReconciliation,
+        Omit<CashReconciliation, "id" | "created_at"> & Partial<Pick<CashReconciliation, "id">>
+      >;
     };
     Views: Record<string, never>;
     Functions: {
