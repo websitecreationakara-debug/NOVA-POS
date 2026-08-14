@@ -5,7 +5,9 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type { Brand, Category, PaymentMethod } from "@/types/database";
 import type { ProductWithStock } from "@/lib/supabase/queries";
-import { chargeOrder, type CartLine, type ChargeResult } from "./actions";
+import { chargeOrder, findCustomerByPhone, type CartLine, type ChargeResult } from "./actions";
+
+type CustomerLookup = "idle" | "checking" | "existing" | "new";
 
 function formatMoney(n: number) {
   return `$${n.toFixed(2)}`;
@@ -32,9 +34,11 @@ export default function SalesClient({
   const [paymentReference, setPaymentReference] = useState("");
   const [customerName, setCustomerName] = useState("");
   const [customerPhone, setCustomerPhone] = useState("");
+  const [customerLookup, setCustomerLookup] = useState<CustomerLookup>("idle");
   const [receipt, setReceipt] = useState<ChargeResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isCharging, startCharging] = useTransition();
+  const [, startLookup] = useTransition();
 
   const visibleProducts = useMemo(() => {
     let list =
@@ -83,8 +87,39 @@ export default function SalesClient({
     router.push(`/sales?brand=${brandId}`);
   }
 
+  function handlePhoneBlur() {
+    const phone = customerPhone.trim();
+    if (!phone) {
+      setCustomerLookup("idle");
+      return;
+    }
+    setCustomerLookup("checking");
+    startLookup(async () => {
+      try {
+        const match = await findCustomerByPhone(phone);
+        if (match) {
+          setCustomerLookup("existing");
+          setCustomerName(match.name);
+        } else {
+          setCustomerLookup("new");
+        }
+      } catch {
+        setCustomerLookup("idle");
+      }
+    });
+  }
+
   function handleCharge() {
     setError(null);
+    const phone = customerPhone.trim();
+    if (!phone) {
+      setError("Customer phone number is required");
+      return;
+    }
+    if (customerLookup === "new" && !customerName.trim()) {
+      setError("Customer name is required to add a new customer");
+      return;
+    }
     startCharging(async () => {
       try {
         const result = await chargeOrder({
@@ -92,14 +127,15 @@ export default function SalesClient({
           lines: cart,
           paymentMethod,
           paymentReference: paymentReference || undefined,
-          customerName: customerName || undefined,
-          customerPhone: customerPhone || undefined,
+          customerName,
+          customerPhone: phone,
         });
         setReceipt(result);
         setCart([]);
         setPaymentReference("");
         setCustomerName("");
         setCustomerPhone("");
+        setCustomerLookup("idle");
         router.refresh(); // pick up decremented stock counts for the next sale
       } catch (e) {
         setError(e instanceof Error ? e.message : "Charge failed");
@@ -286,18 +322,33 @@ export default function SalesClient({
 
             <div className="mt-4 flex gap-2">
               <input
+                type="tel"
+                required
                 className="flex-1 rounded border border-black/[.15] bg-transparent px-3 py-1.5 text-sm dark:border-white/[.2]"
-                placeholder="Customer name (optional)"
-                value={customerName}
-                onChange={(e) => setCustomerName(e.target.value)}
+                placeholder="Phone number *"
+                value={customerPhone}
+                onChange={(e) => {
+                  setCustomerPhone(e.target.value);
+                  setCustomerLookup("idle");
+                }}
+                onBlur={handlePhoneBlur}
               />
               <input
                 className="flex-1 rounded border border-black/[.15] bg-transparent px-3 py-1.5 text-sm dark:border-white/[.2]"
-                placeholder="Phone (optional)"
-                value={customerPhone}
-                onChange={(e) => setCustomerPhone(e.target.value)}
+                placeholder={customerLookup === "existing" ? "Customer name" : "Customer name *"}
+                value={customerName}
+                onChange={(e) => setCustomerName(e.target.value)}
               />
             </div>
+            {customerLookup === "checking" && (
+              <p className="mt-1 text-xs text-zinc-500">Looking up customer…</p>
+            )}
+            {customerLookup === "existing" && (
+              <p className="mt-1 text-xs text-green-600">Existing customer — reusing their record.</p>
+            )}
+            {customerLookup === "new" && (
+              <p className="mt-1 text-xs text-amber-500">No customer with this phone yet — a new one will be added.</p>
+            )}
 
             <div className="mt-2 flex gap-2">
               <button
@@ -334,7 +385,7 @@ export default function SalesClient({
             {error && <p className="mt-2 text-sm text-red-500">{error}</p>}
 
             <button
-              disabled={cart.length === 0 || isCharging}
+              disabled={cart.length === 0 || isCharging || !customerPhone.trim()}
               onClick={handleCharge}
               className="mt-4 w-full rounded-full bg-green-600 py-2.5 font-medium text-white disabled:opacity-40"
             >

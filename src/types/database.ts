@@ -46,8 +46,24 @@ export type Customer = {
   id: string;
   name: string;
   phone: string | null;
+  second_phone: string | null;
   email: string | null;
   notes: string | null;
+  photo_url: string | null;
+  address: string | null;
+  customer_since: string | null;
+  first_name: string | null;
+  last_name: string | null;
+  page_uid: string | null;
+  source: string | null;
+  label: string | null;
+  capital: string | null;
+  state: string | null;
+  dob: string | null;
+  yob: number | null;
+  age: number | null;
+  gender: string | null;
+  nationality: string | null;
   created_at: string;
 };
 
@@ -154,7 +170,9 @@ export type Database = {
       >;
       customers: Table<
         Customer,
-        Omit<Customer, "id" | "created_at"> & Partial<Pick<Customer, "id">>
+        Partial<Omit<Customer, "id" | "created_at" | "name">> &
+          Pick<Customer, "name"> &
+          Partial<Pick<Customer, "id">>
       >;
       stock_levels: Table<
         StockLevel,

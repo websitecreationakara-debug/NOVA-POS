@@ -18,13 +18,53 @@ export interface ChargeResult {
   lines: CartLine[];
 }
 
+// This is an online-sale POS, not a mart checkout -- every order belongs to
+// an identifiable customer, and phone number is how staff recognize a
+// returning one (customers.phone has a unique index, see migration 0011).
+export async function findCustomerByPhone(phone: string): Promise<{ name: string } | null> {
+  const trimmed = phone.trim();
+  if (!trimmed) return null;
+
+  const { data, error } = await supabaseAdmin
+    .from("customers")
+    .select("name")
+    .eq("phone", trimmed)
+    .maybeSingle();
+  if (error) throw error;
+
+  return data;
+}
+
+async function getOrCreateCustomerId(phone: string, name: string): Promise<string> {
+  const { data: existing, error: findError } = await supabaseAdmin
+    .from("customers")
+    .select("id")
+    .eq("phone", phone)
+    .maybeSingle();
+  if (findError) throw findError;
+  if (existing) return existing.id;
+
+  if (!name) {
+    throw new Error("Customer name is required to add a new customer");
+  }
+
+  const { data: created, error: insertError } = await supabaseAdmin
+    .from("customers")
+    .insert({ name, phone })
+    .select("id")
+    .single();
+  if (insertError) throw insertError;
+
+  return created.id;
+}
+
 export async function chargeOrder(input: {
   brandId: string;
   lines: CartLine[];
   paymentMethod: PaymentMethod;
   paymentReference?: string;
-  customerName?: string;
-  customerPhone?: string;
+  customerName: string;
+  customerPhone: string;
 }): Promise<ChargeResult> {
   const { brandId, lines, paymentMethod, paymentReference, customerName, customerPhone } = input;
 
@@ -32,14 +72,21 @@ export async function chargeOrder(input: {
     throw new Error("Cart is empty");
   }
 
+  const phone = customerPhone.trim();
+  const name = customerName.trim();
+  if (!phone) {
+    throw new Error("Customer phone number is required");
+  }
+
   const total = lines.reduce((sum, l) => sum + l.unitPrice * l.quantity, 0);
   const user = await getSessionUser();
+  const customerId = await getOrCreateCustomerId(phone, name);
 
   // charge_order() runs the order insert, order_items insert, and stock
   // decrement as one DB transaction — see supabase/migrations/0003.
   const { data: orderId, error } = await supabaseAdmin.rpc("charge_order", {
     p_brand_id: brandId,
-    p_customer_id: null,
+    p_customer_id: customerId,
     p_created_by: user?.id ?? null,
     p_payment_method: paymentMethod,
     p_payment_reference: paymentReference || null,
@@ -48,8 +95,8 @@ export async function chargeOrder(input: {
       quantity: l.quantity,
       unitPrice: l.unitPrice,
     })),
-    p_customer_name: customerName || null,
-    p_customer_phone: customerPhone || null,
+    p_customer_name: name || null,
+    p_customer_phone: phone,
   });
 
   if (error || !orderId) {
