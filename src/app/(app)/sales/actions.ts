@@ -13,6 +13,7 @@ export interface CartLine {
 
 export interface ChargeResult {
   orderId: string;
+  invoiceNumber: string | null;
   total: number;
   lines: CartLine[];
 }
@@ -51,5 +52,11 @@ export async function chargeOrder(input: {
     throw error ?? new Error("Failed to create order");
   }
 
-  return { orderId, total, lines };
+  const { data: order } = await supabaseAdmin
+    .from("orders")
+    .select("invoice_number")
+    .eq("id", orderId)
+    .single();
+
+  return { orderId, invoiceNumber: order?.invoice_number ?? null, total, lines };
 }

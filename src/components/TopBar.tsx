@@ -16,7 +16,7 @@ export default function TopBar({ fullName, role }: { fullName: string; role: str
   }
 
   return (
-    <header className="flex shrink-0 items-center gap-4 border-b border-border bg-card px-6 py-3">
+    <header className="print:hidden flex shrink-0 items-center gap-4 border-b border-border bg-card px-6 py-3">
       <form onSubmit={handleSubmit} className="max-w-md flex-1">
         <div className="relative">
           <Search className="absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />

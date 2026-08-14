@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState, useTransition } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type { Brand, Category, PaymentMethod } from "@/types/database";
 import type { ProductWithStock } from "@/lib/supabase/queries";
@@ -108,7 +109,7 @@ export default function SalesClient({
             ✓
           </div>
           <h1 className="text-xl font-semibold">Sale complete</h1>
-          <p className="text-zinc-500">Order #{receipt.orderId.slice(0, 8)}</p>
+          <p className="text-zinc-500">{receipt.invoiceNumber ?? `Order #${receipt.orderId.slice(0, 8)}`}</p>
         </div>
         <div className="divide-y divide-black/[.08] rounded-lg border border-black/[.08] dark:divide-white/[.145] dark:border-white/[.145]">
           {receipt.lines.map((l) => (
@@ -124,8 +125,15 @@ export default function SalesClient({
           <span>Total</span>
           <span>{formatMoney(receipt.total)}</span>
         </div>
+        <Link
+          href={`/invoice/${receipt.orderId}`}
+          target="_blank"
+          className="rounded-full border border-black/[.15] px-6 py-2 text-center dark:border-white/[.2]"
+        >
+          View / print invoice
+        </Link>
         <button
-          className="mt-4 rounded-full bg-black px-6 py-2 text-white dark:bg-white dark:text-black"
+          className="rounded-full bg-black px-6 py-2 text-white dark:bg-white dark:text-black"
           onClick={() => setReceipt(null)}
         >
           New sale

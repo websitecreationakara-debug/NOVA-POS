@@ -17,7 +17,7 @@ export default function Sidebar({ role }: { role: string }) {
   const items = navItems.filter((item) => item.roles.includes(role));
 
   return (
-    <aside className="flex min-h-screen w-64 shrink-0 flex-col gap-8 border-r border-border bg-card p-6">
+    <aside className="print:hidden flex min-h-screen w-64 shrink-0 flex-col gap-8 border-r border-border bg-card p-6">
       <Link href="/" className="font-display text-lg font-bold">
         NOVA POS
       </Link>

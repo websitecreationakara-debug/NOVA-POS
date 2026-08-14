@@ -93,6 +93,7 @@ export type Order = {
   created_by: string | null;
   created_at: string;
   paid_at: string | null;
+  invoice_number: string | null;
 };
 
 export type OrderItem = {
@@ -186,7 +187,19 @@ export type Database = {
           },
         ]
       >;
-      order_items: Table<OrderItem, Omit<OrderItem, "id"> & Partial<Pick<OrderItem, "id">>>;
+      order_items: Table<
+        OrderItem,
+        Omit<OrderItem, "id"> & Partial<Pick<OrderItem, "id">>,
+        [
+          {
+            foreignKeyName: "order_items_product_id_fkey";
+            columns: ["product_id"];
+            isOneToOne: false;
+            referencedRelation: "products";
+            referencedColumns: ["id"];
+          },
+        ]
+      >;
       expenses: Table<
         Expense,
         Omit<Expense, "id" | "created_at"> & Partial<Pick<Expense, "id" | "expense_date">>

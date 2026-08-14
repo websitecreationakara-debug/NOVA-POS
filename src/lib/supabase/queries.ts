@@ -189,6 +189,50 @@ export async function getDashboardStats(): Promise<DashboardStats> {
   };
 }
 
+export type InvoiceData = {
+  order: Order;
+  brandName: string;
+  items: { name: string; unit: string; quantity: number; unitPrice: number; lineTotal: number }[];
+};
+
+export async function getInvoice(orderId: string): Promise<InvoiceData | null> {
+  const { data: order, error: orderError } = await supabaseAdmin
+    .from("orders")
+    .select("*, brands(name)")
+    .eq("id", orderId)
+    .maybeSingle();
+
+  if (orderError) throw orderError;
+  if (!order) return null;
+
+  const { data: items, error: itemsError } = await supabaseAdmin
+    .from("order_items")
+    .select("quantity, unit_price, line_total, products(name, unit)")
+    .eq("order_id", orderId);
+
+  if (itemsError) throw itemsError;
+
+  type ItemRow = {
+    quantity: number;
+    unit_price: number;
+    line_total: number;
+    products: { name: string; unit: string } | null;
+  };
+  const { brands, ...orderFields } = order as Order & { brands: { name: string } | null };
+
+  return {
+    order: orderFields,
+    brandName: brands?.name ?? "—",
+    items: ((items ?? []) as ItemRow[]).map((i) => ({
+      name: i.products?.name ?? "—",
+      unit: i.products?.unit ?? "",
+      quantity: i.quantity,
+      unitPrice: i.unit_price,
+      lineTotal: i.line_total,
+    })),
+  };
+}
+
 export async function getExpensesForDate(brandId: string, date: string): Promise<Expense[]> {
   const { data, error } = await supabaseAdmin
     .from("expenses")
