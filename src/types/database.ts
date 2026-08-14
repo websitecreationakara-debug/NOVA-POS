@@ -1,3 +1,5 @@
+export type Json = string | number | boolean | null | { [key: string]: Json | undefined } | Json[];
+
 export type StaffRole = "admin" | "sales" | "stock" | "accountance" | "marketing";
 export type PaymentMethod = "cash" | "bank_qr";
 export type OrderStatus = "open" | "paid" | "voided";
@@ -139,7 +141,19 @@ export type Database = {
       order_items: Table<OrderItem, Omit<OrderItem, "id"> & Partial<Pick<OrderItem, "id">>>;
     };
     Views: Record<string, never>;
-    Functions: Record<string, never>;
+    Functions: {
+      charge_order: {
+        Args: {
+          p_brand_id: string;
+          p_customer_id: string | null;
+          p_created_by: string | null;
+          p_payment_method: PaymentMethod;
+          p_payment_reference: string | null;
+          p_items: Json;
+        };
+        Returns: string;
+      };
+    };
     Enums: Record<string, never>;
     CompositeTypes: Record<string, never>;
   };

@@ -13,6 +13,7 @@ export interface CartLine {
 export interface ChargeResult {
   orderId: string;
   total: number;
+  lines: CartLine[];
 }
 
 export async function chargeOrder(input: {
@@ -27,45 +28,26 @@ export async function chargeOrder(input: {
     throw new Error("Cart is empty");
   }
 
-  const subtotal = lines.reduce((sum, l) => sum + l.unitPrice * l.quantity, 0);
-  const total = subtotal;
+  const total = lines.reduce((sum, l) => sum + l.unitPrice * l.quantity, 0);
 
-  const { data: order, error: orderError } = await supabaseAdmin
-    .from("orders")
-    .insert({
-      brand_id: brandId,
-      customer_id: null,
-      created_by: null,
-      status: "paid",
-      subtotal,
-      discount: 0,
-      tax: 0,
-      total,
-      payment_method: paymentMethod,
-      payment_reference: paymentReference || null,
-      paid_at: new Date().toISOString(),
-    })
-    .select("id")
-    .single();
+  // charge_order() runs the order insert, order_items insert, and stock
+  // decrement as one DB transaction — see supabase/migrations/0003.
+  const { data: orderId, error } = await supabaseAdmin.rpc("charge_order", {
+    p_brand_id: brandId,
+    p_customer_id: null,
+    p_created_by: null,
+    p_payment_method: paymentMethod,
+    p_payment_reference: paymentReference || null,
+    p_items: lines.map((l) => ({
+      productId: l.productId,
+      quantity: l.quantity,
+      unitPrice: l.unitPrice,
+    })),
+  });
 
-  if (orderError || !order) {
-    throw orderError ?? new Error("Failed to create order");
+  if (error || !orderId) {
+    throw error ?? new Error("Failed to create order");
   }
 
-  const items = lines.map((l) => ({
-    order_id: order.id,
-    product_id: l.productId,
-    quantity: l.quantity,
-    unit_price: l.unitPrice,
-    line_total: l.unitPrice * l.quantity,
-  }));
-
-  const { error: itemsError } = await supabaseAdmin.from("order_items").insert(items);
-  if (itemsError) {
-    // Best-effort cleanup so a failed charge doesn't leave an empty paid order behind.
-    await supabaseAdmin.from("orders").delete().eq("id", order.id);
-    throw itemsError;
-  }
-
-  return { orderId: order.id, total };
+  return { orderId, total, lines };
 }

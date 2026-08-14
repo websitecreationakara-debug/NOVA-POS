@@ -2,8 +2,9 @@
 
 import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import type { Brand, Category, PaymentMethod, Product } from "@/types/database";
-import { chargeOrder, type CartLine } from "./actions";
+import type { Brand, Category, PaymentMethod } from "@/types/database";
+import type { ProductWithStock } from "@/lib/supabase/queries";
+import { chargeOrder, type CartLine, type ChargeResult } from "./actions";
 
 function formatMoney(n: number) {
   return `$${n.toFixed(2)}`;
@@ -18,14 +19,14 @@ export default function SalesClient({
   brands: Brand[];
   currentBrand: Brand;
   categories: Category[];
-  products: Product[];
+  products: ProductWithStock[];
 }) {
   const router = useRouter();
   const [activeCategoryId, setActiveCategoryId] = useState<string | "all">("all");
   const [cart, setCart] = useState<CartLine[]>([]);
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("cash");
   const [paymentReference, setPaymentReference] = useState("");
-  const [receipt, setReceipt] = useState<{ orderId: string; total: number } | null>(null);
+  const [receipt, setReceipt] = useState<ChargeResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isCharging, startCharging] = useTransition();
 
@@ -39,7 +40,7 @@ export default function SalesClient({
 
   const subtotal = cart.reduce((sum, l) => sum + l.unitPrice * l.quantity, 0);
 
-  function addToCart(product: Product) {
+  function addToCart(product: ProductWithStock) {
     setCart((prev) => {
       const existing = prev.find((l) => l.productId === product.id);
       if (existing) {
@@ -83,6 +84,7 @@ export default function SalesClient({
         setReceipt(result);
         setCart([]);
         setPaymentReference("");
+        router.refresh(); // pick up decremented stock counts for the next sale
       } catch (e) {
         setError(e instanceof Error ? e.message : "Charge failed");
       }
@@ -91,13 +93,28 @@ export default function SalesClient({
 
   if (receipt) {
     return (
-      <div className="mx-auto flex max-w-sm flex-col items-center gap-4 p-8 text-center">
-        <div className="flex h-12 w-12 items-center justify-center rounded-full bg-green-100 text-green-700">
-          ✓
+      <div className="mx-auto flex max-w-sm flex-col gap-4 p-8">
+        <div className="flex flex-col items-center gap-2 text-center">
+          <div className="flex h-12 w-12 items-center justify-center rounded-full bg-green-100 text-green-700">
+            ✓
+          </div>
+          <h1 className="text-xl font-semibold">Sale complete</h1>
+          <p className="text-zinc-500">Order #{receipt.orderId.slice(0, 8)}</p>
         </div>
-        <h1 className="text-xl font-semibold">Sale complete</h1>
-        <p className="text-zinc-500">Order #{receipt.orderId.slice(0, 8)}</p>
-        <p className="text-3xl font-semibold">{formatMoney(receipt.total)}</p>
+        <div className="divide-y divide-black/[.08] rounded-lg border border-black/[.08] dark:divide-white/[.145] dark:border-white/[.145]">
+          {receipt.lines.map((l) => (
+            <div key={l.productId} className="flex items-center justify-between px-4 py-2 text-sm">
+              <span>
+                {l.quantity} × {l.name}
+              </span>
+              <span>{formatMoney(l.unitPrice * l.quantity)}</span>
+            </div>
+          ))}
+        </div>
+        <div className="flex justify-between text-lg font-semibold">
+          <span>Total</span>
+          <span>{formatMoney(receipt.total)}</span>
+        </div>
         <button
           className="mt-4 rounded-full bg-black px-6 py-2 text-white dark:bg-white dark:text-black"
           onClick={() => setReceipt(null)}
@@ -154,18 +171,34 @@ export default function SalesClient({
           </div>
 
           <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
-            {visibleProducts.map((p) => (
-              <button
-                key={p.id}
-                onClick={() => addToCart(p)}
-                className="flex flex-col items-start rounded-lg border border-black/[.08] p-4 text-left transition-colors hover:bg-black/[.03] dark:border-white/[.145] dark:hover:bg-white/[.05]"
-              >
-                <div className="font-medium">{p.name}</div>
-                <div className="mt-1 text-sm text-zinc-500">
-                  {formatMoney(p.price)} / {p.unit}
-                </div>
-              </button>
-            ))}
+            {visibleProducts.map((p) => {
+              const isOut = p.stock_quantity <= 0;
+              const isLow =
+                !isOut && p.low_stock_threshold > 0 && p.stock_quantity <= p.low_stock_threshold;
+              return (
+                <button
+                  key={p.id}
+                  onClick={() => addToCart(p)}
+                  className="flex flex-col items-start rounded-lg border border-black/[.08] p-4 text-left transition-colors hover:bg-black/[.03] dark:border-white/[.145] dark:hover:bg-white/[.05]"
+                >
+                  <div className="font-medium">{p.name}</div>
+                  <div className="mt-1 text-sm text-zinc-500">
+                    {formatMoney(p.price)} / {p.unit}
+                  </div>
+                  <div
+                    className={`mt-1 text-xs ${
+                      isOut ? "text-red-500" : isLow ? "text-amber-500" : "text-zinc-400"
+                    }`}
+                  >
+                    {isOut
+                      ? "Out of stock"
+                      : isLow
+                        ? `Low stock — ${p.stock_quantity} left`
+                        : `${p.stock_quantity} in stock`}
+                  </div>
+                </button>
+              );
+            })}
             {visibleProducts.length === 0 && (
               <p className="col-span-full text-sm text-zinc-500">No products in this category.</p>
             )}
