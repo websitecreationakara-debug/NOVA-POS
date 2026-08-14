@@ -9,6 +9,7 @@ export type Brand = {
   id: string;
   slug: string;
   name: string;
+  logo_url: string | null;
   created_at: string;
 };
 
@@ -94,6 +95,8 @@ export type Order = {
   created_at: string;
   paid_at: string | null;
   invoice_number: string | null;
+  customer_name: string | null;
+  customer_phone: string | null;
 };
 
 export type OrderItem = {
@@ -219,6 +222,8 @@ export type Database = {
           p_payment_method: PaymentMethod;
           p_payment_reference: string | null;
           p_items: Json;
+          p_customer_name?: string | null;
+          p_customer_phone?: string | null;
         };
         Returns: string;
       };

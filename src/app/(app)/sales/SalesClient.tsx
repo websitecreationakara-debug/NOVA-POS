@@ -30,6 +30,8 @@ export default function SalesClient({
   const [cart, setCart] = useState<CartLine[]>([]);
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("cash");
   const [paymentReference, setPaymentReference] = useState("");
+  const [customerName, setCustomerName] = useState("");
+  const [customerPhone, setCustomerPhone] = useState("");
   const [receipt, setReceipt] = useState<ChargeResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isCharging, startCharging] = useTransition();
@@ -90,10 +92,14 @@ export default function SalesClient({
           lines: cart,
           paymentMethod,
           paymentReference: paymentReference || undefined,
+          customerName: customerName || undefined,
+          customerPhone: customerPhone || undefined,
         });
         setReceipt(result);
         setCart([]);
         setPaymentReference("");
+        setCustomerName("");
+        setCustomerPhone("");
         router.refresh(); // pick up decremented stock counts for the next sale
       } catch (e) {
         setError(e instanceof Error ? e.message : "Charge failed");
@@ -279,6 +285,21 @@ export default function SalesClient({
             </div>
 
             <div className="mt-4 flex gap-2">
+              <input
+                className="flex-1 rounded border border-black/[.15] bg-transparent px-3 py-1.5 text-sm dark:border-white/[.2]"
+                placeholder="Customer name (optional)"
+                value={customerName}
+                onChange={(e) => setCustomerName(e.target.value)}
+              />
+              <input
+                className="flex-1 rounded border border-black/[.15] bg-transparent px-3 py-1.5 text-sm dark:border-white/[.2]"
+                placeholder="Phone (optional)"
+                value={customerPhone}
+                onChange={(e) => setCustomerPhone(e.target.value)}
+              />
+            </div>
+
+            <div className="mt-2 flex gap-2">
               <button
                 className={`flex-1 rounded-full border py-1.5 text-sm ${
                   paymentMethod === "cash"

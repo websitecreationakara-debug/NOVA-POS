@@ -192,13 +192,14 @@ export async function getDashboardStats(): Promise<DashboardStats> {
 export type InvoiceData = {
   order: Order;
   brandName: string;
+  brandLogoUrl: string | null;
   items: { name: string; unit: string; quantity: number; unitPrice: number; lineTotal: number }[];
 };
 
 export async function getInvoice(orderId: string): Promise<InvoiceData | null> {
   const { data: order, error: orderError } = await supabaseAdmin
     .from("orders")
-    .select("*, brands(name)")
+    .select("*, brands(name, logo_url)")
     .eq("id", orderId)
     .maybeSingle();
 
@@ -218,11 +219,14 @@ export async function getInvoice(orderId: string): Promise<InvoiceData | null> {
     line_total: number;
     products: { name: string; unit: string } | null;
   };
-  const { brands, ...orderFields } = order as Order & { brands: { name: string } | null };
+  const { brands, ...orderFields } = order as Order & {
+    brands: { name: string; logo_url: string | null } | null;
+  };
 
   return {
     order: orderFields,
     brandName: brands?.name ?? "—",
+    brandLogoUrl: brands?.logo_url ?? null,
     items: ((items ?? []) as ItemRow[]).map((i) => ({
       name: i.products?.name ?? "—",
       unit: i.products?.unit ?? "",

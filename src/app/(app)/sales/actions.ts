@@ -23,8 +23,10 @@ export async function chargeOrder(input: {
   lines: CartLine[];
   paymentMethod: PaymentMethod;
   paymentReference?: string;
+  customerName?: string;
+  customerPhone?: string;
 }): Promise<ChargeResult> {
-  const { brandId, lines, paymentMethod, paymentReference } = input;
+  const { brandId, lines, paymentMethod, paymentReference, customerName, customerPhone } = input;
 
   if (lines.length === 0) {
     throw new Error("Cart is empty");
@@ -46,6 +48,8 @@ export async function chargeOrder(input: {
       quantity: l.quantity,
       unitPrice: l.unitPrice,
     })),
+    p_customer_name: customerName || null,
+    p_customer_phone: customerPhone || null,
   });
 
   if (error || !orderId) {
