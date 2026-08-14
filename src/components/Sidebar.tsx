@@ -5,7 +5,12 @@ import { usePathname } from "next/navigation";
 import { Calculator, LayoutDashboard, Megaphone, Package, ShoppingCart, Users } from "lucide-react";
 
 const navItems = [
-  { href: "/", label: "Dashboard", icon: LayoutDashboard, roles: ["admin"] },
+  {
+    href: "/",
+    label: "Dashboard",
+    icon: LayoutDashboard,
+    roles: ["admin", "sales", "stock", "accountance", "marketing"],
+  },
   { href: "/sales", label: "Sales", icon: ShoppingCart, roles: ["admin", "sales"] },
   { href: "/stock", label: "Stock", icon: Package, roles: ["admin", "stock"] },
   { href: "/accountance", label: "Accountance", icon: Calculator, roles: ["admin", "accountance"] },

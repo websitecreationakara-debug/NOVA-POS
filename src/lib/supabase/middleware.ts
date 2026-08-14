@@ -12,15 +12,14 @@ const ROLE_HOME: Record<StaffRole, string> = {
 
 const ROLE_ALLOWED_PREFIXES: Record<StaffRole, string[]> = {
   admin: ["/", "/sales", "/stock", "/accountance", "/marketing", "/invoice", "/users"],
-  sales: ["/sales", "/invoice"],
-  stock: ["/stock"],
-  accountance: ["/accountance", "/invoice"],
-  marketing: ["/marketing"],
+  sales: ["/", "/sales", "/invoice"],
+  stock: ["/", "/stock"],
+  accountance: ["/", "/accountance", "/invoice"],
+  marketing: ["/", "/marketing"],
 };
 
 function isAllowed(role: StaffRole, pathname: string) {
-  if (role === "admin") return pathname === "/" || ROLE_ALLOWED_PREFIXES.admin.some((p) => p !== "/" && pathname.startsWith(p));
-  return ROLE_ALLOWED_PREFIXES[role].some((p) => pathname.startsWith(p));
+  return ROLE_ALLOWED_PREFIXES[role].some((p) => (p === "/" ? pathname === "/" : pathname.startsWith(p)));
 }
 
 export async function updateSession(request: NextRequest) {
