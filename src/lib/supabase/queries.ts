@@ -23,9 +23,12 @@ export async function getCatalogForBrand(brandId: string): Promise<{
         .select("*")
         .eq("brand_id", brandId)
         .order("sort_order"),
+      // Embed stock_levels via its FK to products instead of a second
+      // query with .in(productIds) -- that broke once a brand's catalog
+      // grew past a few hundred products (URL length limit on the GET).
       supabaseAdmin
         .from("products")
-        .select("*")
+        .select("*, stock_levels(quantity, low_stock_threshold)")
         .eq("brand_id", brandId)
         .eq("is_active", true)
         .order("name"),
@@ -34,23 +37,17 @@ export async function getCatalogForBrand(brandId: string): Promise<{
   if (catError) throw catError;
   if (prodError) throw prodError;
 
-  const productIds = (products ?? []).map((p) => p.id);
-  if (productIds.length === 0) {
-    return { categories: categories ?? [], products: [] };
-  }
-
-  const { data: stockRows, error: stockError } = await supabaseAdmin
-    .from("stock_levels")
-    .select("product_id, quantity, low_stock_threshold")
-    .in("product_id", productIds);
-  if (stockError) throw stockError;
-
-  const stockByProduct = new Map(stockRows?.map((s) => [s.product_id, s]) ?? []);
-  const productsWithStock: ProductWithStock[] = (products ?? []).map((p) => ({
-    ...p,
-    stock_quantity: stockByProduct.get(p.id)?.quantity ?? 0,
-    low_stock_threshold: stockByProduct.get(p.id)?.low_stock_threshold ?? 0,
-  }));
+  type ProductRow = Product & {
+    stock_levels: { quantity: number; low_stock_threshold: number } | null;
+  };
+  const productsWithStock: ProductWithStock[] = ((products ?? []) as ProductRow[]).map((p) => {
+    const { stock_levels, ...product } = p;
+    return {
+      ...product,
+      stock_quantity: stock_levels?.quantity ?? 0,
+      low_stock_threshold: stock_levels?.low_stock_threshold ?? 0,
+    };
+  });
 
   return { categories: categories ?? [], products: productsWithStock };
 }

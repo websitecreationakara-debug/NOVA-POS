@@ -104,11 +104,11 @@ export type OrderItem = {
   line_total: number;
 };
 
-type Table<Row, Insert> = {
+type Table<Row, Insert, Relationships extends readonly unknown[] = []> = {
   Row: Row;
   Insert: Insert;
   Update: Partial<Insert>;
-  Relationships: [];
+  Relationships: Relationships;
 };
 
 export type Database = {
@@ -128,7 +128,19 @@ export type Database = {
         Customer,
         Omit<Customer, "id" | "created_at"> & Partial<Pick<Customer, "id">>
       >;
-      stock_levels: Table<StockLevel, StockLevel>;
+      stock_levels: Table<
+        StockLevel,
+        StockLevel,
+        [
+          {
+            foreignKeyName: "stock_levels_product_id_fkey";
+            columns: ["product_id"];
+            isOneToOne: true;
+            referencedRelation: "products";
+            referencedColumns: ["id"];
+          },
+        ]
+      >;
       stock_adjustments: Table<
         StockAdjustment,
         Omit<StockAdjustment, "id" | "created_at"> & Partial<Pick<StockAdjustment, "id">>
