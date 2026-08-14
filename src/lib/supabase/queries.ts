@@ -102,6 +102,93 @@ export async function getReconciliation(
   return data;
 }
 
+export type DashboardStats = {
+  totalRevenue: number;
+  ordersToday: number;
+  totalProducts: number;
+  lowStockCount: number;
+  last7Days: { day: string; total: number }[];
+  recentOrders: {
+    id: string;
+    brandName: string;
+    status: string;
+    total: number;
+    paidAt: string | null;
+  }[];
+};
+
+export async function getDashboardStats(): Promise<DashboardStats> {
+  const today = new Date().toISOString().slice(0, 10);
+
+  const [
+    { data: paidOrders, error: ordersError },
+    { count: totalProducts, error: prodError },
+    { data: stockRows, error: stockError },
+    { data: recentOrdersData, error: recentError },
+  ] = await Promise.all([
+    supabaseAdmin.from("orders").select("total, paid_at").eq("status", "paid"),
+    supabaseAdmin.from("products").select("id", { count: "exact", head: true }).eq("is_active", true),
+    supabaseAdmin
+      .from("stock_levels")
+      .select("quantity, low_stock_threshold, products!inner(is_active)")
+      .eq("products.is_active", true)
+      .gt("low_stock_threshold", 0),
+    supabaseAdmin
+      .from("orders")
+      .select("id, status, total, paid_at, brands(name)")
+      .eq("status", "paid")
+      .order("paid_at", { ascending: false })
+      .limit(5),
+  ]);
+
+  if (ordersError) throw ordersError;
+  if (prodError) throw prodError;
+  if (stockError) throw stockError;
+  if (recentError) throw recentError;
+
+  const orders = paidOrders ?? [];
+  const totalRevenue = orders.reduce((sum, o) => sum + o.total, 0);
+  const ordersToday = orders.filter((o) => (o.paid_at ?? "").slice(0, 10) === today).length;
+  const lowStockCount = (stockRows ?? []).filter((s) => s.quantity <= s.low_stock_threshold).length;
+
+  const dayBuckets = new Map<string, number>();
+  for (let i = 6; i >= 0; i--) {
+    const d = new Date(Date.now() - i * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+    dayBuckets.set(d, 0);
+  }
+  for (const o of orders) {
+    const d = (o.paid_at ?? "").slice(0, 10);
+    if (dayBuckets.has(d)) {
+      dayBuckets.set(d, (dayBuckets.get(d) ?? 0) + o.total);
+    }
+  }
+  const last7Days = Array.from(dayBuckets.entries()).map(([day, total]) => ({ day, total }));
+
+  type RecentOrderRow = {
+    id: string;
+    status: string;
+    total: number;
+    paid_at: string | null;
+    brands: { name: string } | null;
+  };
+  const recentOrders = ((recentOrdersData ?? []) as RecentOrderRow[]).map((o) => ({
+    id: o.id,
+    brandName: o.brands?.name ?? "—",
+    status: o.status,
+    total: o.total,
+    paidAt: o.paid_at,
+  }));
+
+  return {
+    totalRevenue,
+    ordersToday,
+    totalProducts: totalProducts ?? 0,
+    lowStockCount,
+    last7Days,
+    recentOrders,
+  };
+}
+
 export async function getExpensesForDate(brandId: string, date: string): Promise<Expense[]> {
   const { data, error } = await supabaseAdmin
     .from("expenses")

@@ -173,7 +173,19 @@ export type Database = {
         Promotion,
         Omit<Promotion, "id" | "created_at"> & Partial<Pick<Promotion, "id">>
       >;
-      orders: Table<Order, Omit<Order, "id" | "created_at"> & Partial<Pick<Order, "id">>>;
+      orders: Table<
+        Order,
+        Omit<Order, "id" | "created_at"> & Partial<Pick<Order, "id">>,
+        [
+          {
+            foreignKeyName: "orders_brand_id_fkey";
+            columns: ["brand_id"];
+            isOneToOne: false;
+            referencedRelation: "brands";
+            referencedColumns: ["id"];
+          },
+        ]
+      >;
       order_items: Table<OrderItem, Omit<OrderItem, "id"> & Partial<Pick<OrderItem, "id">>>;
       expenses: Table<
         Expense,
