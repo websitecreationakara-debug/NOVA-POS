@@ -5,15 +5,16 @@ import { usePathname } from "next/navigation";
 import { Calculator, LayoutDashboard, Megaphone, Package, ShoppingCart } from "lucide-react";
 
 const navItems = [
-  { href: "/", label: "Dashboard", icon: LayoutDashboard },
-  { href: "/sales", label: "Sales", icon: ShoppingCart },
-  { href: "/stock", label: "Stock", icon: Package },
-  { href: "/accountance", label: "Accountance", icon: Calculator },
-  { href: "/marketing", label: "Marketing", icon: Megaphone },
+  { href: "/", label: "Dashboard", icon: LayoutDashboard, roles: ["admin"] },
+  { href: "/sales", label: "Sales", icon: ShoppingCart, roles: ["admin", "sales"] },
+  { href: "/stock", label: "Stock", icon: Package, roles: ["admin", "stock"] },
+  { href: "/accountance", label: "Accountance", icon: Calculator, roles: ["admin", "accountance"] },
+  { href: "/marketing", label: "Marketing", icon: Megaphone, roles: ["admin", "marketing"] },
 ];
 
-export default function Sidebar() {
+export default function Sidebar({ role }: { role: string }) {
   const pathname = usePathname();
+  const items = navItems.filter((item) => item.roles.includes(role));
 
   return (
     <aside className="flex min-h-screen w-64 shrink-0 flex-col gap-8 border-r border-border bg-card p-6">
@@ -21,7 +22,7 @@ export default function Sidebar() {
         NOVA POS
       </Link>
       <nav className="flex flex-col gap-1">
-        {navItems.map((item) => {
+        {items.map((item) => {
           const isActive = item.href === "/" ? pathname === "/" : pathname.startsWith(item.href);
           return (
             <Link

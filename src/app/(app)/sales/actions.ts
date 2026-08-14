@@ -1,6 +1,7 @@
 "use server";
 
 import { supabaseAdmin } from "@/lib/supabase/server";
+import { getSessionUser } from "@/lib/supabase/auth-server";
 import type { PaymentMethod } from "@/types/database";
 
 export interface CartLine {
@@ -29,13 +30,14 @@ export async function chargeOrder(input: {
   }
 
   const total = lines.reduce((sum, l) => sum + l.unitPrice * l.quantity, 0);
+  const user = await getSessionUser();
 
   // charge_order() runs the order insert, order_items insert, and stock
   // decrement as one DB transaction — see supabase/migrations/0003.
   const { data: orderId, error } = await supabaseAdmin.rpc("charge_order", {
     p_brand_id: brandId,
     p_customer_id: null,
-    p_created_by: null,
+    p_created_by: user?.id ?? null,
     p_payment_method: paymentMethod,
     p_payment_reference: paymentReference || null,
     p_items: lines.map((l) => ({

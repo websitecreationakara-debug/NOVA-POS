@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { supabaseAdmin } from "@/lib/supabase/server";
+import { getSessionUser } from "@/lib/supabase/auth-server";
 
 export async function adjustStockAction(input: {
   productId: string;
@@ -9,12 +10,13 @@ export async function adjustStockAction(input: {
   reason: string;
 }): Promise<{ quantity: number }> {
   const { productId, delta, reason } = input;
+  const user = await getSessionUser();
 
   const { data, error } = await supabaseAdmin.rpc("adjust_stock", {
     p_product_id: productId,
     p_delta: delta,
     p_reason: reason,
-    p_created_by: null,
+    p_created_by: user?.id ?? null,
   });
 
   if (error || data === null) {
