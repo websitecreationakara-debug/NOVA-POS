@@ -23,6 +23,7 @@ export default function SalesClient({
 }) {
   const router = useRouter();
   const [activeCategoryId, setActiveCategoryId] = useState<string | "all">("all");
+  const [search, setSearch] = useState("");
   const [cart, setCart] = useState<CartLine[]>([]);
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("cash");
   const [paymentReference, setPaymentReference] = useState("");
@@ -30,13 +31,19 @@ export default function SalesClient({
   const [error, setError] = useState<string | null>(null);
   const [isCharging, startCharging] = useTransition();
 
-  const visibleProducts = useMemo(
-    () =>
+  const visibleProducts = useMemo(() => {
+    let list =
       activeCategoryId === "all"
         ? products
-        : products.filter((p) => p.category_id === activeCategoryId),
-    [products, activeCategoryId]
-  );
+        : products.filter((p) => p.category_id === activeCategoryId);
+    const q = search.trim().toLowerCase();
+    if (q) {
+      list = list.filter(
+        (p) => p.name.toLowerCase().includes(q) || (p.sku ?? "").toLowerCase().includes(q)
+      );
+    }
+    return list;
+  }, [products, activeCategoryId, search]);
 
   const subtotal = cart.reduce((sum, l) => sum + l.unitPrice * l.quantity, 0);
 
@@ -140,6 +147,13 @@ export default function SalesClient({
           ))}
         </select>
         <h1 className="text-lg font-medium">Sales</h1>
+        <input
+          type="text"
+          placeholder="Search name or SKU…"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          className="ml-auto w-64 rounded border border-black/[.15] bg-transparent px-3 py-1.5 text-sm dark:border-white/[.2]"
+        />
       </header>
 
       <div className="flex flex-1 overflow-hidden">
