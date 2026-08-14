@@ -3,16 +3,20 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import type { StaffRole } from "@/types/database";
-import { createStaffAccountAction } from "./actions";
+import { createStaffAccountAction, deleteStaffAccountAction } from "./actions";
 
 const ROLES: StaffRole[] = ["admin", "sales", "stock", "accountance", "marketing"];
 
 export default function UsersClient({
   staff,
+  currentUserId,
 }: {
   staff: { id: string; fullName: string; role: string; email: string | null; createdAt: string }[];
+  currentUserId: string;
 }) {
   const router = useRouter();
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
   const [fullName, setFullName] = useState("");
   const [email, setEmail] = useState("");
   const [role, setRole] = useState<StaffRole>("sales");
@@ -53,6 +57,22 @@ export default function UsersClient({
     navigator.clipboard.writeText(`Email: ${created.email}\nPassword: ${created.password}`);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
+  }
+
+  function deleteAccount(id: string, name: string) {
+    if (!window.confirm(`Delete ${name}'s account? This can't be undone.`)) return;
+    setDeleteError(null);
+    setDeletingId(id);
+    startTransition(async () => {
+      try {
+        await deleteStaffAccountAction(id);
+        router.refresh();
+      } catch (e) {
+        setDeleteError(e instanceof Error ? e.message : "Failed to delete account");
+      } finally {
+        setDeletingId(null);
+      }
+    });
   }
 
   return (
@@ -155,13 +175,15 @@ export default function UsersClient({
         <div className="border-b border-border px-6 py-4">
           <h2 className="font-display font-bold">All staff</h2>
         </div>
+        {deleteError && <p className="px-6 pt-4 text-sm text-red-500">{deleteError}</p>}
         <table className="w-full text-sm">
           <thead className="bg-muted text-xs font-bold tracking-widest text-muted-foreground uppercase">
             <tr>
               <th className="px-6 py-3 text-left">Name</th>
               <th className="px-3 py-3 text-left">Email</th>
               <th className="px-3 py-3 text-left">Role</th>
-              <th className="px-6 py-3 text-right">Created</th>
+              <th className="px-3 py-3 text-right">Created</th>
+              <th className="px-6 py-3 text-right">&nbsp;</th>
             </tr>
           </thead>
           <tbody>
@@ -170,14 +192,25 @@ export default function UsersClient({
                 <td className="px-6 py-3">{s.fullName}</td>
                 <td className="px-3 py-3 text-muted-foreground">{s.email ?? "—"}</td>
                 <td className="px-3 py-3 capitalize">{s.role}</td>
-                <td className="px-6 py-3 text-right text-muted-foreground">
+                <td className="px-3 py-3 text-right text-muted-foreground">
                   {new Date(s.createdAt).toLocaleDateString()}
+                </td>
+                <td className="px-6 py-3 text-right">
+                  {s.id !== currentUserId && (
+                    <button
+                      disabled={deletingId === s.id}
+                      onClick={() => deleteAccount(s.id, s.fullName)}
+                      className="text-xs text-muted-foreground hover:text-red-500 disabled:opacity-40"
+                    >
+                      {deletingId === s.id ? "Deleting…" : "Delete"}
+                    </button>
+                  )}
                 </td>
               </tr>
             ))}
             {staff.length === 0 && (
               <tr>
-                <td colSpan={4} className="px-6 py-8 text-center text-muted-foreground">
+                <td colSpan={5} className="px-6 py-8 text-center text-muted-foreground">
                   No staff accounts yet.
                 </td>
               </tr>
