@@ -1,6 +1,5 @@
 "use server";
 
-import crypto from "crypto";
 import { revalidatePath } from "next/cache";
 import { supabaseAdmin } from "@/lib/supabase/server";
 import { getSessionUser } from "@/lib/supabase/auth-server";
@@ -12,7 +11,8 @@ export async function createStaffAccountAction(input: {
   fullName: string;
   email: string;
   role: StaffRole;
-}): Promise<{ setupLink: string }> {
+  password: string;
+}): Promise<void> {
   // Defense in depth: the /users route is already role-gated in proxy.ts,
   // but Server Actions are their own endpoint and reachable independent of
   // which page rendered them, so re-check here rather than trust the route.
@@ -21,16 +21,15 @@ export async function createStaffAccountAction(input: {
     throw new Error("Only admins can create staff accounts");
   }
 
-  const { fullName, email, role } = input;
+  const { fullName, email, role, password } = input;
   if (!fullName.trim()) throw new Error("Name is required");
   if (!email.trim()) throw new Error("Email is required");
   if (!VALID_ROLES.includes(role)) throw new Error("Invalid role");
-
-  const tempPassword = crypto.randomBytes(24).toString("base64url");
+  if (password.length < 8) throw new Error("Password must be at least 8 characters");
 
   const { data: created, error: createError } = await supabaseAdmin.auth.admin.createUser({
     email: email.trim(),
-    password: tempPassword,
+    password,
     email_confirm: true,
     user_metadata: { role, full_name: fullName.trim() },
   });
@@ -47,19 +46,7 @@ export async function createStaffAccountAction(input: {
     throw new Error(profileError.message);
   }
 
-  const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || "http://localhost:3000";
-  const { data: linkData, error: linkError } = await supabaseAdmin.auth.admin.generateLink({
-    type: "recovery",
-    email: email.trim(),
-    options: { redirectTo: `${siteUrl}/auth/callback` },
-  });
-
-  if (linkError) {
-    throw new Error(linkError.message);
-  }
-
   revalidatePath("/users");
-  return { setupLink: linkData.properties.action_link };
 }
 
 export async function listStaffAction(): Promise<

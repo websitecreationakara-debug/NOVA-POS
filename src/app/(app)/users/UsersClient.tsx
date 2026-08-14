@@ -16,25 +16,31 @@ export default function UsersClient({
   const [fullName, setFullName] = useState("");
   const [email, setEmail] = useState("");
   const [role, setRole] = useState<StaffRole>("sales");
-  const [setupLink, setSetupLink] = useState<string | null>(null);
+  const [password, setPassword] = useState("");
+  const [created, setCreated] = useState<{ email: string; password: string } | null>(null);
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
 
   function createAccount() {
     setError(null);
-    setSetupLink(null);
+    setCreated(null);
     if (!fullName.trim() || !email.trim()) {
       setError("Enter a name and email");
       return;
     }
+    if (password.length < 8) {
+      setError("Password must be at least 8 characters");
+      return;
+    }
     startTransition(async () => {
       try {
-        const result = await createStaffAccountAction({ fullName, email, role });
-        setSetupLink(result.setupLink);
+        await createStaffAccountAction({ fullName, email, role, password });
+        setCreated({ email, password });
         setFullName("");
         setEmail("");
         setRole("sales");
+        setPassword("");
         router.refresh();
       } catch (e) {
         setError(e instanceof Error ? e.message : "Failed to create account");
@@ -42,9 +48,9 @@ export default function UsersClient({
     });
   }
 
-  function copyLink() {
-    if (!setupLink) return;
-    navigator.clipboard.writeText(setupLink);
+  function copyCredentials() {
+    if (!created) return;
+    navigator.clipboard.writeText(`Email: ${created.email}\nPassword: ${created.password}`);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   }
@@ -54,8 +60,7 @@ export default function UsersClient({
       <header>
         <h1 className="font-display text-2xl font-bold">Staff Accounts</h1>
         <p className="mt-1 text-muted-foreground">
-          Create an account with a role attached, then share the one-time setup link so they can
-          set their own password.
+          Create an account with a role and password, then share the login with them.
         </p>
       </header>
 
@@ -86,6 +91,18 @@ export default function UsersClient({
           </div>
           <div className="flex flex-col gap-1">
             <label className="text-xs font-bold tracking-widest text-muted-foreground uppercase">
+              Password
+            </label>
+            <input
+              type="text"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              placeholder="8+ characters"
+              className="rounded-lg border border-border bg-transparent px-3 py-2 text-sm outline-none focus:border-brand"
+            />
+          </div>
+          <div className="flex flex-col gap-1">
+            <label className="text-xs font-bold tracking-widest text-muted-foreground uppercase">
               Role
             </label>
             <select
@@ -111,22 +128,24 @@ export default function UsersClient({
 
         {error && <p className="mt-3 text-sm text-red-500">{error}</p>}
 
-        {setupLink && (
+        {created && (
           <div className="mt-4 rounded-lg border border-brand/40 bg-brand/10 p-4">
-            <p className="text-sm font-medium">Account created. Send this one-time setup link:</p>
+            <p className="text-sm font-medium">
+              Account created — they can log in now with what you set.
+            </p>
             <div className="mt-2 flex items-center gap-2">
               <code className="flex-1 overflow-x-auto rounded bg-muted px-2 py-1.5 text-xs whitespace-nowrap">
-                {setupLink}
+                {created.email} / {created.password}
               </code>
               <button
-                onClick={copyLink}
+                onClick={copyCredentials}
                 className="shrink-0 rounded-full border border-border px-3 py-1.5 text-xs"
               >
                 {copied ? "Copied!" : "Copy"}
               </button>
             </div>
             <p className="mt-2 text-xs text-muted-foreground">
-              Single-use and time-limited — send it soon.
+              Send this to them however you normally would (Telegram, in person, etc).
             </p>
           </div>
         )}
