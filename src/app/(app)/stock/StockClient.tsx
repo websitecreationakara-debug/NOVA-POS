@@ -4,7 +4,7 @@ import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import type { Brand, Category } from "@/types/database";
 import type { ProductWithStock } from "@/lib/supabase/queries";
-import { adjustStockAction, setLowStockThresholdAction } from "./actions";
+import { adjustStockAction, setLowStockThresholdAction, uploadProductImageAction } from "./actions";
 
 type Draft = { delta: string; reason: string };
 
@@ -27,6 +27,8 @@ export default function StockClient({
   const [thresholdDrafts, setThresholdDrafts] = useState<Record<string, string>>({});
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [pendingId, setPendingId] = useState<string | null>(null);
+  const [imageErrors, setImageErrors] = useState<Record<string, string>>({});
+  const [uploadingId, setUploadingId] = useState<string | null>(null);
   const [, startTransition] = useTransition();
 
   const categoryById = useMemo(() => new Map(categories.map((c) => [c.id, c.name])), [categories]);
@@ -96,6 +98,40 @@ export default function StockClient({
         }));
       } finally {
         setPendingId(null);
+      }
+    });
+  }
+
+  function handleImageChange(productId: string, file: File | null) {
+    if (!file) return;
+    if (!file.type.startsWith("image/")) {
+      setImageErrors((prev) => ({ ...prev, [productId]: "Must be an image file" }));
+      return;
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      setImageErrors((prev) => ({ ...prev, [productId]: "Max 5MB" }));
+      return;
+    }
+    setImageErrors((prev) => {
+      const next = { ...prev };
+      delete next[productId];
+      return next;
+    });
+    setUploadingId(productId);
+    const formData = new FormData();
+    formData.set("productId", productId);
+    formData.set("file", file);
+    startTransition(async () => {
+      try {
+        await uploadProductImageAction(formData);
+        router.refresh();
+      } catch (e) {
+        setImageErrors((prev) => ({
+          ...prev,
+          [productId]: e instanceof Error ? e.message : "Upload failed",
+        }));
+      } finally {
+        setUploadingId(null);
       }
     });
   }
@@ -188,7 +224,8 @@ export default function StockClient({
         <table className="w-full border-collapse text-sm">
           <thead className="sticky top-0 bg-zinc-50 dark:bg-zinc-900">
             <tr className="border-b border-black/[.08] text-left text-xs text-zinc-500 dark:border-white/[.145]">
-              <th className="px-6 py-2 font-medium">Product</th>
+              <th className="px-6 py-2 font-medium">Image</th>
+              <th className="px-3 py-2 font-medium">Product</th>
               <th className="px-3 py-2 font-medium">Category</th>
               <th className="px-3 py-2 font-medium">Stock</th>
               <th className="px-3 py-2 font-medium">Low-stock at</th>
@@ -208,6 +245,37 @@ export default function StockClient({
                   className="border-b border-black/[.06] align-top dark:border-white/[.08]"
                 >
                   <td className="px-6 py-2">
+                    <div className="flex items-center gap-2">
+                      <div className="h-10 w-10 shrink-0 overflow-hidden rounded border border-black/[.1] bg-zinc-100 dark:border-white/[.15] dark:bg-zinc-800">
+                        {p.image_url ? (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img src={p.image_url} alt="" className="h-full w-full object-cover" />
+                        ) : (
+                          <div className="flex h-full w-full items-center justify-center text-[9px] text-zinc-400">
+                            No img
+                          </div>
+                        )}
+                      </div>
+                      <label className="cursor-pointer rounded border border-black/[.15] px-2 py-1 text-xs dark:border-white/[.2]">
+                        {uploadingId === p.id ? "…" : p.image_url ? "Change" : "Add"}
+                        <input
+                          type="file"
+                          accept="image/*"
+                          className="hidden"
+                          disabled={uploadingId === p.id}
+                          onChange={(e) => {
+                            const file = e.target.files?.[0] ?? null;
+                            e.target.value = "";
+                            handleImageChange(p.id, file);
+                          }}
+                        />
+                      </label>
+                    </div>
+                    {imageErrors[p.id] && (
+                      <p className="mt-1 text-xs text-red-500">{imageErrors[p.id]}</p>
+                    )}
+                  </td>
+                  <td className="px-3 py-2">
                     <div className="font-medium">{p.name}</div>
                     {p.sku && <div className="text-xs text-zinc-400">{p.sku}</div>}
                   </td>
@@ -268,7 +336,7 @@ export default function StockClient({
             })}
             {visibleProducts.length === 0 && (
               <tr>
-                <td colSpan={5} className="px-6 py-8 text-center text-sm text-zinc-500">
+                <td colSpan={6} className="px-6 py-8 text-center text-sm text-zinc-500">
                   No products match.
                 </td>
               </tr>
