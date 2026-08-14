@@ -165,6 +165,15 @@ export type Database = {
         };
         Returns: string;
       };
+      adjust_stock: {
+        Args: {
+          p_product_id: string;
+          p_delta: number;
+          p_reason: string;
+          p_created_by: string | null;
+        };
+        Returns: number;
+      };
     };
     Enums: Record<string, never>;
     CompositeTypes: Record<string, never>;
