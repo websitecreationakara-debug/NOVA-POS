@@ -18,21 +18,34 @@ export interface ChargeResult {
   lines: CartLine[];
 }
 
+export interface CustomerSuggestion {
+  id: string;
+  name: string;
+  phone: string;
+  photoUrl: string | null;
+}
+
 // This is an online-sale POS, not a mart checkout -- every order belongs to
 // an identifiable customer, and phone number is how staff recognize a
 // returning one (customers.phone has a unique index, see migration 0011).
-export async function findCustomerByPhone(phone: string): Promise<{ name: string } | null> {
-  const trimmed = phone.trim();
-  if (!trimmed) return null;
+// Staff type a few digits and pick from matches, AppSheet-style, instead of
+// needing the full number before anything happens.
+export async function searchCustomersByPhone(prefix: string): Promise<CustomerSuggestion[]> {
+  const trimmed = prefix.trim();
+  if (trimmed.length < 3) return [];
 
   const { data, error } = await supabaseAdmin
     .from("customers")
-    .select("name")
-    .eq("phone", trimmed)
-    .maybeSingle();
+    .select("id, name, phone, photo_url")
+    .not("phone", "is", null)
+    .ilike("phone", `${trimmed}%`)
+    .order("name")
+    .limit(8);
   if (error) throw error;
 
-  return data;
+  return (data ?? [])
+    .filter((c): c is typeof c & { phone: string } => c.phone !== null)
+    .map((c) => ({ id: c.id, name: c.name, phone: c.phone, photoUrl: c.photo_url }));
 }
 
 async function getOrCreateCustomerId(phone: string, name: string): Promise<string> {

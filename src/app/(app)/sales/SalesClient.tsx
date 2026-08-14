@@ -1,13 +1,18 @@
 "use client";
 
-import { useMemo, useState, useTransition } from "react";
+import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { Plus, User } from "lucide-react";
 import type { Brand, Category, PaymentMethod } from "@/types/database";
 import type { ProductWithStock } from "@/lib/supabase/queries";
-import { chargeOrder, findCustomerByPhone, type CartLine, type ChargeResult } from "./actions";
-
-type CustomerLookup = "idle" | "checking" | "existing" | "new";
+import {
+  chargeOrder,
+  searchCustomersByPhone,
+  type CartLine,
+  type ChargeResult,
+  type CustomerSuggestion,
+} from "./actions";
 
 function formatMoney(n: number) {
   return `$${n.toFixed(2)}`;
@@ -34,11 +39,24 @@ export default function SalesClient({
   const [paymentReference, setPaymentReference] = useState("");
   const [customerName, setCustomerName] = useState("");
   const [customerPhone, setCustomerPhone] = useState("");
-  const [customerLookup, setCustomerLookup] = useState<CustomerLookup>("idle");
+  const [selectedCustomer, setSelectedCustomer] = useState<{ id: string; phone: string } | null>(
+    null
+  );
+  const [suggestions, setSuggestions] = useState<CustomerSuggestion[]>([]);
+  const [phoneDropdownOpen, setPhoneDropdownOpen] = useState(false);
   const [receipt, setReceipt] = useState<ChargeResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isCharging, startCharging] = useTransition();
   const [, startLookup] = useTransition();
+  const searchDebounce = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (searchDebounce.current) clearTimeout(searchDebounce.current);
+    };
+  }, []);
+
+  const isExistingCustomer = selectedCustomer?.phone === customerPhone.trim() && !!selectedCustomer;
 
   const visibleProducts = useMemo(() => {
     let list =
@@ -87,26 +105,38 @@ export default function SalesClient({
     router.push(`/sales?brand=${brandId}`);
   }
 
-  function handlePhoneBlur() {
-    const phone = customerPhone.trim();
-    if (!phone) {
-      setCustomerLookup("idle");
+  function handlePhoneChange(value: string) {
+    setCustomerPhone(value);
+    setSelectedCustomer(null);
+    setPhoneDropdownOpen(true);
+
+    if (searchDebounce.current) clearTimeout(searchDebounce.current);
+    const trimmed = value.trim();
+    if (trimmed.length < 3) {
+      setSuggestions([]);
       return;
     }
-    setCustomerLookup("checking");
-    startLookup(async () => {
-      try {
-        const match = await findCustomerByPhone(phone);
-        if (match) {
-          setCustomerLookup("existing");
-          setCustomerName(match.name);
-        } else {
-          setCustomerLookup("new");
+    searchDebounce.current = setTimeout(() => {
+      startLookup(async () => {
+        try {
+          setSuggestions(await searchCustomersByPhone(trimmed));
+        } catch {
+          setSuggestions([]);
         }
-      } catch {
-        setCustomerLookup("idle");
-      }
-    });
+      });
+    }, 250);
+  }
+
+  function selectCustomer(customer: CustomerSuggestion) {
+    setCustomerPhone(customer.phone);
+    setCustomerName(customer.name);
+    setSelectedCustomer({ id: customer.id, phone: customer.phone });
+    setPhoneDropdownOpen(false);
+  }
+
+  function selectNewCustomer() {
+    setSelectedCustomer(null);
+    setPhoneDropdownOpen(false);
   }
 
   function handleCharge() {
@@ -116,7 +146,7 @@ export default function SalesClient({
       setError("Customer phone number is required");
       return;
     }
-    if (customerLookup === "new" && !customerName.trim()) {
+    if (!isExistingCustomer && !customerName.trim()) {
       setError("Customer name is required to add a new customer");
       return;
     }
@@ -135,7 +165,8 @@ export default function SalesClient({
         setPaymentReference("");
         setCustomerName("");
         setCustomerPhone("");
-        setCustomerLookup("idle");
+        setSelectedCustomer(null);
+        setSuggestions([]);
         router.refresh(); // pick up decremented stock counts for the next sale
       } catch (e) {
         setError(e instanceof Error ? e.message : "Charge failed");
@@ -321,33 +352,69 @@ export default function SalesClient({
             </div>
 
             <div className="mt-4 flex gap-2">
+              <div className="relative flex-1">
+                <input
+                  type="tel"
+                  required
+                  autoComplete="off"
+                  className="w-full rounded border border-black/[.15] bg-transparent px-3 py-1.5 text-sm dark:border-white/[.2]"
+                  placeholder="Phone number *"
+                  value={customerPhone}
+                  onChange={(e) => handlePhoneChange(e.target.value)}
+                  onFocus={() => setPhoneDropdownOpen(true)}
+                  onBlur={() => setTimeout(() => setPhoneDropdownOpen(false), 150)}
+                />
+                {phoneDropdownOpen && customerPhone.trim().length > 0 && (
+                  <div className="absolute top-full left-0 z-10 mt-1 max-h-64 w-64 overflow-y-auto rounded border border-black/[.15] bg-white shadow-lg dark:border-white/[.2] dark:bg-zinc-900">
+                    <button
+                      type="button"
+                      onMouseDown={(e) => e.preventDefault()}
+                      onClick={selectNewCustomer}
+                      className="flex w-full items-center gap-2 border-b border-black/[.08] px-3 py-2 text-left text-sm hover:bg-black/[.03] dark:border-white/[.145] dark:hover:bg-white/[.05]"
+                    >
+                      <Plus className="size-4" />
+                      New
+                    </button>
+                    {suggestions.map((c) => (
+                      <button
+                        type="button"
+                        key={c.id}
+                        onMouseDown={(e) => e.preventDefault()}
+                        onClick={() => selectCustomer(c)}
+                        className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-black/[.03] dark:hover:bg-white/[.05]"
+                      >
+                        <span className="flex h-6 w-6 shrink-0 items-center justify-center overflow-hidden rounded-full bg-zinc-200 dark:bg-zinc-700">
+                          {c.photoUrl ? (
+                            // eslint-disable-next-line @next/next/no-img-element
+                            <img src={c.photoUrl} alt="" className="h-full w-full object-cover" />
+                          ) : (
+                            <User className="size-3.5 text-zinc-500" />
+                          )}
+                        </span>
+                        <span className="flex flex-col">
+                          <span>{c.phone}</span>
+                          <span className="text-xs text-zinc-500">{c.name}</span>
+                        </span>
+                      </button>
+                    ))}
+                    {suggestions.length === 0 && customerPhone.trim().length >= 3 && (
+                      <p className="px-3 py-2 text-xs text-zinc-500">No matches — pick New to add them.</p>
+                    )}
+                  </div>
+                )}
+              </div>
               <input
-                type="tel"
-                required
                 className="flex-1 rounded border border-black/[.15] bg-transparent px-3 py-1.5 text-sm dark:border-white/[.2]"
-                placeholder="Phone number *"
-                value={customerPhone}
-                onChange={(e) => {
-                  setCustomerPhone(e.target.value);
-                  setCustomerLookup("idle");
-                }}
-                onBlur={handlePhoneBlur}
-              />
-              <input
-                className="flex-1 rounded border border-black/[.15] bg-transparent px-3 py-1.5 text-sm dark:border-white/[.2]"
-                placeholder={customerLookup === "existing" ? "Customer name" : "Customer name *"}
+                placeholder={isExistingCustomer ? "Customer name" : "Customer name *"}
                 value={customerName}
                 onChange={(e) => setCustomerName(e.target.value)}
               />
             </div>
-            {customerLookup === "checking" && (
-              <p className="mt-1 text-xs text-zinc-500">Looking up customer…</p>
-            )}
-            {customerLookup === "existing" && (
+            {isExistingCustomer && (
               <p className="mt-1 text-xs text-green-600">Existing customer — reusing their record.</p>
             )}
-            {customerLookup === "new" && (
-              <p className="mt-1 text-xs text-amber-500">No customer with this phone yet — a new one will be added.</p>
+            {!isExistingCustomer && customerPhone.trim().length > 0 && (
+              <p className="mt-1 text-xs text-amber-500">New customer — will be added on charge.</p>
             )}
 
             <div className="mt-2 flex gap-2">
