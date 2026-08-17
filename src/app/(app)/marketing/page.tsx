@@ -8,9 +8,12 @@ export default async function MarketingPage({
   searchParams: Promise<{ brand?: string; q?: string }>;
 }) {
   const { brand: brandId = "", q = "" } = await searchParams;
-  const brands = await getBrands();
 
-  const [promotions, customers] = await Promise.all([
+  // brandId/q come straight from the URL, so promotions/customers don't
+  // actually depend on the brands list -- fetch all three in parallel
+  // instead of waiting on getBrands() first.
+  const [brands, promotions, customers] = await Promise.all([
+    getBrands(),
     listPromotionsAction(brandId),
     listCustomersAction(q),
   ]);
