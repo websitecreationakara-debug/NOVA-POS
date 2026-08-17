@@ -1,10 +1,27 @@
-export default function MarketingPage() {
+import { getBrands } from "@/lib/supabase/queries";
+import { listCustomersAction, listPromotionsAction } from "./actions";
+import MarketingClient from "./MarketingClient";
+
+export default async function MarketingPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ brand?: string; q?: string }>;
+}) {
+  const { brand: brandId = "", q = "" } = await searchParams;
+  const brands = await getBrands();
+
+  const [promotions, customers] = await Promise.all([
+    listPromotionsAction(brandId),
+    listCustomersAction(q),
+  ]);
+
   return (
-    <main className="p-8">
-      <h1 className="text-2xl font-semibold">Marketing</h1>
-      <p className="mt-2 text-neutral-500">
-        Promotions & customer segments — built in Phase 5.
-      </p>
-    </main>
+    <MarketingClient
+      brands={brands}
+      currentBrandId={brandId}
+      promotions={promotions}
+      customers={customers}
+      searchTerm={q}
+    />
   );
 }
