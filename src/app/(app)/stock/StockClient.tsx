@@ -8,6 +8,10 @@ import { adjustStockAction, setLowStockThresholdAction, uploadProductImageAction
 
 type Draft = { delta: string; reason: string };
 
+function formatMoney(n: number) {
+  return `$${n.toFixed(2)}`;
+}
+
 export default function StockClient({
   brands,
   currentBrand,
@@ -226,6 +230,7 @@ export default function StockClient({
             <tr className="border-b border-black/[.08] text-left text-xs text-zinc-500 dark:border-white/[.145]">
               <th className="px-6 py-2 font-medium">Image</th>
               <th className="px-3 py-2 font-medium">Product</th>
+              <th className="px-3 py-2 font-medium">Price</th>
               <th className="px-3 py-2 font-medium">Category</th>
               <th className="px-3 py-2 font-medium">Stock</th>
               <th className="px-3 py-2 font-medium">Low-stock at</th>
@@ -278,6 +283,9 @@ export default function StockClient({
                   <td className="px-3 py-2">
                     <div className="font-medium">{p.name}</div>
                     {p.sku && <div className="text-xs text-zinc-400">{p.sku}</div>}
+                  </td>
+                  <td className="px-3 py-2">
+                    {formatMoney(p.price)} <span className="text-zinc-400">/ {p.unit}</span>
                   </td>
                   <td className="px-3 py-2 text-zinc-500">
                     {p.category_id ? (categoryById.get(p.category_id) ?? "—") : "—"}
@@ -336,7 +344,7 @@ export default function StockClient({
             })}
             {visibleProducts.length === 0 && (
               <tr>
-                <td colSpan={6} className="px-6 py-8 text-center text-sm text-zinc-500">
+                <td colSpan={7} className="px-6 py-8 text-center text-sm text-zinc-500">
                   No products match.
                 </td>
               </tr>
