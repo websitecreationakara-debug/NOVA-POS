@@ -58,19 +58,23 @@ export default function SalesClient({
 
   const isExistingCustomer = selectedCustomer?.phone === customerPhone.trim() && !!selectedCustomer;
 
+  const q = search.trim().toLowerCase();
   const visibleProducts = useMemo(() => {
+    // While searching, look across every category -- otherwise a match
+    // sitting in a category other than the active tab silently disappears
+    // and the empty state ("No products in this category") reads as if
+    // the search came up empty when it didn't.
     let list =
-      activeCategoryId === "all"
+      !q || activeCategoryId === "all"
         ? products
         : products.filter((p) => p.category_id === activeCategoryId);
-    const q = search.trim().toLowerCase();
     if (q) {
       list = list.filter(
         (p) => p.name.toLowerCase().includes(q) || (p.sku ?? "").toLowerCase().includes(q)
       );
     }
     return list;
-  }, [products, activeCategoryId, search]);
+  }, [products, activeCategoryId, q]);
 
   const subtotal = cart.reduce((sum, l) => sum + l.unitPrice * l.quantity, 0);
 
@@ -297,7 +301,9 @@ export default function SalesClient({
               );
             })}
             {visibleProducts.length === 0 && (
-              <p className="col-span-full text-sm text-zinc-500">No products in this category.</p>
+              <p className="col-span-full text-sm text-zinc-500">
+                {q ? "No products match your search." : "No products in this category."}
+              </p>
             )}
           </div>
         </main>
