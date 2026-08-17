@@ -87,3 +87,20 @@ export async function setLowStockThresholdAction(input: {
   revalidatePath("/stock");
   revalidatePath("/sales");
 }
+
+export async function setProductPriceAction(input: {
+  productId: string;
+  price: number;
+}): Promise<void> {
+  const { productId, price } = input;
+  if (Number.isNaN(price) || price < 0) {
+    throw new Error("Price cannot be negative");
+  }
+
+  const { error } = await supabaseAdmin.from("products").update({ price }).eq("id", productId);
+
+  if (error) throw error;
+
+  revalidatePath("/stock");
+  revalidatePath("/sales");
+}

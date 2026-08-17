@@ -4,13 +4,14 @@ import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import type { Brand, Category } from "@/types/database";
 import type { ProductWithStock } from "@/lib/supabase/queries";
-import { adjustStockAction, setLowStockThresholdAction, uploadProductImageAction } from "./actions";
+import {
+  adjustStockAction,
+  setLowStockThresholdAction,
+  setProductPriceAction,
+  uploadProductImageAction,
+} from "./actions";
 
 type Draft = { delta: string; reason: string };
-
-function formatMoney(n: number) {
-  return `$${n.toFixed(2)}`;
-}
 
 export default function StockClient({
   brands,
@@ -29,6 +30,7 @@ export default function StockClient({
   const [lowStockOnly, setLowStockOnly] = useState(false);
   const [drafts, setDrafts] = useState<Record<string, Draft>>({});
   const [thresholdDrafts, setThresholdDrafts] = useState<Record<string, string>>({});
+  const [priceDrafts, setPriceDrafts] = useState<Record<string, string>>({});
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [pendingId, setPendingId] = useState<string | null>(null);
   const [imageErrors, setImageErrors] = useState<Record<string, string>>({});
@@ -164,6 +166,30 @@ export default function StockClient({
     });
   }
 
+  function savePrice(productId: string, currentPrice: number) {
+    const raw = priceDrafts[productId];
+    if (raw === undefined) return;
+    const price = parseFloat(raw);
+    const clear = () =>
+      setPriceDrafts((prev) => {
+        const next = { ...prev };
+        delete next[productId];
+        return next;
+      });
+    if (Number.isNaN(price) || price < 0 || price === currentPrice) {
+      clear();
+      return;
+    }
+    startTransition(async () => {
+      try {
+        await setProductPriceAction({ productId, price });
+        router.refresh();
+      } finally {
+        clear();
+      }
+    });
+  }
+
   return (
     <div className="flex h-full flex-col">
       <header className="flex items-center gap-3 border-b border-black/[.08] px-6 py-3 dark:border-white/[.145]">
@@ -244,6 +270,7 @@ export default function StockClient({
                 !isOut && p.low_stock_threshold > 0 && p.stock_quantity <= p.low_stock_threshold;
               const draft = drafts[p.id] ?? { delta: "", reason: "" };
               const thresholdValue = thresholdDrafts[p.id] ?? String(p.low_stock_threshold);
+              const priceValue = priceDrafts[p.id] ?? String(p.price);
               return (
                 <tr
                   key={p.id}
@@ -285,7 +312,19 @@ export default function StockClient({
                     {p.sku && <div className="text-xs text-zinc-400">{p.sku}</div>}
                   </td>
                   <td className="px-3 py-2">
-                    {formatMoney(p.price)} <span className="text-zinc-400">/ {p.unit}</span>
+                    <div className="flex items-center gap-1">
+                      <span className="text-zinc-400">$</span>
+                      <input
+                        type="number"
+                        min={0}
+                        step="0.01"
+                        value={priceValue}
+                        onChange={(e) => setPriceDrafts((prev) => ({ ...prev, [p.id]: e.target.value }))}
+                        onBlur={() => savePrice(p.id, p.price)}
+                        className="w-20 rounded border border-black/[.15] bg-transparent px-2 py-1 text-sm dark:border-white/[.2]"
+                      />
+                      <span className="text-zinc-400">/ {p.unit}</span>
+                    </div>
                   </td>
                   <td className="px-3 py-2 text-zinc-500">
                     {p.category_id ? (categoryById.get(p.category_id) ?? "—") : "—"}
