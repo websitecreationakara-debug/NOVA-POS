@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ChevronLeft, ChevronRight, Plus, User } from "lucide-react";
+import { ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Plus, User } from "lucide-react";
 import type { Brand, Category, PaymentMethod } from "@/types/database";
 import type { ProductWithStock } from "@/lib/supabase/queries";
 import {
@@ -70,6 +70,7 @@ export default function SalesClient({
   const [search, setSearch] = useState(initialSearch);
   const [pageSize, setPageSize] = useState(20);
   const [page, setPage] = useState(1);
+  const [categoriesExpanded, setCategoriesExpanded] = useState(false);
   const [cart, setCart] = useState<CartLine[]>([]);
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("cash");
   const [paymentReference, setPaymentReference] = useState("");
@@ -347,30 +348,52 @@ export default function SalesClient({
 
       <div className="flex flex-1 overflow-hidden">
         <main className="flex-1 overflow-y-auto p-6">
-          <div className="mb-4 flex flex-wrap gap-2">
-            <button
-              onClick={() => setActiveCategoryId("all")}
-              className={`rounded-full border px-4 py-1.5 text-sm ${
-                activeCategoryId === "all"
-                  ? "border-black bg-black text-white dark:border-white dark:bg-white dark:text-black"
-                  : "border-black/[.15] dark:border-white/[.2]"
+          <div className="mb-4">
+            <div
+              className={`flex flex-wrap gap-2 ${
+                categoriesExpanded ? "" : "max-h-20 overflow-hidden"
               }`}
             >
-              All
-            </button>
-            {categories.map((c) => (
               <button
-                key={c.id}
-                onClick={() => setActiveCategoryId(c.id)}
+                onClick={() => setActiveCategoryId("all")}
                 className={`rounded-full border px-4 py-1.5 text-sm ${
-                  activeCategoryId === c.id
+                  activeCategoryId === "all"
                     ? "border-black bg-black text-white dark:border-white dark:bg-white dark:text-black"
                     : "border-black/[.15] dark:border-white/[.2]"
                 }`}
               >
-                {c.name}
+                All
               </button>
-            ))}
+              {categories.map((c) => (
+                <button
+                  key={c.id}
+                  onClick={() => setActiveCategoryId(c.id)}
+                  className={`rounded-full border px-4 py-1.5 text-sm ${
+                    activeCategoryId === c.id
+                      ? "border-black bg-black text-white dark:border-white dark:bg-white dark:text-black"
+                      : "border-black/[.15] dark:border-white/[.2]"
+                  }`}
+                >
+                  {c.name}
+                </button>
+              ))}
+            </div>
+            {categories.length > 10 && (
+              <button
+                onClick={() => setCategoriesExpanded((v) => !v)}
+                className="mt-2 flex items-center gap-1 text-xs font-medium text-zinc-500 hover:text-black dark:hover:text-white"
+              >
+                {categoriesExpanded ? (
+                  <>
+                    Show fewer categories <ChevronUp className="size-3.5" />
+                  </>
+                ) : (
+                  <>
+                    Show all {categories.length} categories <ChevronDown className="size-3.5" />
+                  </>
+                )}
+              </button>
+            )}
           </div>
 
           <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
