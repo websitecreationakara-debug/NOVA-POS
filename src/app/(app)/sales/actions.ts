@@ -23,6 +23,7 @@ export interface CustomerSuggestion {
   name: string;
   phone: string;
   photoUrl: string | null;
+  address: string | null;
 }
 
 // This is an online-sale POS, not a mart checkout -- every order belongs to
@@ -36,7 +37,7 @@ export async function searchCustomersByPhone(prefix: string): Promise<CustomerSu
 
   const { data, error } = await supabaseAdmin
     .from("customers")
-    .select("id, name, phone, photo_url")
+    .select("id, name, phone, photo_url, address")
     .not("phone", "is", null)
     .ilike("phone", `${trimmed}%`)
     .order("name")
@@ -45,17 +46,31 @@ export async function searchCustomersByPhone(prefix: string): Promise<CustomerSu
 
   return (data ?? [])
     .filter((c): c is typeof c & { phone: string } => c.phone !== null)
-    .map((c) => ({ id: c.id, name: c.name, phone: c.phone, photoUrl: c.photo_url }));
+    .map((c) => ({ id: c.id, name: c.name, phone: c.phone, photoUrl: c.photo_url, address: c.address }));
 }
 
-async function getOrCreateCustomerId(phone: string, name: string): Promise<string> {
+async function getOrCreateCustomerId(phone: string, name: string, address?: string): Promise<string> {
   const { data: existing, error: findError } = await supabaseAdmin
     .from("customers")
-    .select("id")
+    .select("id, address")
     .eq("phone", phone)
     .maybeSingle();
   if (findError) throw findError;
-  if (existing) return existing.id;
+
+  if (existing) {
+    // Fill in the address if the customer didn't have one yet, but never
+    // blank out an address that's already on file just because staff left
+    // the field empty at checkout.
+    const trimmedAddress = address?.trim();
+    if (trimmedAddress && trimmedAddress !== existing.address) {
+      const { error: updateError } = await supabaseAdmin
+        .from("customers")
+        .update({ address: trimmedAddress })
+        .eq("id", existing.id);
+      if (updateError) throw updateError;
+    }
+    return existing.id;
+  }
 
   if (!name) {
     throw new Error("Customer name is required to add a new customer");
@@ -63,7 +78,7 @@ async function getOrCreateCustomerId(phone: string, name: string): Promise<strin
 
   const { data: created, error: insertError } = await supabaseAdmin
     .from("customers")
-    .insert({ name, phone })
+    .insert({ name, phone, address: address?.trim() || null })
     .select("id")
     .single();
   if (insertError) throw insertError;
@@ -78,8 +93,21 @@ export async function chargeOrder(input: {
   paymentReference?: string;
   customerName: string;
   customerPhone: string;
+  customerAddress?: string;
+  discount?: number;
+  deliveryFee?: number;
 }): Promise<ChargeResult> {
-  const { brandId, lines, paymentMethod, paymentReference, customerName, customerPhone } = input;
+  const {
+    brandId,
+    lines,
+    paymentMethod,
+    paymentReference,
+    customerName,
+    customerPhone,
+    customerAddress,
+    discount,
+    deliveryFee,
+  } = input;
 
   if (lines.length === 0) {
     throw new Error("Cart is empty");
@@ -91,12 +119,12 @@ export async function chargeOrder(input: {
     throw new Error("Customer phone number is required");
   }
 
-  const total = lines.reduce((sum, l) => sum + l.unitPrice * l.quantity, 0);
   const user = await getSessionUser();
-  const customerId = await getOrCreateCustomerId(phone, name);
+  const customerId = await getOrCreateCustomerId(phone, name, customerAddress);
 
   // charge_order() runs the order insert, order_items insert, and stock
-  // decrement as one DB transaction — see supabase/migrations/0003.
+  // decrement as one DB transaction — see supabase/migrations/0003 and
+  // 0012 (discount/delivery_fee). It also clamps the final total at 0.
   const { data: orderId, error } = await supabaseAdmin.rpc("charge_order", {
     p_brand_id: brandId,
     p_customer_id: customerId,
@@ -110,6 +138,8 @@ export async function chargeOrder(input: {
     })),
     p_customer_name: name || null,
     p_customer_phone: phone,
+    p_discount: discount ?? 0,
+    p_delivery_fee: deliveryFee ?? 0,
   });
 
   if (error || !orderId) {
@@ -118,9 +148,14 @@ export async function chargeOrder(input: {
 
   const { data: order } = await supabaseAdmin
     .from("orders")
-    .select("invoice_number")
+    .select("invoice_number, total")
     .eq("id", orderId)
     .single();
 
-  return { orderId, invoiceNumber: order?.invoice_number ?? null, total, lines };
+  return {
+    orderId,
+    invoiceNumber: order?.invoice_number ?? null,
+    total: order?.total ?? 0,
+    lines,
+  };
 }

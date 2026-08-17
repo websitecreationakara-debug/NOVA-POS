@@ -76,6 +76,10 @@ export default function SalesClient({
   const [paymentReference, setPaymentReference] = useState("");
   const [customerName, setCustomerName] = useState("");
   const [customerPhone, setCustomerPhone] = useState("");
+  const [customerAddress, setCustomerAddress] = useState("");
+  const [discountPercent, setDiscountPercent] = useState("");
+  const [minusAmount, setMinusAmount] = useState("");
+  const [deliveryFee, setDeliveryFee] = useState("");
   const [selectedCustomer, setSelectedCustomer] = useState<{ id: string; phone: string } | null>(
     null
   );
@@ -144,6 +148,11 @@ export default function SalesClient({
   const pagedProducts = visibleProducts.slice(pageStart, pageStart + pageSize);
 
   const subtotal = cart.reduce((sum, l) => sum + l.unitPrice * l.quantity, 0);
+  const discountPercentValue = Math.min(Math.max(parseFloat(discountPercent) || 0, 0), 100);
+  const minusValue = Math.max(parseFloat(minusAmount) || 0, 0);
+  const deliveryFeeValue = Math.max(parseFloat(deliveryFee) || 0, 0);
+  const discountAmount = subtotal * (discountPercentValue / 100) + minusValue;
+  const finalTotal = Math.max(subtotal - discountAmount + deliveryFeeValue, 0);
 
   function addToCart(product: ProductWithStock) {
     setCart((prev) => {
@@ -237,6 +246,7 @@ export default function SalesClient({
   function selectCustomer(customer: CustomerSuggestion) {
     setCustomerPhone(customer.phone);
     setCustomerName(customer.name);
+    setCustomerAddress(customer.address ?? "");
     setSelectedCustomer({ id: customer.id, phone: customer.phone });
     setPhoneDropdownOpen(false);
   }
@@ -266,12 +276,19 @@ export default function SalesClient({
           paymentReference: paymentReference || undefined,
           customerName,
           customerPhone: phone,
+          customerAddress: customerAddress.trim() || undefined,
+          discount: discountAmount || undefined,
+          deliveryFee: deliveryFeeValue || undefined,
         });
         setReceipt(result);
         setCart([]);
         setPaymentReference("");
         setCustomerName("");
         setCustomerPhone("");
+        setCustomerAddress("");
+        setDiscountPercent("");
+        setMinusAmount("");
+        setDeliveryFee("");
         setSelectedCustomer(null);
         setSuggestions([]);
         router.refresh(); // pick up decremented stock counts for the next sale
@@ -505,9 +522,21 @@ export default function SalesClient({
               <span>Subtotal</span>
               <span>{formatMoney(subtotal)}</span>
             </div>
+            {discountAmount > 0 && (
+              <div className="flex justify-between text-sm text-zinc-500">
+                <span>Discount</span>
+                <span>-{formatMoney(discountAmount)}</span>
+              </div>
+            )}
+            {deliveryFeeValue > 0 && (
+              <div className="flex justify-between text-sm text-zinc-500">
+                <span>Delivery</span>
+                <span>{formatMoney(deliveryFeeValue)}</span>
+              </div>
+            )}
             <div className="mt-1 flex justify-between text-lg font-semibold">
               <span>Total</span>
-              <span>{formatMoney(subtotal)}</span>
+              <span>{formatMoney(finalTotal)}</span>
             </div>
 
             <div className="mt-4 flex gap-2">
@@ -569,6 +598,42 @@ export default function SalesClient({
                 onChange={(e) => setCustomerName(e.target.value)}
               />
             </div>
+            <input
+              className="mt-2 w-full rounded border border-black/[.15] bg-transparent px-3 py-1.5 text-sm dark:border-white/[.2]"
+              placeholder="Address (optional)"
+              value={customerAddress}
+              onChange={(e) => setCustomerAddress(e.target.value)}
+            />
+            <div className="mt-2 flex gap-2">
+              <input
+                type="number"
+                min={0}
+                max={100}
+                step="0.01"
+                placeholder="Discount %"
+                value={discountPercent}
+                onChange={(e) => setDiscountPercent(e.target.value)}
+                className="w-1/3 rounded border border-black/[.15] bg-transparent px-3 py-1.5 text-sm dark:border-white/[.2]"
+              />
+              <input
+                type="number"
+                min={0}
+                step="0.01"
+                placeholder="Minus $"
+                value={minusAmount}
+                onChange={(e) => setMinusAmount(e.target.value)}
+                className="w-1/3 rounded border border-black/[.15] bg-transparent px-3 py-1.5 text-sm dark:border-white/[.2]"
+              />
+              <input
+                type="number"
+                min={0}
+                step="0.01"
+                placeholder="Delivery $"
+                value={deliveryFee}
+                onChange={(e) => setDeliveryFee(e.target.value)}
+                className="w-1/3 rounded border border-black/[.15] bg-transparent px-3 py-1.5 text-sm dark:border-white/[.2]"
+              />
+            </div>
             {isExistingCustomer && (
               <p className="mt-1 text-xs text-green-600">Existing customer — reusing their record.</p>
             )}
@@ -615,7 +680,7 @@ export default function SalesClient({
               onClick={handleCharge}
               className="mt-4 w-full rounded-full bg-green-600 py-2.5 font-medium text-white disabled:opacity-40"
             >
-              {isCharging ? "Charging…" : `Charge ${formatMoney(subtotal)}`}
+              {isCharging ? "Charging…" : `Charge ${formatMoney(finalTotal)}`}
             </button>
           </div>
         </aside>

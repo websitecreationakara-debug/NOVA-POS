@@ -105,6 +105,7 @@ export type Order = {
   discount: number;
   tax: number;
   total: number;
+  delivery_fee: number;
   payment_method: PaymentMethod | null;
   payment_reference: string | null;
   created_by: string | null;
@@ -206,6 +207,13 @@ export type Database = {
             referencedRelation: "brands";
             referencedColumns: ["id"];
           },
+          {
+            foreignKeyName: "orders_customer_id_fkey";
+            columns: ["customer_id"];
+            isOneToOne: false;
+            referencedRelation: "customers";
+            referencedColumns: ["id"];
+          },
         ]
       >;
       order_items: Table<
@@ -242,6 +250,8 @@ export type Database = {
           p_items: Json;
           p_customer_name?: string | null;
           p_customer_phone?: string | null;
+          p_discount?: number;
+          p_delivery_fee?: number;
         };
         Returns: string;
       };

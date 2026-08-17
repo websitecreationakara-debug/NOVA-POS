@@ -16,7 +16,7 @@ export default async function InvoicePage({
 
   if (!invoice) notFound();
 
-  const { order, brandName, brandLogoUrl, items } = invoice;
+  const { order, brandName, brandLogoUrl, customerAddress, items } = invoice;
 
   return (
     <div className="mx-auto max-w-2xl p-8 print:p-0">
@@ -60,6 +60,12 @@ export default async function InvoicePage({
               {order.paid_at ? new Date(order.paid_at).toLocaleString() : "—"}
             </span>
           </div>
+          {customerAddress && (
+            <div className="col-span-2">
+              <span className="text-zinc-500">អាសយដ្ឋាន / Address: </span>
+              <span className="font-medium">{customerAddress}</span>
+            </div>
+          )}
         </div>
 
         <table className="mt-6 w-full text-sm">
@@ -100,6 +106,12 @@ export default async function InvoicePage({
             <div className="flex justify-between text-zinc-600">
               <span>Tax</span>
               <span>{formatMoney(order.tax)}</span>
+            </div>
+          )}
+          {order.delivery_fee > 0 && (
+            <div className="flex justify-between text-zinc-600">
+              <span>ការដឹកជញ្ជូន / Delivery</span>
+              <span>{formatMoney(order.delivery_fee)}</span>
             </div>
           )}
           <div className="mt-2 flex justify-between border-t-2 border-zinc-900 pt-2 text-base font-bold text-amber-600">
