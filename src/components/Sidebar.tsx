@@ -12,7 +12,8 @@ const navItems = [
     roles: ["admin", "sales", "stock", "accountance", "marketing"],
   },
   { href: "/sales", label: "Sales", icon: ShoppingCart, roles: ["admin", "sales"] },
-  { href: "/stock", label: "Stock", icon: Package, roles: ["admin", "stock"] },
+  // TEMPORARY: sales also has Stock access until Demo asks to close it again.
+  { href: "/stock", label: "Stock", icon: Package, roles: ["admin", "stock", "sales"] },
   { href: "/accountance", label: "Accountance", icon: Calculator, roles: ["admin", "accountance"] },
   { href: "/marketing", label: "Marketing", icon: Megaphone, roles: ["admin", "marketing"] },
   { href: "/users", label: "Staff Accounts", icon: Users, roles: ["admin"] },

@@ -12,7 +12,8 @@ const ROLE_HOME: Record<StaffRole, string> = {
 
 const ROLE_ALLOWED_PREFIXES: Record<StaffRole, string[]> = {
   admin: ["/", "/sales", "/stock", "/accountance", "/marketing", "/invoice", "/users"],
-  sales: ["/", "/sales", "/invoice"],
+  // TEMPORARY: sales also has Stock access until Demo asks to close it again.
+  sales: ["/", "/sales", "/invoice", "/stock"],
   stock: ["/", "/stock"],
   accountance: ["/", "/accountance", "/invoice"],
   marketing: ["/", "/marketing"],
