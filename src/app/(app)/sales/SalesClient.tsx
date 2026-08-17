@@ -18,6 +18,40 @@ function formatMoney(n: number) {
   return `$${n.toFixed(2)}`;
 }
 
+function levenshtein(a: string, b: string): number {
+  const m = a.length;
+  const n = b.length;
+  if (m === 0) return n;
+  if (n === 0) return m;
+  const dp = new Array<number>(n + 1);
+  for (let j = 0; j <= n; j++) dp[j] = j;
+  for (let i = 1; i <= m; i++) {
+    let prev = dp[0];
+    dp[0] = i;
+    for (let j = 1; j <= n; j++) {
+      const temp = dp[j];
+      dp[j] = a[i - 1] === b[j - 1] ? prev : 1 + Math.min(prev, dp[j], dp[j - 1]);
+      prev = temp;
+    }
+  }
+  return dp[n];
+}
+
+// Compares the query against individual words rather than the full
+// product name -- normalizing edit distance by string length means a
+// short query trivially scores "close" to any long name, so matching
+// per-word keeps the comparison length-appropriate for typo tolerance.
+function nameSimilarity(query: string, name: string): number {
+  const words = name.toLowerCase().match(/[a-z0-9]+/g) ?? [];
+  let best = 0;
+  for (const word of words) {
+    const dist = levenshtein(query, word);
+    const score = 1 - dist / Math.max(query.length, word.length, 1);
+    if (score > best) best = score;
+  }
+  return best;
+}
+
 export default function SalesClient({
   brands,
   currentBrand,
@@ -78,6 +112,19 @@ export default function SalesClient({
     return list;
   }, [products, activeCategoryId, q]);
 
+  // "Did you mean" fallback for typos -- only worth computing once the
+  // exact search has already come up empty, and only for queries long
+  // enough that a fuzzy match means something.
+  const suggestedProducts = useMemo(() => {
+    if (!q || q.length < 2 || visibleProducts.length > 0) return [];
+    return products
+      .map((p) => ({ product: p, score: nameSimilarity(q, p.name) }))
+      .filter((s) => s.score >= 0.5)
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 6)
+      .map((s) => s.product);
+  }, [products, q, visibleProducts.length]);
+
   // Jump back to page 1 whenever the result set changes underneath the
   // current page -- otherwise switching category/search can strand the
   // user on a page number that no longer has any products. Adjusted
@@ -110,6 +157,42 @@ export default function SalesClient({
         { productId: product.id, name: product.name, unitPrice: product.price, quantity: 1 },
       ];
     });
+  }
+
+  function renderProductCard(p: ProductWithStock) {
+    const isOut = p.stock_quantity <= 0;
+    const isLow = !isOut && p.low_stock_threshold > 0 && p.stock_quantity <= p.low_stock_threshold;
+    return (
+      <button
+        key={p.id}
+        onClick={() => addToCart(p)}
+        className="flex flex-col items-start rounded-lg border border-black/[.08] p-4 text-left transition-colors hover:bg-black/[.03] dark:border-white/[.145] dark:hover:bg-white/[.05]"
+      >
+        <div className="mb-2 aspect-square w-full overflow-hidden rounded bg-zinc-100 dark:bg-zinc-800">
+          {p.image_url ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={p.image_url} alt="" className="h-full w-full object-cover" />
+          ) : (
+            <div className="flex h-full w-full items-center justify-center text-xs text-zinc-400">
+              No image
+            </div>
+          )}
+        </div>
+        <div className="font-medium">{p.name}</div>
+        <div className="mt-1 text-sm text-zinc-500">
+          {formatMoney(p.price)} / {p.unit}
+        </div>
+        <div
+          className={`mt-1 text-xs ${isOut ? "text-red-500" : isLow ? "text-amber-500" : "text-zinc-400"}`}
+        >
+          {isOut
+            ? "Out of stock"
+            : isLow
+              ? `Low stock — ${p.stock_quantity} left`
+              : `${p.stock_quantity} in stock`}
+        </div>
+      </button>
+    );
   }
 
   function updateQuantity(productId: string, delta: number) {
@@ -291,50 +374,24 @@ export default function SalesClient({
           </div>
 
           <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
-            {pagedProducts.map((p) => {
-              const isOut = p.stock_quantity <= 0;
-              const isLow =
-                !isOut && p.low_stock_threshold > 0 && p.stock_quantity <= p.low_stock_threshold;
-              return (
-                <button
-                  key={p.id}
-                  onClick={() => addToCart(p)}
-                  className="flex flex-col items-start rounded-lg border border-black/[.08] p-4 text-left transition-colors hover:bg-black/[.03] dark:border-white/[.145] dark:hover:bg-white/[.05]"
-                >
-                  <div className="mb-2 aspect-square w-full overflow-hidden rounded bg-zinc-100 dark:bg-zinc-800">
-                    {p.image_url ? (
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <img src={p.image_url} alt="" className="h-full w-full object-cover" />
-                    ) : (
-                      <div className="flex h-full w-full items-center justify-center text-xs text-zinc-400">
-                        No image
-                      </div>
-                    )}
-                  </div>
-                  <div className="font-medium">{p.name}</div>
-                  <div className="mt-1 text-sm text-zinc-500">
-                    {formatMoney(p.price)} / {p.unit}
-                  </div>
-                  <div
-                    className={`mt-1 text-xs ${
-                      isOut ? "text-red-500" : isLow ? "text-amber-500" : "text-zinc-400"
-                    }`}
-                  >
-                    {isOut
-                      ? "Out of stock"
-                      : isLow
-                        ? `Low stock — ${p.stock_quantity} left`
-                        : `${p.stock_quantity} in stock`}
-                  </div>
-                </button>
-              );
-            })}
+            {pagedProducts.map(renderProductCard)}
             {visibleProducts.length === 0 && (
               <p className="col-span-full text-sm text-zinc-500">
                 {q ? "No products match your search." : "No products in this category."}
               </p>
             )}
           </div>
+
+          {suggestedProducts.length > 0 && (
+            <div className="mt-6">
+              <p className="mb-2 text-xs font-medium tracking-wide text-zinc-400 uppercase">
+                Did you mean
+              </p>
+              <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
+                {suggestedProducts.map(renderProductCard)}
+              </div>
+            </div>
+          )}
 
           {visibleProducts.length > 0 && (
             <div className="mt-4 flex items-center justify-between text-sm text-zinc-500">
