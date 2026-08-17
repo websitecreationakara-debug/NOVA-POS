@@ -1,18 +1,27 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { LogOut, Search } from "lucide-react";
 import { logoutAction } from "@/app/login/actions";
 
 export default function TopBar({ fullName, role }: { fullName: string; role: string }) {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [query, setQuery] = useState("");
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    // Carry over whatever brand is currently selected -- without this,
+    // submitting a search always dropped back to the alphabetically-first
+    // brand, since /sales with no ?brand= falls back to brands[0].
+    const params = new URLSearchParams();
+    const brand = searchParams.get("brand");
+    if (brand) params.set("brand", brand);
     const q = query.trim();
-    router.push(q ? `/sales?q=${encodeURIComponent(q)}` : "/sales");
+    if (q) params.set("q", q);
+    const qs = params.toString();
+    router.push(qs ? `/sales?${qs}` : "/sales");
   }
 
   return (
