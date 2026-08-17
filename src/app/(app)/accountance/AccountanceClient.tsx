@@ -143,7 +143,7 @@ export default function AccountanceClient({
     <div className="min-h-screen p-6">
       <header className="mb-6 flex flex-wrap items-center gap-3">
         <select
-          className="rounded border border-black/[.15] bg-transparent px-3 py-1.5 text-sm dark:border-white/[.2]"
+          className="rounded border border-black/[.15] bg-card px-3 py-1.5 text-sm text-foreground dark:border-white/[.2]"
           value={currentBrand.id}
           onChange={(e) => switchBrand(e.target.value)}
         >

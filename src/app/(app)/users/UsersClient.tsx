@@ -128,7 +128,7 @@ export default function UsersClient({
             <select
               value={role}
               onChange={(e) => setRole(e.target.value as StaffRole)}
-              className="rounded-lg border border-border bg-transparent px-3 py-2 text-sm capitalize outline-none focus:border-brand"
+              className="rounded-lg border border-border bg-card px-3 py-2 text-sm text-foreground capitalize outline-none focus:border-brand"
             >
               {ROLES.map((r) => (
                 <option key={r} value={r}>
