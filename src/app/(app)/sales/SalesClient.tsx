@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Plus, User } from "lucide-react";
+import { ChevronLeft, ChevronRight, Plus, User } from "lucide-react";
 import type { Brand, Category, PaymentMethod } from "@/types/database";
 import type { ProductWithStock } from "@/lib/supabase/queries";
 import {
@@ -34,6 +34,8 @@ export default function SalesClient({
   const router = useRouter();
   const [activeCategoryId, setActiveCategoryId] = useState<string | "all">("all");
   const [search, setSearch] = useState(initialSearch);
+  const [pageSize, setPageSize] = useState(20);
+  const [page, setPage] = useState(1);
   const [cart, setCart] = useState<CartLine[]>([]);
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("cash");
   const [paymentReference, setPaymentReference] = useState("");
@@ -75,6 +77,23 @@ export default function SalesClient({
     }
     return list;
   }, [products, activeCategoryId, q]);
+
+  // Jump back to page 1 whenever the result set changes underneath the
+  // current page -- otherwise switching category/search can strand the
+  // user on a page number that no longer has any products. Adjusted
+  // during render (React's recommended pattern) rather than in an effect,
+  // to avoid an extra render pass.
+  const filterKey = `${activeCategoryId}|${q}|${pageSize}`;
+  const [prevFilterKey, setPrevFilterKey] = useState(filterKey);
+  if (filterKey !== prevFilterKey) {
+    setPrevFilterKey(filterKey);
+    setPage(1);
+  }
+
+  const pageCount = Math.max(1, Math.ceil(visibleProducts.length / pageSize));
+  const currentPage = Math.min(page, pageCount);
+  const pageStart = (currentPage - 1) * pageSize;
+  const pagedProducts = visibleProducts.slice(pageStart, pageStart + pageSize);
 
   const subtotal = cart.reduce((sum, l) => sum + l.unitPrice * l.quantity, 0);
 
@@ -272,7 +291,7 @@ export default function SalesClient({
           </div>
 
           <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
-            {visibleProducts.map((p) => {
+            {pagedProducts.map((p) => {
               const isOut = p.stock_quantity <= 0;
               const isLow =
                 !isOut && p.low_stock_threshold > 0 && p.stock_quantity <= p.low_stock_threshold;
@@ -316,6 +335,50 @@ export default function SalesClient({
               </p>
             )}
           </div>
+
+          {visibleProducts.length > 0 && (
+            <div className="mt-4 flex items-center justify-between text-sm text-zinc-500">
+              <label className="flex items-center gap-2">
+                Show
+                <select
+                  value={pageSize}
+                  onChange={(e) => setPageSize(Number(e.target.value))}
+                  className="rounded border border-black/[.15] bg-card px-2 py-1 text-sm text-foreground dark:border-white/[.2]"
+                >
+                  {[10, 20, 50, 100].map((size) => (
+                    <option key={size} value={size}>
+                      {size}
+                    </option>
+                  ))}
+                </select>
+                per page
+              </label>
+              <div className="flex items-center gap-3">
+                <span>
+                  {pageStart + 1}–{Math.min(pageStart + pageSize, visibleProducts.length)} of{" "}
+                  {visibleProducts.length}
+                </span>
+                <div className="flex gap-1">
+                  <button
+                    disabled={currentPage <= 1}
+                    onClick={() => setPage((p) => p - 1)}
+                    className="rounded border border-black/[.15] p-1 disabled:opacity-30 dark:border-white/[.2]"
+                    aria-label="Previous page"
+                  >
+                    <ChevronLeft className="size-4" />
+                  </button>
+                  <button
+                    disabled={currentPage >= pageCount}
+                    onClick={() => setPage((p) => p + 1)}
+                    className="rounded border border-black/[.15] p-1 disabled:opacity-30 dark:border-white/[.2]"
+                    aria-label="Next page"
+                  >
+                    <ChevronRight className="size-4" />
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
         </main>
 
         <aside className="flex w-96 flex-col border-l border-black/[.08] dark:border-white/[.145]">
