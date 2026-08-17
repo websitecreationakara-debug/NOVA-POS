@@ -282,6 +282,16 @@ export default function SalesClient({
                   onClick={() => addToCart(p)}
                   className="flex flex-col items-start rounded-lg border border-black/[.08] p-4 text-left transition-colors hover:bg-black/[.03] dark:border-white/[.145] dark:hover:bg-white/[.05]"
                 >
+                  <div className="mb-2 aspect-square w-full overflow-hidden rounded bg-zinc-100 dark:bg-zinc-800">
+                    {p.image_url ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img src={p.image_url} alt="" className="h-full w-full object-cover" />
+                    ) : (
+                      <div className="flex h-full w-full items-center justify-center text-xs text-zinc-400">
+                        No image
+                      </div>
+                    )}
+                  </div>
                   <div className="font-medium">{p.name}</div>
                   <div className="mt-1 text-sm text-zinc-500">
                     {formatMoney(p.price)} / {p.unit}
