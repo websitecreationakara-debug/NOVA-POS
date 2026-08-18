@@ -2,7 +2,15 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Calculator, LayoutDashboard, Megaphone, Package, ShoppingCart, Users } from "lucide-react";
+import {
+  Calculator,
+  ClipboardList,
+  LayoutDashboard,
+  Megaphone,
+  Package,
+  ShoppingCart,
+  Users,
+} from "lucide-react";
 
 const navItems = [
   {
@@ -14,6 +22,12 @@ const navItems = [
   { href: "/sales", label: "Sales", icon: ShoppingCart, roles: ["admin", "sales"] },
   // TEMPORARY: sales also has Stock access until Demo asks to close it again.
   { href: "/stock", label: "Stock", icon: Package, roles: ["admin", "stock", "sales"] },
+  {
+    href: "/orders",
+    label: "Orders",
+    icon: ClipboardList,
+    roles: ["admin", "sales", "stock", "accountance", "marketing"],
+  },
   { href: "/accountance", label: "Accountance", icon: Calculator, roles: ["admin", "accountance"] },
   { href: "/marketing", label: "Marketing", icon: Megaphone, roles: ["admin", "marketing"] },
   { href: "/users", label: "Staff Accounts", icon: Users, roles: ["admin"] },
