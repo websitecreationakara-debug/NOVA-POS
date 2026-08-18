@@ -1,5 +1,13 @@
 import { supabaseAdmin } from "@/lib/supabase/server";
-import type { Brand, CashReconciliation, Category, Expense, Order, Product } from "@/types/database";
+import type {
+  Brand,
+  CashReconciliation,
+  Category,
+  Expense,
+  FulfillmentStatus,
+  Order,
+  Product,
+} from "@/types/database";
 
 export type ProductWithStock = Product & {
   stock_quantity: number;
@@ -187,6 +195,55 @@ export async function getDashboardStats(): Promise<DashboardStats> {
     last7Days,
     recentOrders,
   };
+}
+
+export type OrderListRow = {
+  id: string;
+  invoiceNumber: string | null;
+  brandName: string;
+  customerName: string | null;
+  customerPhone: string | null;
+  total: number;
+  fulfillmentStatus: FulfillmentStatus;
+  paidAt: string | null;
+};
+
+export async function getOrdersList(status?: FulfillmentStatus): Promise<OrderListRow[]> {
+  let query = supabaseAdmin
+    .from("orders")
+    .select("id, invoice_number, customer_name, customer_phone, total, fulfillment_status, paid_at, brands(name)")
+    .eq("status", "paid")
+    .order("paid_at", { ascending: false })
+    .limit(200);
+
+  if (status) {
+    query = query.eq("fulfillment_status", status);
+  }
+
+  const { data, error } = await query;
+  if (error) throw error;
+
+  type Row = {
+    id: string;
+    invoice_number: string | null;
+    customer_name: string | null;
+    customer_phone: string | null;
+    total: number;
+    fulfillment_status: FulfillmentStatus;
+    paid_at: string | null;
+    brands: { name: string } | null;
+  };
+
+  return ((data ?? []) as Row[]).map((o) => ({
+    id: o.id,
+    invoiceNumber: o.invoice_number,
+    brandName: o.brands?.name ?? "—",
+    customerName: o.customer_name,
+    customerPhone: o.customer_phone,
+    total: o.total,
+    fulfillmentStatus: o.fulfillment_status,
+    paidAt: o.paid_at,
+  }));
 }
 
 export type InvoiceData = {

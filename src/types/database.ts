@@ -3,6 +3,7 @@ export type Json = string | number | boolean | null | { [key: string]: Json | un
 export type StaffRole = "admin" | "sales" | "stock" | "accountance" | "marketing";
 export type PaymentMethod = "cash" | "bank_qr";
 export type OrderStatus = "open" | "paid" | "voided";
+export type FulfillmentStatus = "new_order" | "processing" | "delivered" | "cancelled" | "complete";
 export type DiscountType = "percent" | "fixed";
 
 export type Brand = {
@@ -101,6 +102,7 @@ export type Order = {
   brand_id: string;
   customer_id: string | null;
   status: OrderStatus;
+  fulfillment_status: FulfillmentStatus;
   subtotal: number;
   discount: number;
   tax: number;

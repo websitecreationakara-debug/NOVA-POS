@@ -1,6 +1,7 @@
 import { notFound } from "next/navigation";
 import { getInvoice } from "@/lib/supabase/queries";
 import PrintButton from "@/components/PrintButton";
+import OrderStatusControl from "@/components/OrderStatusControl";
 
 function formatMoney(n: number) {
   return `$${n.toFixed(2)}`;
@@ -38,6 +39,9 @@ export default async function InvoicePage({
             <p className="mt-1 text-sm text-zinc-500">
               {order.invoice_number ?? `#${order.id.slice(0, 8)}`}
             </p>
+            <div className="mt-2">
+              <OrderStatusControl orderId={order.id} status={order.fulfillment_status} />
+            </div>
           </div>
         </div>
 
