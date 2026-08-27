@@ -68,6 +68,32 @@ export async function uploadProductImageAction(formData: FormData): Promise<{ im
   return { imageUrl: publicUrl };
 }
 
+export async function removeProductImageAction(input: { productId: string }): Promise<void> {
+  const { productId } = input;
+
+  const { data: product, error: fetchError } = await supabaseAdmin
+    .from("products")
+    .select("image_url")
+    .eq("id", productId)
+    .single();
+  if (fetchError) throw fetchError;
+
+  const { error: updateError } = await supabaseAdmin
+    .from("products")
+    .update({ image_url: null })
+    .eq("id", productId);
+  if (updateError) throw updateError;
+
+  const path = product?.image_url?.split("/product-images/")[1];
+  if (path) {
+    // best-effort: don't fail the removal if the storage object is already gone
+    await supabaseAdmin.storage.from("product-images").remove([path]);
+  }
+
+  revalidatePath("/stock");
+  revalidatePath("/sales");
+}
+
 export async function setLowStockThresholdAction(input: {
   productId: string;
   threshold: number;

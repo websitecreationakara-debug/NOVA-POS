@@ -6,6 +6,7 @@ import type { Brand, Category } from "@/types/database";
 import type { ProductWithStock } from "@/lib/supabase/queries";
 import {
   adjustStockAction,
+  removeProductImageAction,
   setLowStockThresholdAction,
   setProductPriceAction,
   uploadProductImageAction,
@@ -35,6 +36,7 @@ export default function StockClient({
   const [pendingId, setPendingId] = useState<string | null>(null);
   const [imageErrors, setImageErrors] = useState<Record<string, string>>({});
   const [uploadingId, setUploadingId] = useState<string | null>(null);
+  const [removingId, setRemovingId] = useState<string | null>(null);
   const [, startTransition] = useTransition();
 
   const categoryById = useMemo(() => new Map(categories.map((c) => [c.id, c.name])), [categories]);
@@ -140,6 +142,41 @@ export default function StockClient({
         setUploadingId(null);
       }
     });
+  }
+
+  function handleRemoveImage(productId: string) {
+    setRemovingId(productId);
+    startTransition(async () => {
+      try {
+        await removeProductImageAction({ productId });
+        router.refresh();
+      } catch (e) {
+        setImageErrors((prev) => ({
+          ...prev,
+          [productId]: e instanceof Error ? e.message : "Remove failed",
+        }));
+      } finally {
+        setRemovingId(null);
+      }
+    });
+  }
+
+  async function handleDownloadImage(imageUrl: string, productName: string) {
+    try {
+      const res = await fetch(imageUrl);
+      const blob = await res.blob();
+      const ext = imageUrl.split(".").pop()?.split(/[?#]/)[0] || "jpg";
+      const objectUrl = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = objectUrl;
+      a.download = `${productName}.${ext}`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(objectUrl);
+    } catch {
+      window.open(imageUrl, "_blank");
+    }
   }
 
   function saveThreshold(productId: string, currentThreshold: number) {
@@ -288,20 +325,41 @@ export default function StockClient({
                           </div>
                         )}
                       </div>
-                      <label className="cursor-pointer rounded border border-black/[.15] px-2 py-1 text-xs dark:border-white/[.2]">
-                        {uploadingId === p.id ? "…" : p.image_url ? "Change" : "Add"}
-                        <input
-                          type="file"
-                          accept="image/*"
-                          className="hidden"
-                          disabled={uploadingId === p.id}
-                          onChange={(e) => {
-                            const file = e.target.files?.[0] ?? null;
-                            e.target.value = "";
-                            handleImageChange(p.id, file);
-                          }}
-                        />
-                      </label>
+                      <div className="flex flex-col items-start gap-1">
+                        <label className="cursor-pointer rounded border border-black/[.15] px-2 py-1 text-xs dark:border-white/[.2]">
+                          {uploadingId === p.id ? "…" : p.image_url ? "Change" : "Add"}
+                          <input
+                            type="file"
+                            accept="image/*"
+                            className="hidden"
+                            disabled={uploadingId === p.id || removingId === p.id}
+                            onChange={(e) => {
+                              const file = e.target.files?.[0] ?? null;
+                              e.target.value = "";
+                              handleImageChange(p.id, file);
+                            }}
+                          />
+                        </label>
+                        {p.image_url && (
+                          <div className="flex gap-1">
+                            <button
+                              type="button"
+                              className="rounded border border-black/[.15] px-2 py-1 text-xs dark:border-white/[.2]"
+                              onClick={() => handleDownloadImage(p.image_url!, p.name)}
+                            >
+                              Download
+                            </button>
+                            <button
+                              type="button"
+                              disabled={removingId === p.id || uploadingId === p.id}
+                              className="rounded border border-black/[.15] px-2 py-1 text-xs text-red-500 dark:border-white/[.2]"
+                              onClick={() => handleRemoveImage(p.id)}
+                            >
+                              {removingId === p.id ? "…" : "Remove"}
+                            </button>
+                          </div>
+                        )}
+                      </div>
                     </div>
                     {imageErrors[p.id] && (
                       <p className="mt-1 text-xs text-red-500">{imageErrors[p.id]}</p>
