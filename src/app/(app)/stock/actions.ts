@@ -133,6 +133,23 @@ export async function setProductPriceAction(input: {
   revalidatePath("/sales");
 }
 
+export async function setProductCategoryAction(input: {
+  productId: string;
+  categoryId: string | null;
+}): Promise<void> {
+  const { productId, categoryId } = input;
+
+  const { error } = await supabaseAdmin
+    .from("products")
+    .update({ category_id: categoryId })
+    .eq("id", productId);
+
+  if (error) throw error;
+
+  revalidatePath("/stock");
+  revalidatePath("/sales");
+}
+
 export async function renameProductAction(input: { productId: string; name: string }): Promise<void> {
   const { productId, name } = input;
   const trimmed = name.trim();

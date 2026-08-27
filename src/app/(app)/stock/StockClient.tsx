@@ -10,6 +10,7 @@ import {
   removeProductImageAction,
   renameProductAction,
   setLowStockThresholdAction,
+  setProductCategoryAction,
   setProductPriceAction,
   uploadProductImageAction,
 } from "./actions";
@@ -51,8 +52,6 @@ export default function StockClient({
   const [uploadingId, setUploadingId] = useState<string | null>(null);
   const [removingId, setRemovingId] = useState<string | null>(null);
   const [, startTransition] = useTransition();
-
-  const categoryById = useMemo(() => new Map(categories.map((c) => [c.id, c.name])), [categories]);
 
   const visibleProducts = useMemo(() => {
     let list = products;
@@ -237,6 +236,13 @@ export default function StockClient({
       } finally {
         clear();
       }
+    });
+  }
+
+  function changeCategory(productId: string, categoryId: string) {
+    startTransition(async () => {
+      await setProductCategoryAction({ productId, categoryId: categoryId || null });
+      router.refresh();
     });
   }
 
@@ -540,8 +546,19 @@ export default function StockClient({
                       <span className="text-zinc-400">/ {p.unit}</span>
                     </div>
                   </td>
-                  <td className="px-3 py-2 text-zinc-500">
-                    {p.category_id ? (categoryById.get(p.category_id) ?? "—") : "—"}
+                  <td className="px-3 py-2">
+                    <select
+                      value={p.category_id ?? ""}
+                      onChange={(e) => changeCategory(p.id, e.target.value)}
+                      className="rounded border border-black/[.15] bg-card px-2 py-1 text-sm text-foreground dark:border-white/[.2]"
+                    >
+                      <option value="">No category</option>
+                      {categories.map((c) => (
+                        <option key={c.id} value={c.id}>
+                          {c.name}
+                        </option>
+                      ))}
+                    </select>
                   </td>
                   <td className="px-3 py-2">
                     <span
