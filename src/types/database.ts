@@ -289,6 +289,12 @@ export type Database = {
         };
         Returns: number;
       };
+      delete_order: {
+        Args: {
+          p_order_id: string;
+        };
+        Returns: string[];
+      };
     };
     Enums: Record<string, never>;
     CompositeTypes: Record<string, never>;
