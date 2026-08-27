@@ -7,6 +7,7 @@ import type { ProductWithStock } from "@/lib/supabase/queries";
 import {
   adjustStockAction,
   createProductAction,
+  deactivateProductAction,
   linkProductToSiteAction,
   removeProductImageAction,
   renameProductAction,
@@ -56,6 +57,8 @@ export default function StockClient({
   const [linkSearching, setLinkSearching] = useState(false);
   const [linkError, setLinkError] = useState<string | null>(null);
   const [linkApplyingId, setLinkApplyingId] = useState<string | null>(null);
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [pendingId, setPendingId] = useState<string | null>(null);
   const [imageErrors, setImageErrors] = useState<Record<string, string>>({});
@@ -301,6 +304,19 @@ export default function StockClient({
     });
   }
 
+  function deleteProduct(productId: string) {
+    setDeletingId(productId);
+    startTransition(async () => {
+      try {
+        await deactivateProductAction({ productId });
+        router.refresh();
+      } finally {
+        setDeletingId(null);
+        setConfirmDeleteId(null);
+      }
+    });
+  }
+
   function changeCategory(productId: string, categoryId: string) {
     startTransition(async () => {
       await setProductCategoryAction({ productId, categoryId: categoryId || null });
@@ -513,6 +529,7 @@ export default function StockClient({
               <th className="px-3 py-2 font-medium">Stock</th>
               <th className="px-3 py-2 font-medium">Low-stock at</th>
               <th className="px-3 py-2 font-medium">Adjust</th>
+              <th className="px-3 py-2 font-medium"></th>
             </tr>
           </thead>
           <tbody>
@@ -677,10 +694,39 @@ export default function StockClient({
                     </div>
                     {errors[p.id] && <p className="mt-1 text-xs text-red-500">{errors[p.id]}</p>}
                   </td>
+                  <td className="px-3 py-2">
+                    {confirmDeleteId === p.id ? (
+                      <div className="flex items-center gap-1">
+                        <button
+                          type="button"
+                          disabled={deletingId === p.id}
+                          onClick={() => deleteProduct(p.id)}
+                          className="rounded border border-red-500 px-2 py-1 text-xs text-red-500"
+                        >
+                          {deletingId === p.id ? "…" : "Confirm"}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setConfirmDeleteId(null)}
+                          className="rounded border border-black/[.15] px-2 py-1 text-xs dark:border-white/[.2]"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => setConfirmDeleteId(p.id)}
+                        className="rounded border border-black/[.15] px-2 py-1 text-xs text-red-500 dark:border-white/[.2]"
+                      >
+                        Delete
+                      </button>
+                    )}
+                  </td>
                 </tr>
                 {linkingProductId === p.id && (
                   <tr className="border-b border-black/[.06] bg-black/[.02] dark:border-white/[.08] dark:bg-white/[.03]">
-                    <td colSpan={7} className="px-6 py-3">
+                    <td colSpan={8} className="px-6 py-3">
                       <div className="flex flex-wrap items-center gap-2">
                         <span className="text-xs text-zinc-500">
                           Linking to {currentBrand.name}'s website:
@@ -745,7 +791,7 @@ export default function StockClient({
             })}
             {visibleProducts.length === 0 && (
               <tr>
-                <td colSpan={7} className="px-6 py-8 text-center text-sm text-zinc-500">
+                <td colSpan={8} className="px-6 py-8 text-center text-sm text-zinc-500">
                   No products match.
                 </td>
               </tr>

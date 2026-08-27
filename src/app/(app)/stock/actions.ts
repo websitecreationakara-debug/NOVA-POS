@@ -172,6 +172,22 @@ export async function linkProductToSiteAction(input: {
   revalidatePath("/sales");
 }
 
+// Soft delete: hides the product from Stock/Sales instead of a hard DELETE,
+// since past orders, stock adjustments, and site links may still reference
+// it -- a real DELETE would either fail on those foreign keys or silently
+// erase order history.
+export async function deactivateProductAction(input: { productId: string }): Promise<void> {
+  const { error } = await supabaseAdmin
+    .from("products")
+    .update({ is_active: false })
+    .eq("id", input.productId);
+
+  if (error) throw error;
+
+  revalidatePath("/stock");
+  revalidatePath("/sales");
+}
+
 export async function setProductCategoryAction(input: {
   productId: string;
   categoryId: string | null;
