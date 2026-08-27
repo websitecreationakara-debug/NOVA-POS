@@ -3,7 +3,8 @@
 import { revalidatePath } from "next/cache";
 import { supabaseAdmin } from "@/lib/supabase/server";
 import { getSessionUser } from "@/lib/supabase/auth-server";
-import { pushStockToSites } from "@/lib/site-sync";
+import { pushStockToSites, searchSiteProducts, linkProductToSite, type SiteProductCandidate } from "@/lib/site-sync";
+import type { ProductSiteLink } from "@/types/database";
 
 export async function adjustStockAction(input: {
   productId: string;
@@ -128,6 +129,44 @@ export async function setProductPriceAction(input: {
   const { error } = await supabaseAdmin.from("products").update({ price }).eq("id", productId);
 
   if (error) throw error;
+
+  revalidatePath("/stock");
+  revalidatePath("/sales");
+}
+
+const VALID_SITES: ProductSiteLink["site"][] = [
+  "bosba-premium-foods",
+  "bosba-drink-snack",
+  "sora-sake",
+];
+
+export async function searchSiteProductForLinkAction(input: {
+  site: string;
+  query: string;
+}): Promise<SiteProductCandidate[]> {
+  const { site, query } = input;
+  if (!VALID_SITES.includes(site as ProductSiteLink["site"])) return [];
+  return searchSiteProducts(site as ProductSiteLink["site"], query);
+}
+
+export async function linkProductToSiteAction(input: {
+  productId: string;
+  site: string;
+  siteProductId: string;
+  matchedName: string;
+  siteStock: number | null;
+}): Promise<void> {
+  const { productId, site, siteProductId, matchedName, siteStock } = input;
+  if (!VALID_SITES.includes(site as ProductSiteLink["site"])) {
+    throw new Error("Invalid site");
+  }
+  await linkProductToSite(
+    productId,
+    site as ProductSiteLink["site"],
+    siteProductId,
+    matchedName,
+    siteStock
+  );
 
   revalidatePath("/stock");
   revalidatePath("/sales");

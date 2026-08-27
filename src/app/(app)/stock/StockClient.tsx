@@ -1,19 +1,23 @@
 "use client";
 
-import { useMemo, useState, useTransition } from "react";
+import { Fragment, useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import type { Brand, Category } from "@/types/database";
 import type { ProductWithStock } from "@/lib/supabase/queries";
 import {
   adjustStockAction,
   createProductAction,
+  linkProductToSiteAction,
   removeProductImageAction,
   renameProductAction,
+  searchSiteProductForLinkAction,
   setLowStockThresholdAction,
   setProductCategoryAction,
   setProductPriceAction,
   uploadProductImageAction,
 } from "./actions";
+
+type SiteProductCandidate = { id: string; title: string; stock: number | null; type: string };
 
 type Draft = { delta: string; reason: string };
 
@@ -46,6 +50,12 @@ export default function StockClient({
   });
   const [addError, setAddError] = useState<string | null>(null);
   const [isAdding, setIsAdding] = useState(false);
+  const [linkingProductId, setLinkingProductId] = useState<string | null>(null);
+  const [linkQuery, setLinkQuery] = useState("");
+  const [linkResults, setLinkResults] = useState<SiteProductCandidate[]>([]);
+  const [linkSearching, setLinkSearching] = useState(false);
+  const [linkError, setLinkError] = useState<string | null>(null);
+  const [linkApplyingId, setLinkApplyingId] = useState<string | null>(null);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [pendingId, setPendingId] = useState<string | null>(null);
   const [imageErrors, setImageErrors] = useState<Record<string, string>>({});
@@ -235,6 +245,62 @@ export default function StockClient({
         router.refresh();
       } finally {
         clear();
+      }
+    });
+  }
+
+  async function runLinkSearch(query: string) {
+    setLinkSearching(true);
+    setLinkError(null);
+    try {
+      const results = await searchSiteProductForLinkAction({ site: currentBrand.slug, query });
+      setLinkResults(results);
+      if (results.length === 0) setLinkError("No matches found on the website.");
+    } catch {
+      setLinkError("Search failed");
+    } finally {
+      setLinkSearching(false);
+    }
+  }
+
+  function openLinkPanel(productId: string, productName: string) {
+    setLinkingProductId(productId);
+    setLinkQuery(productName);
+    setLinkResults([]);
+    setLinkError(null);
+    runLinkSearch(productName);
+  }
+
+  function closeLinkPanel() {
+    setLinkingProductId(null);
+    setLinkQuery("");
+    setLinkResults([]);
+    setLinkError(null);
+  }
+
+  function applyLink(productId: string, candidate: SiteProductCandidate) {
+    if (candidate.type === "variable") {
+      setLinkError(
+        "This website product is sold in sizes/variants -- not supported for sync yet."
+      );
+      return;
+    }
+    setLinkApplyingId(candidate.id);
+    startTransition(async () => {
+      try {
+        await linkProductToSiteAction({
+          productId,
+          site: currentBrand.slug,
+          siteProductId: candidate.id,
+          matchedName: candidate.title,
+          siteStock: candidate.stock,
+        });
+        closeLinkPanel();
+        router.refresh();
+      } catch {
+        setLinkError("Failed to link");
+      } finally {
+        setLinkApplyingId(null);
       }
     });
   }
@@ -463,8 +529,8 @@ export default function StockClient({
               const priceValue = priceDrafts[p.id] ?? String(p.price);
               const nameValue = nameDrafts[p.id] ?? p.name;
               return (
+                <Fragment key={p.id}>
                 <tr
-                  key={p.id}
                   className="border-b border-black/[.06] align-top dark:border-white/[.08]"
                 >
                   <td className="px-6 py-2">
@@ -530,6 +596,19 @@ export default function StockClient({
                       className="w-full min-w-0 rounded border border-transparent bg-transparent px-1 py-0.5 font-medium hover:border-black/[.15] focus:border-black/[.3] dark:hover:border-white/[.2] dark:focus:border-white/[.4]"
                     />
                     {p.sku && <div className="text-xs text-zinc-400">{p.sku}</div>}
+                    {p.site_link ? (
+                      <div className="mt-1 text-xs text-green-600 dark:text-green-500">
+                        🔗 Linked ({p.site_link.site})
+                      </div>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => openLinkPanel(p.id, p.name)}
+                        className="mt-1 text-xs text-blue-600 underline dark:text-blue-400"
+                      >
+                        Link to website
+                      </button>
+                    )}
                   </td>
                   <td className="px-3 py-2">
                     <div className="flex items-center gap-1">
@@ -610,6 +689,69 @@ export default function StockClient({
                     {errors[p.id] && <p className="mt-1 text-xs text-red-500">{errors[p.id]}</p>}
                   </td>
                 </tr>
+                {linkingProductId === p.id && (
+                  <tr className="border-b border-black/[.06] bg-black/[.02] dark:border-white/[.08] dark:bg-white/[.03]">
+                    <td colSpan={7} className="px-6 py-3">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="text-xs text-zinc-500">
+                          Linking to {currentBrand.name}'s website:
+                        </span>
+                        <input
+                          type="text"
+                          value={linkQuery}
+                          onChange={(e) => setLinkQuery(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") runLinkSearch(linkQuery);
+                          }}
+                          className="w-56 rounded border border-black/[.15] bg-transparent px-2 py-1 text-sm dark:border-white/[.2]"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => runLinkSearch(linkQuery)}
+                          disabled={linkSearching}
+                          className="rounded border border-black/[.15] px-2 py-1 text-xs dark:border-white/[.2]"
+                        >
+                          {linkSearching ? "Searching…" : "Search"}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={closeLinkPanel}
+                          className="rounded border border-black/[.15] px-2 py-1 text-xs dark:border-white/[.2]"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                      {linkError && <p className="mt-2 text-xs text-red-500">{linkError}</p>}
+                      {linkResults.length > 0 && (
+                        <ul className="mt-2 flex flex-col gap-1">
+                          {linkResults.map((c) => (
+                            <li
+                              key={c.id}
+                              className="flex items-center justify-between gap-2 rounded border border-black/[.1] px-3 py-1.5 text-sm dark:border-white/[.15]"
+                            >
+                              <span>
+                                {c.title}{" "}
+                                <span className="text-xs text-zinc-400">
+                                  (stock: {c.stock ?? "untracked"}
+                                  {c.type === "variable" ? ", has size variants" : ""})
+                                </span>
+                              </span>
+                              <button
+                                type="button"
+                                disabled={linkApplyingId === c.id}
+                                onClick={() => applyLink(p.id, c)}
+                                className="rounded border border-black/[.15] px-2 py-1 text-xs dark:border-white/[.2]"
+                              >
+                                {linkApplyingId === c.id ? "…" : "Link"}
+                              </button>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </td>
+                  </tr>
+                )}
+                </Fragment>
               );
             })}
             {visibleProducts.length === 0 && (

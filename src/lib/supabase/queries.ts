@@ -12,6 +12,7 @@ import type {
 export type ProductWithStock = Product & {
   stock_quantity: number;
   low_stock_threshold: number;
+  site_link: { site: string; site_product_id: string } | null;
 };
 
 export async function getBrands(): Promise<Brand[]> {
@@ -36,7 +37,7 @@ export async function getCatalogForBrand(brandId: string): Promise<{
       // grew past a few hundred products (URL length limit on the GET).
       supabaseAdmin
         .from("products")
-        .select("*, stock_levels(quantity, low_stock_threshold)")
+        .select("*, stock_levels(quantity, low_stock_threshold), product_site_links(site, site_product_id)")
         .eq("brand_id", brandId)
         .eq("is_active", true)
         .order("name"),
@@ -47,13 +48,15 @@ export async function getCatalogForBrand(brandId: string): Promise<{
 
   type ProductRow = Product & {
     stock_levels: { quantity: number; low_stock_threshold: number } | null;
+    product_site_links: { site: string; site_product_id: string }[];
   };
   const productsWithStock: ProductWithStock[] = ((products ?? []) as ProductRow[]).map((p) => {
-    const { stock_levels, ...product } = p;
+    const { stock_levels, product_site_links, ...product } = p;
     return {
       ...product,
       stock_quantity: stock_levels?.quantity ?? 0,
       low_stock_threshold: stock_levels?.low_stock_threshold ?? 0,
+      site_link: product_site_links?.[0] ?? null,
     };
   });
 
