@@ -367,9 +367,8 @@ export default function SalesClient({
         <main className="flex-1 overflow-y-auto p-6">
           <div className="mb-4">
             <div
-              className={`flex flex-wrap gap-2 ${
-                categoriesExpanded ? "" : "max-h-20 overflow-hidden"
-              }`}
+              className="flex flex-wrap gap-2"
+              style={categoriesExpanded ? undefined : { maxHeight: "5rem", overflow: "hidden" }}
             >
               <button
                 onClick={() => setActiveCategoryId("all")}
