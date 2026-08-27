@@ -19,7 +19,7 @@ export type ProductWithStock = Product & {
 // given -- Bosba Premium Foods is the primary business, so it goes first
 // regardless of alphabetical order (which would otherwise put BOSBA
 // Drink&Snack first).
-const DEFAULT_BRAND_SLUG = "bosba-premium-foods";
+export const DEFAULT_BRAND_SLUG = "bosba-premium-foods";
 
 export async function getBrands(): Promise<Brand[]> {
   const { data, error } = await supabaseAdmin.from("brands").select("*").order("name");
@@ -28,6 +28,23 @@ export async function getBrands(): Promise<Brand[]> {
   return brands.toSorted((a, b) =>
     a.slug === DEFAULT_BRAND_SLUG ? -1 : b.slug === DEFAULT_BRAND_SLUG ? 1 : 0
   );
+}
+
+type ProductRow = Product & {
+  stock_levels: { quantity: number; low_stock_threshold: number } | null;
+  product_site_links: { site: string; site_product_id: string }[];
+};
+
+function mapProductRows(products: ProductRow[]): ProductWithStock[] {
+  return products.map((p) => {
+    const { stock_levels, product_site_links, ...product } = p;
+    return {
+      ...product,
+      stock_quantity: stock_levels?.quantity ?? 0,
+      low_stock_threshold: stock_levels?.low_stock_threshold ?? 0,
+      site_link: product_site_links?.[0] ?? null,
+    };
+  });
 }
 
 export async function getCatalogForBrand(brandId: string): Promise<{
@@ -55,21 +72,44 @@ export async function getCatalogForBrand(brandId: string): Promise<{
   if (catError) throw catError;
   if (prodError) throw prodError;
 
-  type ProductRow = Product & {
-    stock_levels: { quantity: number; low_stock_threshold: number } | null;
-    product_site_links: { site: string; site_product_id: string }[];
-  };
-  const productsWithStock: ProductWithStock[] = ((products ?? []) as ProductRow[]).map((p) => {
-    const { stock_levels, product_site_links, ...product } = p;
-    return {
-      ...product,
-      stock_quantity: stock_levels?.quantity ?? 0,
-      low_stock_threshold: stock_levels?.low_stock_threshold ?? 0,
-      site_link: product_site_links?.[0] ?? null,
-    };
-  });
+  return { categories: categories ?? [], products: mapProductRows((products ?? []) as ProductRow[]) };
+}
 
-  return { categories: categories ?? [], products: productsWithStock };
+// Same as getCatalogForBrand, but filters by the brand's slug via an embedded
+// join instead of its id -- lets the default-brand page load (no ?brand= in
+// the URL, e.g. clicking Sales/Stock in the sidebar) start this fetch
+// immediately in parallel with getBrands(), instead of waiting on getBrands()
+// first just to resolve which id "the default brand" even is.
+export async function getCatalogForBrandSlug(slug: string): Promise<{
+  categories: Category[];
+  products: ProductWithStock[];
+}> {
+  const [{ data: categories, error: catError }, { data: products, error: prodError }] =
+    await Promise.all([
+      supabaseAdmin
+        .from("categories")
+        .select("*, brands!inner(slug)")
+        .eq("brands.slug", slug)
+        .order("sort_order"),
+      supabaseAdmin
+        .from("products")
+        .select(
+          "*, stock_levels(quantity, low_stock_threshold), product_site_links(site, site_product_id), brands!inner(slug)"
+        )
+        .eq("brands.slug", slug)
+        .eq("is_active", true)
+        .order("name"),
+    ]);
+
+  if (catError) throw catError;
+  if (prodError) throw prodError;
+
+  const cleanCategories = (categories ?? []).map(({ brands: _brands, ...c }) => c) as Category[];
+  const cleanProducts = ((products ?? []) as (ProductRow & { brands: { slug: string } })[]).map(
+    ({ brands: _brands, ...p }) => p as ProductRow
+  );
+
+  return { categories: cleanCategories, products: mapProductRows(cleanProducts) };
 }
 
 export type DailySalesSummary = {

@@ -175,11 +175,29 @@ export type Database = {
       profiles: Table<Profile, Omit<Profile, "created_at">>;
       categories: Table<
         Category,
-        Omit<Category, "id" | "created_at"> & Partial<Pick<Category, "id" | "sort_order">>
+        Omit<Category, "id" | "created_at"> & Partial<Pick<Category, "id" | "sort_order">>,
+        [
+          {
+            foreignKeyName: "categories_brand_id_fkey";
+            columns: ["brand_id"];
+            isOneToOne: false;
+            referencedRelation: "brands";
+            referencedColumns: ["id"];
+          },
+        ]
       >;
       products: Table<
         Product,
-        Omit<Product, "id" | "created_at" | "updated_at"> & Partial<Pick<Product, "id">>
+        Omit<Product, "id" | "created_at" | "updated_at"> & Partial<Pick<Product, "id">>,
+        [
+          {
+            foreignKeyName: "products_brand_id_fkey";
+            columns: ["brand_id"];
+            isOneToOne: false;
+            referencedRelation: "brands";
+            referencedColumns: ["id"];
+          },
+        ]
       >;
       customers: Table<
         Customer,

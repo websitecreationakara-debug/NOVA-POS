@@ -1,4 +1,4 @@
-import { getBrands, getCatalogForBrand } from "@/lib/supabase/queries";
+import { DEFAULT_BRAND_SLUG, getBrands, getCatalogForBrand, getCatalogForBrandSlug } from "@/lib/supabase/queries";
 import StockClient from "./StockClient";
 
 export default async function StockPage({
@@ -8,14 +8,18 @@ export default async function StockPage({
 }) {
   const { brand: brandIdParam } = await searchParams;
 
-  // Switching brands always sets ?brand=<a valid id already in the list>,
-  // so start the (expensive, catalogs run into the hundreds of products)
-  // catalog fetch immediately instead of waiting for getBrands() to
-  // resolve first -- that serial wait was doubling the round trip on
-  // every brand switch. Only falls back to a second fetch below if the
-  // id turns out to be missing/stale.
+  // Start the (expensive, catalogs run into the hundreds of products) catalog
+  // fetch immediately instead of waiting for getBrands() to resolve first --
+  // that serial wait was doubling the round trip on every navigation. If
+  // ?brand= is set (switching brands), fetch straight by id; otherwise (e.g.
+  // clicking Sales/Stock in the sidebar, which carries no ?brand=) fetch by
+  // the known default brand's slug so it doesn't need getBrands() to resolve
+  // an id first. Either way, only falls back to a second fetch below if the
+  // guess turns out to be wrong/stale.
   const brandsPromise = getBrands();
-  const optimisticCatalogPromise = brandIdParam ? getCatalogForBrand(brandIdParam) : null;
+  const optimisticCatalogPromise = brandIdParam
+    ? getCatalogForBrand(brandIdParam)
+    : getCatalogForBrandSlug(DEFAULT_BRAND_SLUG);
 
   const brands = await brandsPromise;
 
@@ -28,11 +32,15 @@ export default async function StockPage({
     );
   }
 
-  const currentBrand = brands.find((b) => b.id === brandIdParam) ?? brands[0];
-  const { categories, products } =
-    optimisticCatalogPromise && currentBrand.id === brandIdParam
-      ? await optimisticCatalogPromise
-      : await getCatalogForBrand(currentBrand.id);
+  const currentBrand = brandIdParam
+    ? (brands.find((b) => b.id === brandIdParam) ?? brands[0])
+    : (brands.find((b) => b.slug === DEFAULT_BRAND_SLUG) ?? brands[0]);
+  const optimisticIsValid = brandIdParam
+    ? currentBrand.id === brandIdParam
+    : currentBrand.slug === DEFAULT_BRAND_SLUG;
+  const { categories, products } = optimisticIsValid
+    ? await optimisticCatalogPromise
+    : await getCatalogForBrand(currentBrand.id);
 
   return (
     <StockClient
