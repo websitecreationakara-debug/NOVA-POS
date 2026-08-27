@@ -15,10 +15,19 @@ export type ProductWithStock = Product & {
   site_link: { site: string; site_product_id: string } | null;
 };
 
+// Sales/Stock fall back to brands[0] as the default brand when no ?brand= is
+// given -- Bosba Premium Foods is the primary business, so it goes first
+// regardless of alphabetical order (which would otherwise put BOSBA
+// Drink&Snack first).
+const DEFAULT_BRAND_SLUG = "bosba-premium-foods";
+
 export async function getBrands(): Promise<Brand[]> {
   const { data, error } = await supabaseAdmin.from("brands").select("*").order("name");
   if (error) throw error;
-  return data ?? [];
+  const brands = data ?? [];
+  return brands.toSorted((a, b) =>
+    a.slug === DEFAULT_BRAND_SLUG ? -1 : b.slug === DEFAULT_BRAND_SLUG ? 1 : 0
+  );
 }
 
 export async function getCatalogForBrand(brandId: string): Promise<{
