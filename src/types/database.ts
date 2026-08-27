@@ -75,6 +75,16 @@ export type StockLevel = {
   updated_at: string;
 };
 
+export type ProductSiteLink = {
+  id: string;
+  product_id: string;
+  site: "bosba-premium-foods" | "bosba-drink-snack" | "sora-sake";
+  site_product_id: string;
+  matched_name: string | null;
+  match_confidence: "exact" | "loose";
+  created_at: string;
+};
+
 export type StockAdjustment = {
   id: string;
   product_id: string;
@@ -193,6 +203,19 @@ export type Database = {
       stock_adjustments: Table<
         StockAdjustment,
         Omit<StockAdjustment, "id" | "created_at"> & Partial<Pick<StockAdjustment, "id">>
+      >;
+      product_site_links: Table<
+        ProductSiteLink,
+        Omit<ProductSiteLink, "id" | "created_at"> & Partial<Pick<ProductSiteLink, "id">>,
+        [
+          {
+            foreignKeyName: "product_site_links_product_id_fkey";
+            columns: ["product_id"];
+            isOneToOne: false;
+            referencedRelation: "products";
+            referencedColumns: ["id"];
+          },
+        ]
       >;
       promotions: Table<
         Promotion,

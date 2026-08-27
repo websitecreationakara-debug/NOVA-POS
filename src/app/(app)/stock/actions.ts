@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { supabaseAdmin } from "@/lib/supabase/server";
 import { getSessionUser } from "@/lib/supabase/auth-server";
+import { pushStockToSites } from "@/lib/site-sync";
 
 export async function adjustStockAction(input: {
   productId: string;
@@ -25,6 +26,7 @@ export async function adjustStockAction(input: {
 
   revalidatePath("/stock");
   revalidatePath("/sales");
+  await pushStockToSites([productId]);
   return { quantity: data };
 }
 
