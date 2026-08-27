@@ -106,7 +106,7 @@ export default function SalesClient({
     // and the empty state ("No products in this category") reads as if
     // the search came up empty when it didn't.
     let list =
-      !q || activeCategoryId === "all"
+      q || activeCategoryId === "all"
         ? products
         : products.filter((p) => p.category_id === activeCategoryId);
     if (q) {
