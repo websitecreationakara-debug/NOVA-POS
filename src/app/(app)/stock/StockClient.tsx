@@ -6,7 +6,9 @@ import type { Brand, Category } from "@/types/database";
 import type { ProductWithStock } from "@/lib/supabase/queries";
 import {
   adjustStockAction,
+  createProductAction,
   removeProductImageAction,
+  renameProductAction,
   setLowStockThresholdAction,
   setProductPriceAction,
   uploadProductImageAction,
@@ -32,6 +34,17 @@ export default function StockClient({
   const [drafts, setDrafts] = useState<Record<string, Draft>>({});
   const [thresholdDrafts, setThresholdDrafts] = useState<Record<string, string>>({});
   const [priceDrafts, setPriceDrafts] = useState<Record<string, string>>({});
+  const [nameDrafts, setNameDrafts] = useState<Record<string, string>>({});
+  const [showAddForm, setShowAddForm] = useState(false);
+  const [newProduct, setNewProduct] = useState({
+    name: "",
+    sku: "",
+    price: "",
+    unit: "pcs",
+    categoryId: "",
+  });
+  const [addError, setAddError] = useState<string | null>(null);
+  const [isAdding, setIsAdding] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [pendingId, setPendingId] = useState<string | null>(null);
   const [imageErrors, setImageErrors] = useState<Record<string, string>>({});
@@ -203,6 +216,64 @@ export default function StockClient({
     });
   }
 
+  function saveName(productId: string, currentName: string) {
+    const raw = nameDrafts[productId];
+    if (raw === undefined) return;
+    const trimmed = raw.trim();
+    const clear = () =>
+      setNameDrafts((prev) => {
+        const next = { ...prev };
+        delete next[productId];
+        return next;
+      });
+    if (!trimmed || trimmed === currentName) {
+      clear();
+      return;
+    }
+    startTransition(async () => {
+      try {
+        await renameProductAction({ productId, name: trimmed });
+        router.refresh();
+      } finally {
+        clear();
+      }
+    });
+  }
+
+  function submitNewProduct() {
+    const name = newProduct.name.trim();
+    const price = parseFloat(newProduct.price);
+    if (!name) {
+      setAddError("Name is required");
+      return;
+    }
+    if (Number.isNaN(price) || price < 0) {
+      setAddError("Enter a valid price");
+      return;
+    }
+    setAddError(null);
+    setIsAdding(true);
+    startTransition(async () => {
+      try {
+        await createProductAction({
+          brandId: currentBrand.id,
+          categoryId: newProduct.categoryId || null,
+          name,
+          sku: newProduct.sku || null,
+          price,
+          unit: newProduct.unit,
+        });
+        setNewProduct({ name: "", sku: "", price: "", unit: "pcs", categoryId: "" });
+        setShowAddForm(false);
+        router.refresh();
+      } catch (e) {
+        setAddError(e instanceof Error ? e.message : "Failed to add product");
+      } finally {
+        setIsAdding(false);
+      }
+    });
+  }
+
   function savePrice(productId: string, currentPrice: number) {
     const raw = priceDrafts[productId];
     if (raw === undefined) return;
@@ -258,8 +329,84 @@ export default function StockClient({
             />
             Low/out of stock only
           </label>
+          <button
+            type="button"
+            onClick={() => {
+              setShowAddForm((v) => !v);
+              setAddError(null);
+            }}
+            className="rounded border border-black/[.15] px-3 py-1.5 text-sm dark:border-white/[.2]"
+          >
+            {showAddForm ? "Cancel" : "+ Add Product"}
+          </button>
         </div>
       </header>
+
+      {showAddForm && (
+        <div className="flex flex-wrap items-end gap-3 border-b border-black/[.08] bg-black/[.02] px-6 py-3 dark:border-white/[.145] dark:bg-white/[.03]">
+          <div className="flex flex-col gap-1">
+            <label className="text-xs text-zinc-500">Name</label>
+            <input
+              type="text"
+              value={newProduct.name}
+              onChange={(e) => setNewProduct((p) => ({ ...p, name: e.target.value }))}
+              className="w-56 rounded border border-black/[.15] bg-transparent px-2 py-1 text-sm dark:border-white/[.2]"
+            />
+          </div>
+          <div className="flex flex-col gap-1">
+            <label className="text-xs text-zinc-500">SKU (optional)</label>
+            <input
+              type="text"
+              value={newProduct.sku}
+              onChange={(e) => setNewProduct((p) => ({ ...p, sku: e.target.value }))}
+              className="w-32 rounded border border-black/[.15] bg-transparent px-2 py-1 text-sm dark:border-white/[.2]"
+            />
+          </div>
+          <div className="flex flex-col gap-1">
+            <label className="text-xs text-zinc-500">Price</label>
+            <input
+              type="number"
+              min={0}
+              value={newProduct.price}
+              onChange={(e) => setNewProduct((p) => ({ ...p, price: e.target.value }))}
+              className="w-24 rounded border border-black/[.15] bg-transparent px-2 py-1 text-sm dark:border-white/[.2]"
+            />
+          </div>
+          <div className="flex flex-col gap-1">
+            <label className="text-xs text-zinc-500">Unit</label>
+            <input
+              type="text"
+              value={newProduct.unit}
+              onChange={(e) => setNewProduct((p) => ({ ...p, unit: e.target.value }))}
+              className="w-20 rounded border border-black/[.15] bg-transparent px-2 py-1 text-sm dark:border-white/[.2]"
+            />
+          </div>
+          <div className="flex flex-col gap-1">
+            <label className="text-xs text-zinc-500">Category</label>
+            <select
+              value={newProduct.categoryId}
+              onChange={(e) => setNewProduct((p) => ({ ...p, categoryId: e.target.value }))}
+              className="rounded border border-black/[.15] bg-card px-2 py-1 text-sm text-foreground dark:border-white/[.2]"
+            >
+              <option value="">No category</option>
+              {categories.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name}
+                </option>
+              ))}
+            </select>
+          </div>
+          <button
+            type="button"
+            disabled={isAdding}
+            onClick={submitNewProduct}
+            className="rounded border border-black/[.15] bg-black px-3 py-1.5 text-sm text-white dark:border-white/[.2] dark:bg-white dark:text-black"
+          >
+            {isAdding ? "Adding…" : "Save"}
+          </button>
+          {addError && <p className="text-xs text-red-500">{addError}</p>}
+        </div>
+      )}
 
       <div className="flex flex-wrap gap-2 border-b border-black/[.08] px-6 py-3 dark:border-white/[.145]">
         <button
@@ -308,6 +455,7 @@ export default function StockClient({
               const draft = drafts[p.id] ?? { delta: "", reason: "" };
               const thresholdValue = thresholdDrafts[p.id] ?? String(p.low_stock_threshold);
               const priceValue = priceDrafts[p.id] ?? String(p.price);
+              const nameValue = nameDrafts[p.id] ?? p.name;
               return (
                 <tr
                   key={p.id}
@@ -366,7 +514,15 @@ export default function StockClient({
                     )}
                   </td>
                   <td className="px-3 py-2">
-                    <div className="font-medium">{p.name}</div>
+                    <input
+                      type="text"
+                      value={nameValue}
+                      onChange={(e) =>
+                        setNameDrafts((prev) => ({ ...prev, [p.id]: e.target.value }))
+                      }
+                      onBlur={() => saveName(p.id, p.name)}
+                      className="w-full min-w-0 rounded border border-transparent bg-transparent px-1 py-0.5 font-medium hover:border-black/[.15] focus:border-black/[.3] dark:hover:border-white/[.2] dark:focus:border-white/[.4]"
+                    />
                     {p.sku && <div className="text-xs text-zinc-400">{p.sku}</div>}
                   </td>
                   <td className="px-3 py-2">

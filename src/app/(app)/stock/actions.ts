@@ -132,3 +132,61 @@ export async function setProductPriceAction(input: {
   revalidatePath("/stock");
   revalidatePath("/sales");
 }
+
+export async function renameProductAction(input: { productId: string; name: string }): Promise<void> {
+  const { productId, name } = input;
+  const trimmed = name.trim();
+  if (!trimmed) {
+    throw new Error("Name cannot be empty");
+  }
+
+  const { error } = await supabaseAdmin
+    .from("products")
+    .update({ name: trimmed })
+    .eq("id", productId);
+
+  if (error) throw error;
+
+  revalidatePath("/stock");
+  revalidatePath("/sales");
+}
+
+export async function createProductAction(input: {
+  brandId: string;
+  categoryId: string | null;
+  name: string;
+  sku: string | null;
+  price: number;
+  unit: string;
+}): Promise<{ id: string }> {
+  const { brandId, categoryId, name, sku, price, unit } = input;
+  const trimmedName = name.trim();
+  if (!trimmedName) {
+    throw new Error("Name is required");
+  }
+  if (Number.isNaN(price) || price < 0) {
+    throw new Error("Price cannot be negative");
+  }
+  const trimmedUnit = unit.trim() || "pcs";
+
+  const { data, error } = await supabaseAdmin
+    .from("products")
+    .insert({
+      brand_id: brandId,
+      category_id: categoryId,
+      name: trimmedName,
+      sku: sku?.trim() || null,
+      price,
+      unit: trimmedUnit,
+      image_url: null,
+      is_active: true,
+    })
+    .select("id")
+    .single();
+
+  if (error || !data) throw error ?? new Error("Failed to create product");
+
+  revalidatePath("/stock");
+  revalidatePath("/sales");
+  return { id: data.id };
+}
