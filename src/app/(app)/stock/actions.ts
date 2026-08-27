@@ -9,7 +9,7 @@ import type { ProductSiteLink } from "@/types/database";
 export async function adjustStockAction(input: {
   productId: string;
   delta: number;
-  reason: string;
+  reason?: string;
 }): Promise<{ quantity: number }> {
   const { productId, delta, reason } = input;
   const user = await getSessionUser();
@@ -17,7 +17,7 @@ export async function adjustStockAction(input: {
   const { data, error } = await supabaseAdmin.rpc("adjust_stock", {
     p_product_id: productId,
     p_delta: delta,
-    p_reason: reason,
+    p_reason: reason ?? null,
     p_created_by: user?.id ?? null,
   });
 

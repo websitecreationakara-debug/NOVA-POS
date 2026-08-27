@@ -19,7 +19,7 @@ import {
 
 type SiteProductCandidate = { id: string; title: string; stock: number | null; type: string };
 
-type Draft = { delta: string; reason: string };
+type Draft = { delta: string };
 
 export default function StockClient({
   brands,
@@ -91,7 +91,7 @@ export default function StockClient({
   function updateDraft(productId: string, field: keyof Draft, value: string) {
     setDrafts((prev) => ({
       ...prev,
-      [productId]: { ...(prev[productId] ?? { delta: "", reason: "" }), [field]: value },
+      [productId]: { ...(prev[productId] ?? { delta: "" }), [field]: value },
     }));
   }
 
@@ -102,10 +102,6 @@ export default function StockClient({
       setErrors((prev) => ({ ...prev, [productId]: "Enter a non-zero amount" }));
       return;
     }
-    if (!draft.reason.trim()) {
-      setErrors((prev) => ({ ...prev, [productId]: "Reason required" }));
-      return;
-    }
     setErrors((prev) => {
       const next = { ...prev };
       delete next[productId];
@@ -114,7 +110,7 @@ export default function StockClient({
     setPendingId(productId);
     startTransition(async () => {
       try {
-        await adjustStockAction({ productId, delta, reason: draft.reason.trim() });
+        await adjustStockAction({ productId, delta });
         setDrafts((prev) => {
           const next = { ...prev };
           delete next[productId];
@@ -524,7 +520,7 @@ export default function StockClient({
               const isOut = p.stock_quantity <= 0;
               const isLow =
                 !isOut && p.low_stock_threshold > 0 && p.stock_quantity <= p.low_stock_threshold;
-              const draft = drafts[p.id] ?? { delta: "", reason: "" };
+              const draft = drafts[p.id] ?? { delta: "" };
               const thresholdValue = thresholdDrafts[p.id] ?? String(p.low_stock_threshold);
               const priceValue = priceDrafts[p.id] ?? String(p.price);
               const nameValue = nameDrafts[p.id] ?? p.name;
@@ -670,13 +666,6 @@ export default function StockClient({
                         value={draft.delta}
                         onChange={(e) => updateDraft(p.id, "delta", e.target.value)}
                         className="w-20 rounded border border-black/[.15] bg-transparent px-2 py-1 text-sm dark:border-white/[.2]"
-                      />
-                      <input
-                        type="text"
-                        placeholder="Reason"
-                        value={draft.reason}
-                        onChange={(e) => updateDraft(p.id, "reason", e.target.value)}
-                        className="w-32 rounded border border-black/[.15] bg-transparent px-2 py-1 text-sm dark:border-white/[.2]"
                       />
                       <button
                         disabled={pendingId === p.id}

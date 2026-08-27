@@ -284,7 +284,7 @@ export type Database = {
         Args: {
           p_product_id: string;
           p_delta: number;
-          p_reason: string;
+          p_reason: string | null;
           p_created_by: string | null;
         };
         Returns: number;
