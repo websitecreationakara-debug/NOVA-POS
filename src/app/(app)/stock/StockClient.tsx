@@ -2,7 +2,7 @@
 
 import { Fragment, useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { X } from "lucide-react";
+import { ArrowDown, ArrowUp, ArrowUpDown, X } from "lucide-react";
 import type { Brand, Category } from "@/types/database";
 import type { ProductWithStock } from "@/lib/supabase/queries";
 import {
@@ -24,6 +24,37 @@ import {
 type SiteProductCandidate = { id: string; title: string; stock: number | null; type: string };
 
 type Draft = { delta: string };
+
+function SortHeader({
+  label,
+  active,
+  dir,
+  onClick,
+}: {
+  label: string;
+  active: boolean;
+  dir: "asc" | "desc";
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="flex items-center gap-1 font-medium hover:text-foreground"
+    >
+      {label}
+      {active ? (
+        dir === "asc" ? (
+          <ArrowUp className="size-3" />
+        ) : (
+          <ArrowDown className="size-3" />
+        )
+      ) : (
+        <ArrowUpDown className="size-3 opacity-40" />
+      )}
+    </button>
+  );
+}
 
 export default function StockClient({
   brands,
@@ -73,7 +104,27 @@ export default function StockClient({
   const [imageErrors, setImageErrors] = useState<Record<string, string>>({});
   const [uploadingId, setUploadingId] = useState<string | null>(null);
   const [removingId, setRemovingId] = useState<string | null>(null);
+  const [sortKey, setSortKey] = useState<"name" | "price" | "category" | "stock" | "threshold" | null>(
+    null
+  );
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
   const [, startTransition] = useTransition();
+
+  const categoryName = useMemo(
+    () => new Map(categories.map((c) => [c.id, c.name])),
+    [categories]
+  );
+
+  function toggleSort(key: "name" | "price" | "category" | "stock" | "threshold") {
+    if (sortKey !== key) {
+      setSortKey(key);
+      setSortDir("asc");
+    } else if (sortDir === "asc") {
+      setSortDir("desc");
+    } else {
+      setSortKey(null);
+    }
+  }
 
   const visibleProducts = useMemo(() => {
     let list = products;
@@ -93,8 +144,20 @@ export default function StockClient({
           (p.low_stock_threshold > 0 && p.stock_quantity <= p.low_stock_threshold)
       );
     }
+    if (sortKey) {
+      const dir = sortDir === "asc" ? 1 : -1;
+      list = [...list].sort((a, b) => {
+        if (sortKey === "name") return a.name.localeCompare(b.name) * dir;
+        if (sortKey === "price") return (a.price - b.price) * dir;
+        if (sortKey === "stock") return (a.stock_quantity - b.stock_quantity) * dir;
+        if (sortKey === "threshold") return (a.low_stock_threshold - b.low_stock_threshold) * dir;
+        const nameA = categoryName.get(a.category_id ?? "") ?? "";
+        const nameB = categoryName.get(b.category_id ?? "") ?? "";
+        return nameA.localeCompare(nameB) * dir;
+      });
+    }
     return list;
-  }, [products, activeCategoryId, search, lowStockOnly]);
+  }, [products, activeCategoryId, search, lowStockOnly, sortKey, sortDir, categoryName]);
 
   const categoryProductCounts = useMemo(() => {
     const map = new Map<string, number>();
@@ -659,11 +722,46 @@ export default function StockClient({
           <thead className="sticky top-0 bg-zinc-50 dark:bg-zinc-900">
             <tr className="border-b border-black/[.08] text-left text-xs text-zinc-500 dark:border-white/[.145]">
               <th className="px-6 py-2 font-medium">Image</th>
-              <th className="px-3 py-2 font-medium">Product</th>
-              <th className="px-3 py-2 font-medium">Price</th>
-              <th className="px-3 py-2 font-medium">Category</th>
-              <th className="px-3 py-2 font-medium">Stock</th>
-              <th className="px-3 py-2 font-medium">Low-stock at</th>
+              <th className="px-3 py-2">
+                <SortHeader
+                  label="Product"
+                  active={sortKey === "name"}
+                  dir={sortDir}
+                  onClick={() => toggleSort("name")}
+                />
+              </th>
+              <th className="px-3 py-2">
+                <SortHeader
+                  label="Price"
+                  active={sortKey === "price"}
+                  dir={sortDir}
+                  onClick={() => toggleSort("price")}
+                />
+              </th>
+              <th className="px-3 py-2">
+                <SortHeader
+                  label="Category"
+                  active={sortKey === "category"}
+                  dir={sortDir}
+                  onClick={() => toggleSort("category")}
+                />
+              </th>
+              <th className="px-3 py-2">
+                <SortHeader
+                  label="Stock"
+                  active={sortKey === "stock"}
+                  dir={sortDir}
+                  onClick={() => toggleSort("stock")}
+                />
+              </th>
+              <th className="px-3 py-2">
+                <SortHeader
+                  label="Low-stock at"
+                  active={sortKey === "threshold"}
+                  dir={sortDir}
+                  onClick={() => toggleSort("threshold")}
+                />
+              </th>
               <th className="px-3 py-2 font-medium">Adjust</th>
               <th className="px-3 py-2 font-medium"></th>
             </tr>
