@@ -2,12 +2,15 @@
 
 import { Fragment, useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
+import { X } from "lucide-react";
 import type { Brand, Category } from "@/types/database";
 import type { ProductWithStock } from "@/lib/supabase/queries";
 import {
   adjustStockAction,
+  createCategoryAction,
   createProductAction,
   deactivateProductAction,
+  deleteCategoryAction,
   linkProductToSiteAction,
   removeProductImageAction,
   renameProductAction,
@@ -59,6 +62,12 @@ export default function StockClient({
   const [linkApplyingId, setLinkApplyingId] = useState<string | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [showAddCategory, setShowAddCategory] = useState(false);
+  const [newCategoryName, setNewCategoryName] = useState("");
+  const [categoryError, setCategoryError] = useState<string | null>(null);
+  const [isAddingCategory, setIsAddingCategory] = useState(false);
+  const [confirmDeleteCategoryId, setConfirmDeleteCategoryId] = useState<string | null>(null);
+  const [deletingCategoryId, setDeletingCategoryId] = useState<string | null>(null);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [pendingId, setPendingId] = useState<string | null>(null);
   const [imageErrors, setImageErrors] = useState<Record<string, string>>({});
@@ -86,6 +95,15 @@ export default function StockClient({
     }
     return list;
   }, [products, activeCategoryId, search, lowStockOnly]);
+
+  const categoryProductCounts = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const p of products) {
+      if (!p.category_id) continue;
+      map.set(p.category_id, (map.get(p.category_id) ?? 0) + 1);
+    }
+    return map;
+  }, [products]);
 
   function switchBrand(brandId: string) {
     router.push(`/stock?brand=${brandId}`);
@@ -324,6 +342,48 @@ export default function StockClient({
     });
   }
 
+  function submitNewCategory() {
+    const name = newCategoryName.trim();
+    if (!name) {
+      setCategoryError("Name is required");
+      return;
+    }
+    setCategoryError(null);
+    setIsAddingCategory(true);
+    startTransition(async () => {
+      try {
+        await createCategoryAction({ brandId: currentBrand.id, name });
+        setNewCategoryName("");
+        setShowAddCategory(false);
+        router.refresh();
+      } catch (e) {
+        setCategoryError(e instanceof Error ? e.message : "Failed to add category");
+      } finally {
+        setIsAddingCategory(false);
+      }
+    });
+  }
+
+  function cancelAddCategory() {
+    setShowAddCategory(false);
+    setNewCategoryName("");
+    setCategoryError(null);
+  }
+
+  function deleteCategory(categoryId: string) {
+    setDeletingCategoryId(categoryId);
+    startTransition(async () => {
+      try {
+        await deleteCategoryAction({ categoryId });
+        if (activeCategoryId === categoryId) setActiveCategoryId("all");
+        router.refresh();
+      } finally {
+        setDeletingCategoryId(null);
+        setConfirmDeleteCategoryId(null);
+      }
+    });
+  }
+
   function submitNewProduct() {
     const name = newProduct.name.trim();
     const price = parseFloat(newProduct.price);
@@ -503,19 +563,95 @@ export default function StockClient({
         >
           All
         </button>
-        {categories.map((c) => (
+        {categories.map((c) => {
+          const count = categoryProductCounts.get(c.id) ?? 0;
+          if (confirmDeleteCategoryId === c.id) {
+            return (
+              <span
+                key={c.id}
+                className="flex items-center gap-1.5 rounded-full border border-red-500 px-3 py-1 text-xs"
+              >
+                <span className="text-zinc-500">
+                  Delete &quot;{c.name}&quot;
+                  {count > 0 ? ` (${count} product${count === 1 ? "" : "s"} → No category)` : ""}?
+                </span>
+                <button
+                  type="button"
+                  disabled={deletingCategoryId === c.id}
+                  onClick={() => deleteCategory(c.id)}
+                  className="font-medium text-red-500"
+                >
+                  {deletingCategoryId === c.id ? "…" : "Yes"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setConfirmDeleteCategoryId(null)}
+                  className="text-zinc-500"
+                >
+                  No
+                </button>
+              </span>
+            );
+          }
+          return (
+            <span key={c.id} className="group flex items-center gap-0.5">
+              <button
+                onClick={() => setActiveCategoryId(c.id)}
+                className={`rounded-full border px-3 py-1 text-xs ${
+                  activeCategoryId === c.id
+                    ? "border-black bg-black text-white dark:border-white dark:bg-white dark:text-black"
+                    : "border-black/[.15] dark:border-white/[.2]"
+                }`}
+              >
+                {c.name}
+              </button>
+              <button
+                type="button"
+                title="Delete category"
+                onClick={() => setConfirmDeleteCategoryId(c.id)}
+                className="rounded-full p-0.5 text-zinc-400 opacity-0 hover:text-red-500 group-hover:opacity-100"
+              >
+                <X className="size-3" />
+              </button>
+            </span>
+          );
+        })}
+        {showAddCategory ? (
+          <span className="flex items-center gap-1.5">
+            <input
+              autoFocus
+              type="text"
+              value={newCategoryName}
+              onChange={(e) => setNewCategoryName(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") submitNewCategory();
+                if (e.key === "Escape") cancelAddCategory();
+              }}
+              placeholder="Category name"
+              className="w-32 rounded border border-black/[.15] bg-transparent px-2 py-1 text-xs dark:border-white/[.2]"
+            />
+            <button
+              type="button"
+              disabled={isAddingCategory}
+              onClick={submitNewCategory}
+              className="rounded-full border border-black/[.15] px-2.5 py-1 text-xs dark:border-white/[.2]"
+            >
+              {isAddingCategory ? "…" : "Add"}
+            </button>
+            <button type="button" onClick={cancelAddCategory} className="text-xs text-zinc-500">
+              Cancel
+            </button>
+          </span>
+        ) : (
           <button
-            key={c.id}
-            onClick={() => setActiveCategoryId(c.id)}
-            className={`rounded-full border px-3 py-1 text-xs ${
-              activeCategoryId === c.id
-                ? "border-black bg-black text-white dark:border-white dark:bg-white dark:text-black"
-                : "border-black/[.15] dark:border-white/[.2]"
-            }`}
+            type="button"
+            onClick={() => setShowAddCategory(true)}
+            className="rounded-full border border-dashed border-black/[.25] px-3 py-1 text-xs text-zinc-500 dark:border-white/[.3]"
           >
-            {c.name}
+            + New category
           </button>
-        ))}
+        )}
+        {categoryError && <p className="w-full text-xs text-red-500">{categoryError}</p>}
       </div>
 
       <div className="flex-1 overflow-auto">
@@ -729,7 +865,7 @@ export default function StockClient({
                     <td colSpan={8} className="px-6 py-3">
                       <div className="flex flex-wrap items-center gap-2">
                         <span className="text-xs text-zinc-500">
-                          Linking to {currentBrand.name}'s website:
+                          Linking to {currentBrand.name}&apos;s website:
                         </span>
                         <input
                           type="text"

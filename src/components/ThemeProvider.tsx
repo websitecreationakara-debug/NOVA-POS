@@ -14,6 +14,11 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   const [theme, setTheme] = useState<Theme>("light");
 
   useEffect(() => {
+    // Reading the DOM class the blocking script already set, once after
+    // mount, is the documented way to sync post-hydration browser-only state
+    // without a server/client mismatch (computing it during render instead
+    // would disagree with the server-rendered "light" default).
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setTheme(document.documentElement.classList.contains("dark") ? "dark" : "light");
   }, []);
 

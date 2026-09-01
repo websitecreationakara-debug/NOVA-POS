@@ -205,6 +205,54 @@ export async function setProductCategoryAction(input: {
   revalidatePath("/sales");
 }
 
+export async function createCategoryAction(input: {
+  brandId: string;
+  name: string;
+}): Promise<{ id: string }> {
+  const { brandId, name } = input;
+  const trimmed = name.trim();
+  if (!trimmed) {
+    throw new Error("Category name is required");
+  }
+
+  const { data: maxRow } = await supabaseAdmin
+    .from("categories")
+    .select("sort_order")
+    .eq("brand_id", brandId)
+    .order("sort_order", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  const { data, error } = await supabaseAdmin
+    .from("categories")
+    .insert({ brand_id: brandId, name: trimmed, sort_order: (maxRow?.sort_order ?? -1) + 1 })
+    .select("id")
+    .single();
+
+  if (error) {
+    // categories_brand_id_name_key unique constraint
+    if (error.code === "23505") throw new Error("A category with this name already exists");
+    throw error;
+  }
+  if (!data) throw new Error("Failed to create category");
+
+  revalidatePath("/stock");
+  revalidatePath("/sales");
+  return { id: data.id };
+}
+
+// Products in a deleted category fall back to "No category" (the
+// products_category_id_fkey FK is ON DELETE SET NULL) rather than being
+// deleted themselves or blocking the delete.
+export async function deleteCategoryAction(input: { categoryId: string }): Promise<void> {
+  const { error } = await supabaseAdmin.from("categories").delete().eq("id", input.categoryId);
+
+  if (error) throw error;
+
+  revalidatePath("/stock");
+  revalidatePath("/sales");
+}
+
 export async function renameProductAction(input: { productId: string; name: string }): Promise<void> {
   const { productId, name } = input;
   const trimmed = name.trim();
