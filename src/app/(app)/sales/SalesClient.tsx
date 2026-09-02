@@ -106,7 +106,7 @@ export default function SalesClient({
     // and the empty state ("No products in this category") reads as if
     // the search came up empty when it didn't.
     let list =
-      !q || activeCategoryId === "all"
+      q || activeCategoryId === "all"
         ? products
         : products.filter((p) => p.category_id === activeCategoryId);
     if (q) {
@@ -367,9 +367,8 @@ export default function SalesClient({
         <main className="flex-1 overflow-y-auto p-6">
           <div className="mb-4">
             <div
-              className={`flex flex-wrap gap-2 ${
-                categoriesExpanded ? "" : "max-h-20 overflow-hidden"
-              }`}
+              className="flex flex-wrap gap-2"
+              style={categoriesExpanded ? undefined : { maxHeight: "5rem", overflow: "hidden" }}
             >
               <button
                 onClick={() => setActiveCategoryId("all")}

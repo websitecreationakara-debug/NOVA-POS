@@ -18,14 +18,18 @@ export default async function StockPage({
 }) {
   const { brand: brandIdParam } = await searchParams;
 
-  // Switching brands always sets ?brand=<a valid id already in the list>,
-  // so start the (expensive, catalogs run into the hundreds of products)
-  // catalog fetch immediately instead of waiting for getBrands() to
-  // resolve first -- that serial wait was doubling the round trip on
-  // every brand switch. Only falls back to a second fetch below if the
-  // id turns out to be missing/stale.
+  // Start the (expensive, catalogs run into the hundreds of products) catalog
+  // fetch immediately instead of waiting for getBrands() to resolve first --
+  // that serial wait was doubling the round trip on every navigation. If
+  // ?brand= is set (switching brands), fetch straight by id; otherwise (e.g.
+  // clicking Sales/Stock in the sidebar, which carries no ?brand=) fetch by
+  // the known default brand's slug so it doesn't need getBrands() to resolve
+  // an id first. Either way, only falls back to a second fetch below if the
+  // guess turns out to be wrong/stale.
   const brandsPromise = getBrands();
-  const optimisticCatalogPromise = brandIdParam ? getCatalogForBrand(brandIdParam) : null;
+  const optimisticCatalogPromise = brandIdParam
+    ? getCatalogForBrand(brandIdParam)
+    : getCatalogForBrandSlug(DEFAULT_BRAND_SLUG);
 
   const brands = await brandsPromise;
 
@@ -37,7 +41,6 @@ export default async function StockPage({
       </main>
     );
   }
-
   const currentBrand = brands.find((b) => b.id === brandIdParam) ?? brands[0];
 
   // The Website tab follows the selected brand: show only that brand's

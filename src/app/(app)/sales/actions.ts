@@ -2,6 +2,7 @@
 
 import { supabaseAdmin } from "@/lib/supabase/server";
 import { getSessionUser } from "@/lib/supabase/auth-server";
+import { pushStockToSites } from "@/lib/site-sync";
 import type { PaymentMethod } from "@/types/database";
 
 export interface CartLine {
@@ -151,6 +152,8 @@ export async function chargeOrder(input: {
     .select("invoice_number, total")
     .eq("id", orderId)
     .single();
+
+  await pushStockToSites(lines.map((l) => l.productId));
 
   return {
     orderId,

@@ -1,5 +1,10 @@
 @import "tailwindcss";
 
+/* Manual light/dark toggle drives `dark:` utilities via a class on <html>
+   instead of the OS preference, so the ThemeProvider toggle actually
+   overrides system settings instead of just agreeing with them by luck. */
+@custom-variant dark (&:where(.dark, .dark *));
+
 :root {
   --background: #fafafa;
   --foreground: #171717;
@@ -33,18 +38,16 @@
   --font-display: var(--font-outfit);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-    --card: #0d0d0d;
-    --muted: #18181b;
-    --muted-foreground: #a1a1aa;
-    --border: rgba(255, 255, 255, 0.145);
-    --warning-bg: rgba(180, 83, 9, 0.2);
-    --success-bg: rgba(21, 128, 61, 0.2);
-    --accent-bg: rgba(201, 168, 76, 0.15);
-  }
+:root.dark {
+  --background: #0a0a0a;
+  --foreground: #ededed;
+  --card: #0d0d0d;
+  --muted: #18181b;
+  --muted-foreground: #a1a1aa;
+  --border: rgba(255, 255, 255, 0.145);
+  --warning-bg: rgba(180, 83, 9, 0.2);
+  --success-bg: rgba(21, 128, 61, 0.2);
+  --accent-bg: rgba(201, 168, 76, 0.15);
 }
 
 body {

@@ -75,6 +75,16 @@ export type StockLevel = {
   updated_at: string;
 };
 
+export type ProductSiteLink = {
+  id: string;
+  product_id: string;
+  site: "bosba-premium-foods" | "bosba-drink-snack" | "sora-sake";
+  site_product_id: string;
+  matched_name: string | null;
+  match_confidence: "exact" | "loose";
+  created_at: string;
+};
+
 export type StockAdjustment = {
   id: string;
   product_id: string;
@@ -165,11 +175,29 @@ export type Database = {
       profiles: Table<Profile, Omit<Profile, "created_at">>;
       categories: Table<
         Category,
-        Omit<Category, "id" | "created_at"> & Partial<Pick<Category, "id" | "sort_order">>
+        Omit<Category, "id" | "created_at"> & Partial<Pick<Category, "id" | "sort_order">>,
+        [
+          {
+            foreignKeyName: "categories_brand_id_fkey";
+            columns: ["brand_id"];
+            isOneToOne: false;
+            referencedRelation: "brands";
+            referencedColumns: ["id"];
+          },
+        ]
       >;
       products: Table<
         Product,
-        Omit<Product, "id" | "created_at" | "updated_at"> & Partial<Pick<Product, "id">>
+        Omit<Product, "id" | "created_at" | "updated_at"> & Partial<Pick<Product, "id">>,
+        [
+          {
+            foreignKeyName: "products_brand_id_fkey";
+            columns: ["brand_id"];
+            isOneToOne: false;
+            referencedRelation: "brands";
+            referencedColumns: ["id"];
+          },
+        ]
       >;
       customers: Table<
         Customer,
@@ -193,6 +221,19 @@ export type Database = {
       stock_adjustments: Table<
         StockAdjustment,
         Omit<StockAdjustment, "id" | "created_at"> & Partial<Pick<StockAdjustment, "id">>
+      >;
+      product_site_links: Table<
+        ProductSiteLink,
+        Omit<ProductSiteLink, "id" | "created_at"> & Partial<Pick<ProductSiteLink, "id">>,
+        [
+          {
+            foreignKeyName: "product_site_links_product_id_fkey";
+            columns: ["product_id"];
+            isOneToOne: false;
+            referencedRelation: "products";
+            referencedColumns: ["id"];
+          },
+        ]
       >;
       promotions: Table<
         Promotion,
@@ -261,10 +302,16 @@ export type Database = {
         Args: {
           p_product_id: string;
           p_delta: number;
-          p_reason: string;
+          p_reason: string | null;
           p_created_by: string | null;
         };
         Returns: number;
+      };
+      delete_order: {
+        Args: {
+          p_order_id: string;
+        };
+        Returns: string[];
       };
     };
     Enums: Record<string, never>;
