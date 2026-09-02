@@ -2,7 +2,6 @@ import Link from "next/link";
 import { getOrdersList } from "@/lib/supabase/queries";
 import { FULFILLMENT_STATUSES, STATUS_LABELS } from "@/lib/orderStatus";
 import OrderStatusControl from "@/components/OrderStatusControl";
-import DeleteOrderButton from "@/components/DeleteOrderButton";
 import type { FulfillmentStatus } from "@/types/database";
 
 function formatMoney(n: number) {
@@ -65,8 +64,7 @@ export default async function OrdersPage({
                 <th className="py-2 pr-4">Phone</th>
                 <th className="py-2 pr-4 text-right">Total</th>
                 <th className="py-2 pr-4">Status</th>
-                <th className="py-2 pr-4">Date</th>
-                <th className="py-2"></th>
+                <th className="py-2">Date</th>
               </tr>
             </thead>
             <tbody>
@@ -84,11 +82,8 @@ export default async function OrdersPage({
                   <td className="py-2 pr-4">
                     <OrderStatusControl orderId={o.id} status={o.fulfillmentStatus} variant="compact" />
                   </td>
-                  <td className="py-2 pr-4 text-muted-foreground">
+                  <td className="py-2 text-muted-foreground">
                     {o.paidAt ? new Date(o.paidAt).toLocaleDateString() : "—"}
-                  </td>
-                  <td className="py-2">
-                    <DeleteOrderButton orderId={o.id} />
                   </td>
                 </tr>
               ))}
