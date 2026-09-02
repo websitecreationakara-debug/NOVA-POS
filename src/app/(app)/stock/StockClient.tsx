@@ -4,12 +4,14 @@ import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import type { Brand, Category } from "@/types/database";
 import type { ProductWithStock } from "@/lib/supabase/queries";
+import type { WebsiteCatalogData } from "./page";
 import {
   adjustStockAction,
   setLowStockThresholdAction,
   setProductPriceAction,
   uploadProductImageAction,
 } from "./actions";
+import WebsiteProductsPanel from "./WebsiteProductsPanel";
 
 type Draft = { delta: string; reason: string };
 
@@ -18,13 +20,16 @@ export default function StockClient({
   currentBrand,
   categories,
   products,
+  websiteCatalog,
 }: {
   brands: Brand[];
   currentBrand: Brand;
   categories: Category[];
   products: ProductWithStock[];
+  websiteCatalog: WebsiteCatalogData | null;
 }) {
   const router = useRouter();
+  const [activeTab, setActiveTab] = useState<"catalog" | "website">("catalog");
   const [activeCategoryId, setActiveCategoryId] = useState<string | "all">("all");
   const [search, setSearch] = useState("");
   const [lowStockOnly, setLowStockOnly] = useState(false);
@@ -205,6 +210,29 @@ export default function StockClient({
           ))}
         </select>
         <h1 className="text-lg font-medium">Stock</h1>
+        <div className="flex items-center gap-1 rounded-full border border-black/[.15] p-0.5 dark:border-white/[.2]">
+          <button
+            onClick={() => setActiveTab("catalog")}
+            className={`rounded-full px-3 py-1 text-xs ${
+              activeTab === "catalog"
+                ? "bg-black text-white dark:bg-white dark:text-black"
+                : "text-zinc-500"
+            }`}
+          >
+            Catalog
+          </button>
+          <button
+            onClick={() => setActiveTab("website")}
+            className={`rounded-full px-3 py-1 text-xs ${
+              activeTab === "website"
+                ? "bg-black text-white dark:bg-white dark:text-black"
+                : "text-zinc-500"
+            }`}
+          >
+            Website
+          </button>
+        </div>
+        {activeTab === "catalog" && (
         <div className="ml-auto flex items-center gap-3">
           <input
             type="text"
@@ -222,8 +250,25 @@ export default function StockClient({
             Low/out of stock only
           </label>
         </div>
+        )}
       </header>
 
+      {activeTab === "website" ? (
+        websiteCatalog === null ? (
+          <p className="px-6 py-8 text-center text-sm text-zinc-500">
+            {currentBrand.name} has no website catalog. Set its *_PRODUCTS_API_URL / API key env vars.
+          </p>
+        ) : (
+          <WebsiteProductsPanel
+            key={websiteCatalog.id}
+            catalogId={websiteCatalog.id}
+            catalogLabel={websiteCatalog.label}
+            initialProducts={websiteCatalog.products}
+            initialError={websiteCatalog.error}
+          />
+        )
+      ) : (
+      <>
       <div className="flex flex-wrap gap-2 border-b border-black/[.08] px-6 py-3 dark:border-white/[.145]">
         <button
           onClick={() => setActiveCategoryId("all")}
@@ -391,6 +436,8 @@ export default function StockClient({
           </tbody>
         </table>
       </div>
+      </>
+      )}
     </div>
   );
 }
