@@ -22,6 +22,9 @@ export type WebsiteProduct = {
   badge: string | null;
   rating: number | null;
   weight: string | null;
+  // Comma-separated free text, e.g. "Chili, Garlic". Not returned by every
+  // catalog.
+  taste_notes?: string | null;
   pcs: number | null;
   type: WebsiteProductType;
   sort_order: number;
@@ -49,6 +52,7 @@ export type WebsiteProductWrite = {
   badge?: string | null;
   rating?: number | null;
   weight?: string | null;
+  taste_notes?: string | null;
   pcs?: number | null;
   type?: WebsiteProductType;
   sort_order?: number;

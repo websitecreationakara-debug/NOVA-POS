@@ -4,14 +4,14 @@ import Script from "next/script";
 import { ThemeProvider } from "@/components/ThemeProvider";
 import "./globals.css";
 
-// Runs before hydration so the saved (or OS-default) theme applies
-// immediately -- without this, the page would flash light before React
-// mounts and corrects it.
 const THEME_INIT_SCRIPT = `
 (function () {
   try {
     var saved = localStorage.getItem('theme');
-    var isDark = saved ? saved === 'dark' : window.matchMedia('(prefers-color-scheme: dark)').matches;
+    var isDark = saved
+      ? saved === 'dark'
+      : window.matchMedia('(prefers-color-scheme: dark)').matches;
+
     document.documentElement.classList.toggle('dark', isDark);
   } catch (e) {}
 })();
@@ -34,20 +34,27 @@ const outfit = Outfit({
 
 export const metadata: Metadata = {
   title: "NOVA POS",
-  description: "POS for BOSBA Premium Foods, BOSBA Drink&Snack, and SORA SAKE",
+  description:
+    "POS for BOSBA Premium Foods, BOSBA Drink&Snack, and SORA SAKE",
 };
 
-export default function RootLayout({ children }: LayoutProps<"/">) {
+export default function RootLayout({
+  children,
+}: LayoutProps<"/">) {
   return (
     <html
       lang="en"
+      suppressHydrationWarning
       className={`${geistSans.variable} ${geistMono.variable} ${outfit.variable} h-full antialiased`}
     >
       <body className="h-full">
         <Script id="theme-init" strategy="beforeInteractive">
           {THEME_INIT_SCRIPT}
         </Script>
-        <ThemeProvider>{children}</ThemeProvider>
+
+        <ThemeProvider>
+          {children}
+        </ThemeProvider>
       </body>
     </html>
   );
