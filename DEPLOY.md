@@ -7,17 +7,17 @@ NOVA-POS is a Next.js 16 app (App Router, Supabase, Tailwind 4) hosted on **Verc
 | Thing | Value |
 | --- | --- |
 | Vercel team | `website-creation1` (Hobby plan) |
-| Vercel project | `akara-pos` |
+| Vercel project | `nova-pos` |
 | GitHub repo | `websitecreationakara-debug/NOVA-POS` |
 | Production branch | `master` |
-| Production URL | `https://akara-pos.vercel.app` |
+| Production URL | `https://nova-pos-eight.vercel.app` |
 | Custom domain | **not configured yet** (see [Section 3](#3-deploy-to-production--real-domain)) |
 
 The project is already created and linked, so day-to-day deploys just involve
 pushing branches. This document covers the two targets:
 
 - a **preview URL** (per branch / per pull request)
-- the **production** deployment (`akara-pos.vercel.app`, plus a real domain once added)
+- the **production** deployment (`nova-pos-eight.vercel.app`, plus a real domain once added)
 
 ---
 
@@ -34,9 +34,9 @@ git push -u origin my-change       # first push of the branch
 ```
 
 Vercel auto-builds and the preview is at:
-`https://akara-pos-git-my-change-website-creation1.vercel.app`
+`https://nova-pos-git-my-change-website-creation1.vercel.app`
 
-### Update PRODUCTION (`akara-pos.vercel.app`)
+### Update PRODUCTION (`nova-pos-eight.vercel.app`)
 
 ```powershell
 git checkout master
@@ -74,7 +74,7 @@ vercel --prod --force
 ## 1. Prerequisites (one-time)
 
 - You are a member of the `website-creation1` Vercel team.
-- Environment variables are set in Vercel → `akara-pos` → Settings → Environment
+- Environment variables are set in Vercel → `nova-pos` → Settings → Environment
   Variables (see [Section 4](#4-environment-variables)).
 
 Optional local CLI:
@@ -82,7 +82,7 @@ Optional local CLI:
 ```powershell
 npm i -g vercel
 vercel login
-vercel link      # select team "website-creation1", project "akara-pos"
+vercel link      # select team "website-creation1", project "nova-pos"
 ```
 
 ---
@@ -106,8 +106,8 @@ Vercel then builds and gives you:
 
 | URL | Description |
 | --- | --- |
-| `akara-pos-git-my-feature-website-creation1.vercel.app` | Stable per-branch URL. Always points to the latest commit on that branch. |
-| `akara-pos-<hash>-website-creation1.vercel.app` | Unique per-commit URL. Pinned to one deployment. |
+| `nova-pos-git-my-feature-website-creation1.vercel.app` | Stable per-branch URL. Always points to the latest commit on that branch. |
+| `nova-pos-<hash>-website-creation1.vercel.app` | Unique per-commit URL. Pinned to one deployment. |
 
 Preview deploys use the **Preview** environment variables.
 
@@ -121,7 +121,7 @@ vercel            # builds current folder, deploys a PREVIEW, prints the URL
 
 ### Promote a preview to production (no rebuild)
 
-Vercel → `akara-pos` → Deployments → pick the deployment → **Promote to Production**.
+Vercel → `nova-pos` → Deployments → pick the deployment → **Promote to Production**.
 
 ---
 
@@ -130,7 +130,7 @@ Vercel → `akara-pos` → Deployments → pick the deployment → **Promote to 
 ### Deploying
 
 **Option A — Git (recommended, automatic):** merging or pushing to `master`
-triggers a production deployment, served on `akara-pos.vercel.app` (and any custom
+triggers a production deployment, served on `nova-pos-eight.vercel.app` (and any custom
 domain once added).
 
 ```powershell
@@ -148,8 +148,8 @@ vercel --prod
 
 ### Adding a custom domain (one-time, not done yet)
 
-1. Buy a domain (any registrar), e.g. `akara-pos.com`.
-2. Vercel → `akara-pos` → **Settings → Domains** → enter the domain → **Add**.
+1. Buy a domain (any registrar), e.g. `nova-pos.com`.
+2. Vercel → `nova-pos` → **Settings → Domains** → enter the domain → **Add**.
 3. Vercel shows the DNS records to create. At the registrar:
    - Apex `example.com`: **A** record → `76.76.21.21`
      (or ALIAS/ANAME → `cname.vercel-dns.com` if the registrar supports it).
@@ -160,18 +160,25 @@ vercel --prod
    `www` → apex).
 
 After this, every production deploy is automatically served on the custom domain
-— no per-deploy domain step. `akara-pos.vercel.app` keeps working too.
+— no per-deploy domain step. `nova-pos-eight.vercel.app` keeps working too.
 
 ---
 
 ## 4. Environment variables
 
-Set these in Vercel → `akara-pos` → Settings → Environment Variables. Source of
+Set these in Vercel → `nova-pos` → Settings → Environment Variables. Source of
 truth for the list is [`.env.example`](./.env.example).
+
+> **Status:** all variables below are already set on `nova-pos` for
+> **Production, Preview, and Development** (values pulled from the local
+> `.env.local`). `vercel.json` pins the deployment region to `sin1`
+> (Singapore) to match the Supabase project. If a Supabase key ever shows
+> as "Invalid API key" in the runtime logs, re-paste it here (a truncated
+> value is the usual cause) and redeploy.
 
 | Variable | Environments | Notes |
 | --- | --- | --- |
-| `NEXT_PUBLIC_SITE_URL` | Production / Preview / Development | Production = the live URL (`https://akara-pos.vercel.app` or the custom domain). |
+| `NEXT_PUBLIC_SITE_URL` | Production / Preview / Development | Production = the live URL (`https://nova-pos-eight.vercel.app` or the custom domain). |
 | `NEXT_PUBLIC_SUPABASE_URL` | all | Supabase project URL |
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | all | Supabase anon key |
 | `SUPABASE_SERVICE_ROLE_KEY` | Production / Preview | Server-only secret. Never commit. |
@@ -193,8 +200,8 @@ Notes:
 
 - **Supabase Auth redirect URLs** — in the Supabase dashboard →
   Authentication → URL Configuration, add:
-  - `https://akara-pos.vercel.app/**` (and the custom domain once added)
-  - `https://akara-pos-*-website-creation1.vercel.app/**` (preview wildcard)
+  - `https://nova-pos-eight.vercel.app/**` (and the custom domain once added)
+  - `https://nova-pos-*-website-creation1.vercel.app/**` (preview wildcard)
   Without these, login and auth callbacks fail on deployed builds.
 - Run `npm run build` locally once before pushing to catch type/lint errors
   early (`next build`).
