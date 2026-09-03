@@ -118,11 +118,11 @@ export async function listWebsiteProducts(
   catalogId: WebsiteCatalogId
 ): Promise<WebsiteProduct[]> {
   const { listAllParam } = getCatalog(catalogId);
-  const payload = await request<unknown>(
-    catalogId,
-    listAllParam ? `?${listAllParam}` : "",
-    listAllParam ? { headers: authHeaders(catalogId) } : undefined
-  );
+  // Always send the credential: some catalogs (sorasake.wine) require auth on
+  // every request, others use it only to widen the list to include drafts.
+  const payload = await request<unknown>(catalogId, listAllParam ? `?${listAllParam}` : "", {
+    headers: authHeaders(catalogId),
+  });
   const products = unwrap<WebsiteProduct[]>(payload, ["data", "products"]);
   if (!Array.isArray(products)) {
     throw new Error(
@@ -136,7 +136,9 @@ export async function getWebsiteProduct(
   catalogId: WebsiteCatalogId,
   idOrSlug: string
 ): Promise<WebsiteProduct> {
-  const payload = await request<unknown>(catalogId, `/${idOrSlug}`);
+  const payload = await request<unknown>(catalogId, `/${idOrSlug}`, {
+    headers: authHeaders(catalogId),
+  });
   return absolutizeMedia(catalogId, unwrap<WebsiteProduct>(payload, ["data", "product"]));
 }
 

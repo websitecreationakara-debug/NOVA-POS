@@ -1,7 +1,10 @@
 import { getBrands, getCatalogForBrand } from "@/lib/supabase/queries";
 import { catalogForBrandSlug } from "@/lib/websiteProducts/catalogs";
 import { listWebsiteProducts } from "@/lib/websiteProducts/client";
-import type { WebsiteCatalogId, WebsiteProduct } from "@/lib/websiteProducts/types";
+import type {
+  WebsiteCatalogId,
+  WebsiteProduct,
+} from "@/lib/websiteProducts/types";
 import StockClient from "./StockClient";
 
 export type WebsiteCatalogData = {
@@ -18,49 +21,47 @@ export default async function StockPage({
 }) {
   const { brand: brandIdParam } = await searchParams;
 
-  // Start the (expensive, catalogs run into the hundreds of products) catalog
-  // fetch immediately instead of waiting for getBrands() to resolve first --
-  // that serial wait was doubling the round trip on every navigation. If
-  // ?brand= is set (switching brands), fetch straight by id; otherwise (e.g.
-  // clicking Sales/Stock in the sidebar, which carries no ?brand=) fetch by
-  // the known default brand's slug so it doesn't need getBrands() to resolve
-  // an id first. Either way, only falls back to a second fetch below if the
-  // guess turns out to be wrong/stale.
-  const brandsPromise = getBrands();
-  const optimisticCatalogPromise = brandIdParam
-    ? getCatalogForBrand(brandIdParam)
-    : getCatalogForBrandSlug(DEFAULT_BRAND_SLUG);
-
-  const brands = await brandsPromise;
+  const brands = await getBrands();
 
   if (brands.length === 0) {
     return (
       <main className="p-8">
         <h1 className="text-2xl font-semibold">Stock</h1>
-        <p className="mt-2 text-zinc-500">No brands configured yet.</p>
+        <p className="mt-2 text-zinc-500">
+          No brands configured yet.
+        </p>
       </main>
     );
   }
-  const currentBrand = brands.find((b) => b.id === brandIdParam) ?? brands[0];
 
-  // The Website tab follows the selected brand: show only that brand's
-  // storefront catalog (or nothing, if the brand has no storefront wired up).
-  const catalog = catalogForBrandSlug(currentBrand.slug);
-  const websiteCatalogPromise: Promise<WebsiteCatalogData | null> = catalog
-    ? listWebsiteProducts(catalog.id)
-        .then((prods) => ({ id: catalog.id, label: catalog.label, products: prods, error: null }))
-        .catch((e) => ({
-          id: catalog.id,
-          label: catalog.label,
-          products: null,
-          error: e instanceof Error ? e.message : "Failed to load",
-        }))
-    : Promise.resolve(null);
+  const currentBrand =
+    brands.find((b) => b.id === brandIdParam) ?? brands[0];
 
   const { categories, products } =
-    optimisticCatalogPromise && currentBrand.id === brandIdParam
-      ? await optimisticCatalogPromise
-      : await getCatalogForBrand(currentBrand.id);
+    await getCatalogForBrand(currentBrand.id);
+
+  const catalog = catalogForBrandSlug(currentBrand.slug);
+
+  const websiteCatalogPromise: Promise<WebsiteCatalogData | null> =
+    catalog
+      ? listWebsiteProducts(catalog.id)
+          .then((prods) => ({
+            id: catalog.id,
+            label: catalog.label,
+            products: prods,
+            error: null,
+          }))
+          .catch((e) => ({
+            id: catalog.id,
+            label: catalog.label,
+            products: null,
+            error:
+              e instanceof Error
+                ? e.message
+                : "Failed to load",
+          }))
+      : Promise.resolve(null);
+
   const websiteCatalog = await websiteCatalogPromise;
 
   return (

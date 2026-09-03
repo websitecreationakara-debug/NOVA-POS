@@ -21,12 +21,16 @@ export type WebsiteCatalog = {
 
 export const CATALOGS: WebsiteCatalog[] = [
   {
+    // sorasake.wine catalog API. URL env points at
+    // `https://sorasake.wine/api/products` (list/create path). Every request
+    // sends `Authorization: Bearer <token>`; the token is the site's
+    // PRODUCTS_API_KEY (STOCK_SYNC_SECRET is its server-side fallback).
     id: "sorasake",
     label: "sorasake.wine",
     brandSlug: "sora-sake",
     urlEnv: "SORA_SAKE_PRODUCTS_API_URL",
     keyEnv: "SORA_SAKE_PRODUCTS_API_KEY",
-    auth: "x-api-key",
+    auth: "bearer",
   },
   {
     id: "bosba_drink_snack",

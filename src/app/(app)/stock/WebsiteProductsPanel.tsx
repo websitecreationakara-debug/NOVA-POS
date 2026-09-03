@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useCallback, useEffect, useRef, useState, useTransition } from "react";
 import type {
   WebsiteCatalogId,
   WebsiteProduct,
@@ -13,6 +13,11 @@ import {
   updateWebsiteProductAction,
 } from "./websiteActions";
 
+// How often to re-pull the storefront catalog so edits made on the website (or
+// by another POS user) show up here without a manual refresh. The storefront API
+// has no push channel, so this is a poll.
+const POLL_INTERVAL_MS = 15_000;
+
 const emptyForm: WebsiteProductWrite = {
   title: "",
   description: "",
@@ -22,9 +27,21 @@ const emptyForm: WebsiteProductWrite = {
   status: "draft",
   image_url: "",
   weight: "",
+  taste_notes: "",
   type: "simple",
   featured: false,
 };
+
+// Stable key for "did the catalog actually change" — avoids re-rendering the
+// table on every poll when nothing moved.
+function catalogSignature(products: WebsiteProduct[]): string {
+  return products
+    .map(
+      (p) =>
+        `${p.id}:${p.updated_at ?? ""}:${p.price}:${p.sale_price ?? ""}:${p.stock ?? ""}:${p.status}:${p.featured ? 1 : 0}:${p.title}`
+    )
+    .join("|");
+}
 
 export default function WebsiteProductsPanel({
   catalogId,
@@ -45,15 +62,124 @@ export default function WebsiteProductsPanel({
   const [pendingId, setPendingId] = useState<string | null>(null);
   const [, startTransition] = useTransition();
 
-  function load() {
-    setLoadError(null);
-    startTransition(async () => {
+  // Per-product unsaved edits to the inline price/stock fields. While a product
+  // has a draft, polling leaves that field alone so it can't wipe what the user
+  // is typing.
+  const [drafts, setDrafts] = useState<Record<string, { price?: string; stock?: string }>>({});
+
+  const [liveError, setLiveError] = useState(false);
+  // Briefly true right after a background poll brings in changes, to flash the
+  // "Synced" pill.
+  const [justUpdated, setJustUpdated] = useState(false);
+
+  // Refs so the polling loop can read current state without re-subscribing.
+  const signatureRef = useRef<string>(initialProducts ? catalogSignature(initialProducts) : "");
+  const busyRef = useRef(false);
+  const pendingIdRef = useRef(pendingId);
+  const showFormRef = useRef(showForm);
+  useEffect(() => {
+    pendingIdRef.current = pendingId;
+  }, [pendingId]);
+  useEffect(() => {
+    showFormRef.current = showForm;
+  }, [showForm]);
+
+  // Pull the catalog. `background` polls stay quiet: no spinner, transient
+  // failures don't blow away the last-known-good list.
+  const refresh = useCallback(
+    async (background: boolean) => {
+      if (busyRef.current) return;
+      busyRef.current = true;
+      if (!background) setLoadError(null);
       try {
         const data = await listWebsiteProductsAction(catalogId);
-        setProducts(data);
+        const nextSig = catalogSignature(data);
+        if (nextSig !== signatureRef.current) {
+          signatureRef.current = nextSig;
+          setProducts(data);
+          if (background) {
+            setJustUpdated(true);
+            window.setTimeout(() => setJustUpdated(false), 2_000);
+          }
+        }
+        setLiveError(false);
+        if (!background) setLoadError(null);
       } catch (e) {
-        setLoadError(e instanceof Error ? e.message : "Failed to load website products");
+        if (background) {
+          setLiveError(true);
+        } else {
+          setLoadError(
+            e instanceof Error ? e.message : "Failed to load website products"
+          );
+        }
+      } finally {
+        busyRef.current = false;
       }
+    },
+    [catalogId]
+  );
+
+  // Poll on an interval while the tab is visible; pull immediately whenever the
+  // tab regains focus so a backgrounded POS catches up at once. Polls are
+  // skipped while a mutation is in flight or the add form is open.
+  useEffect(() => {
+    let timer: ReturnType<typeof setInterval> | null = null;
+
+    const canPoll = () =>
+      document.visibilityState === "visible" &&
+      pendingIdRef.current === null &&
+      !showFormRef.current;
+
+    const tick = () => {
+      if (canPoll()) void refresh(true);
+    };
+
+    const start = () => {
+      if (timer === null) timer = setInterval(tick, POLL_INTERVAL_MS);
+    };
+    const stop = () => {
+      if (timer !== null) {
+        clearInterval(timer);
+        timer = null;
+      }
+    };
+
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") {
+        if (canPoll()) void refresh(true);
+        start();
+      } else {
+        stop();
+      }
+    };
+
+    if (document.visibilityState === "visible") start();
+    document.addEventListener("visibilitychange", onVisibility);
+    window.addEventListener("focus", tick);
+
+    return () => {
+      stop();
+      document.removeEventListener("visibilitychange", onVisibility);
+      window.removeEventListener("focus", tick);
+    };
+  }, [refresh]);
+
+  function load() {
+    void refresh(false);
+  }
+
+  function setDraft(id: string, field: "price" | "stock", value: string) {
+    setDrafts((prev) => ({ ...prev, [id]: { ...prev[id], [field]: value } }));
+  }
+
+  function clearDraft(id: string, field: "price" | "stock") {
+    setDrafts((prev) => {
+      const next = { ...prev };
+      const entry = { ...next[id] };
+      delete entry[field];
+      if (Object.keys(entry).length === 0) delete next[id];
+      else next[id] = entry;
+      return next;
     });
   }
 
@@ -85,10 +211,10 @@ export default function WebsiteProductsPanel({
     startTransition(async () => {
       try {
         await updateWebsiteProductAction(catalogId, id, input);
+        setPendingId(null);
         load();
       } catch (e) {
         setLoadError(e instanceof Error ? e.message : "Failed to update product");
-      } finally {
         setPendingId(null);
       }
     });
@@ -100,10 +226,10 @@ export default function WebsiteProductsPanel({
     startTransition(async () => {
       try {
         await deleteWebsiteProductAction(catalogId, id);
+        setPendingId(null);
         load();
       } catch (e) {
         setLoadError(e instanceof Error ? e.message : "Failed to delete product");
-      } finally {
         setPendingId(null);
       }
     });
@@ -113,6 +239,25 @@ export default function WebsiteProductsPanel({
     <div className="flex h-full flex-col">
       <div className="flex items-center gap-3 border-b border-black/[.08] px-6 py-3 dark:border-white/[.145]">
         <h2 className="text-sm font-medium text-zinc-500">{catalogLabel} products</h2>
+        <span
+          className="flex items-center gap-1.5 text-xs text-zinc-400"
+          title={
+            liveError
+              ? "Auto-sync hit an error on the last try — still retrying"
+              : `Auto-syncs with ${catalogLabel} every ${POLL_INTERVAL_MS / 1000}s`
+          }
+        >
+          <span
+            className={`inline-block h-1.5 w-1.5 rounded-full ${
+              liveError
+                ? "bg-amber-500"
+                : justUpdated
+                  ? "bg-green-500 animate-ping"
+                  : "bg-green-500"
+            }`}
+          />
+          {liveError ? "Reconnecting…" : justUpdated ? "Synced" : "Live"}
+        </span>
         <button
           onClick={() => setShowForm((v) => !v)}
           className="ml-auto rounded border border-black/[.15] px-3 py-1.5 text-sm dark:border-white/[.2]"
@@ -169,6 +314,13 @@ export default function WebsiteProductsPanel({
               placeholder="Weight (e.g. 500ml)"
               value={form.weight ?? ""}
               onChange={(e) => setForm((f) => ({ ...f, weight: e.target.value }))}
+              className="rounded border border-black/[.15] bg-transparent px-2 py-1.5 text-sm dark:border-white/[.2]"
+            />
+            <input
+              type="text"
+              placeholder="Taste notes (e.g. Chili, Garlic)"
+              value={form.taste_notes ?? ""}
+              onChange={(e) => setForm((f) => ({ ...f, taste_notes: e.target.value }))}
               className="rounded border border-black/[.15] bg-transparent px-2 py-1.5 text-sm dark:border-white/[.2]"
             />
             <input
@@ -230,89 +382,104 @@ export default function WebsiteProductsPanel({
               </tr>
             </thead>
             <tbody>
-              {products.map((p) => (
-                <tr
-                  key={p.id}
-                  className="border-b border-black/[.06] align-top dark:border-white/[.08]"
-                >
-                  <td className="px-6 py-2">
-                    <div className="h-10 w-10 shrink-0 overflow-hidden rounded border border-black/[.1] bg-zinc-100 dark:border-white/[.15] dark:bg-zinc-800">
-                      {p.image_url ? (
-                        // eslint-disable-next-line @next/next/no-img-element
-                        <img src={p.image_url} alt="" className="h-full w-full object-cover" />
-                      ) : (
-                        <div className="flex h-full w-full items-center justify-center text-[9px] text-zinc-400">
-                          No img
-                        </div>
+              {products.map((p) => {
+                const priceValue = drafts[p.id]?.price ?? String(p.price);
+                const stockValue = drafts[p.id]?.stock ?? String(p.stock ?? 0);
+                return (
+                  <tr
+                    key={p.id}
+                    className="border-b border-black/[.06] align-top dark:border-white/[.08]"
+                  >
+                    <td className="px-6 py-2">
+                      <div className="h-10 w-10 shrink-0 overflow-hidden rounded border border-black/[.1] bg-zinc-100 dark:border-white/[.15] dark:bg-zinc-800">
+                        {p.image_url ? (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img src={p.image_url} alt="" className="h-full w-full object-cover" />
+                        ) : (
+                          <div className="flex h-full w-full items-center justify-center text-[9px] text-zinc-400">
+                            No img
+                          </div>
+                        )}
+                      </div>
+                    </td>
+                    <td className="px-6 py-2">
+                      <div className="font-medium">{p.title}</div>
+                      {p.weight && <div className="text-xs text-zinc-400">{p.weight}</div>}
+                      {p.taste_notes && (
+                        <div className="text-xs text-zinc-400">{p.taste_notes}</div>
                       )}
-                    </div>
-                  </td>
-                  <td className="px-6 py-2">
-                    <div className="font-medium">{p.title}</div>
-                    {p.weight && <div className="text-xs text-zinc-400">{p.weight}</div>}
-                  </td>
-                  <td className="px-3 py-2">
-                    <div className="flex items-center gap-1">
-                      <span className="text-zinc-400">$</span>
+                    </td>
+                    <td className="px-3 py-2">
+                      <div className="flex items-center gap-1">
+                        <span className="text-zinc-400">$</span>
+                        <input
+                          type="number"
+                          min={0}
+                          step="0.01"
+                          value={priceValue}
+                          disabled={pendingId === p.id}
+                          onChange={(e) => setDraft(p.id, "price", e.target.value)}
+                          onBlur={(e) => {
+                            const price = Number(e.target.value);
+                            if (!Number.isNaN(price) && price !== p.price) {
+                              patch(p.id, { price });
+                            }
+                            clearDraft(p.id, "price");
+                          }}
+                          className="w-20 rounded border border-black/[.15] bg-transparent px-2 py-1 text-sm dark:border-white/[.2]"
+                        />
+                      </div>
+                    </td>
+                    <td className="px-3 py-2">
                       <input
                         type="number"
                         min={0}
-                        step="0.01"
-                        defaultValue={p.price}
+                        value={stockValue}
                         disabled={pendingId === p.id}
+                        onChange={(e) => setDraft(p.id, "stock", e.target.value)}
                         onBlur={(e) => {
-                          const price = Number(e.target.value);
-                          if (!Number.isNaN(price) && price !== p.price) patch(p.id, { price });
+                          const stock = Number(e.target.value);
+                          if (!Number.isNaN(stock) && stock !== (p.stock ?? 0)) {
+                            patch(p.id, { stock });
+                          }
+                          clearDraft(p.id, "stock");
                         }}
-                        className="w-20 rounded border border-black/[.15] bg-transparent px-2 py-1 text-sm dark:border-white/[.2]"
+                        className="w-16 rounded border border-black/[.15] bg-transparent px-2 py-1 text-sm dark:border-white/[.2]"
                       />
-                    </div>
-                  </td>
-                  <td className="px-3 py-2">
-                    <input
-                      type="number"
-                      min={0}
-                      defaultValue={p.stock ?? 0}
-                      disabled={pendingId === p.id}
-                      onBlur={(e) => {
-                        const stock = Number(e.target.value);
-                        if (!Number.isNaN(stock) && stock !== p.stock) patch(p.id, { stock });
-                      }}
-                      className="w-16 rounded border border-black/[.15] bg-transparent px-2 py-1 text-sm dark:border-white/[.2]"
-                    />
-                  </td>
-                  <td className="px-3 py-2">
-                    <select
-                      value={p.status}
-                      disabled={pendingId === p.id}
-                      onChange={(e) =>
-                        patch(p.id, { status: e.target.value as WebsiteProductWrite["status"] })
-                      }
-                      className="rounded border border-black/[.15] bg-card px-2 py-1 text-sm dark:border-white/[.2]"
-                    >
-                      <option value="draft">Draft</option>
-                      <option value="published">Published</option>
-                    </select>
-                  </td>
-                  <td className="px-3 py-2">
-                    <input
-                      type="checkbox"
-                      checked={p.featured}
-                      disabled={pendingId === p.id}
-                      onChange={(e) => patch(p.id, { featured: e.target.checked })}
-                    />
-                  </td>
-                  <td className="px-3 py-2">
-                    <button
-                      disabled={pendingId === p.id}
-                      onClick={() => remove(p.id, p.title)}
-                      className="rounded border border-red-300 px-2 py-1 text-xs text-red-500 disabled:opacity-40 dark:border-red-900"
-                    >
-                      {pendingId === p.id ? "…" : "Delete"}
-                    </button>
-                  </td>
-                </tr>
-              ))}
+                    </td>
+                    <td className="px-3 py-2">
+                      <select
+                        value={p.status}
+                        disabled={pendingId === p.id}
+                        onChange={(e) =>
+                          patch(p.id, { status: e.target.value as WebsiteProductWrite["status"] })
+                        }
+                        className="rounded border border-black/[.15] bg-card px-2 py-1 text-sm dark:border-white/[.2]"
+                      >
+                        <option value="draft">Draft</option>
+                        <option value="published">Published</option>
+                      </select>
+                    </td>
+                    <td className="px-3 py-2">
+                      <input
+                        type="checkbox"
+                        checked={p.featured}
+                        disabled={pendingId === p.id}
+                        onChange={(e) => patch(p.id, { featured: e.target.checked })}
+                      />
+                    </td>
+                    <td className="px-3 py-2">
+                      <button
+                        disabled={pendingId === p.id}
+                        onClick={() => remove(p.id, p.title)}
+                        className="rounded border border-red-300 px-2 py-1 text-xs text-red-500 disabled:opacity-40 dark:border-red-900"
+                      >
+                        {pendingId === p.id ? "…" : "Delete"}
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
               {products.length === 0 && (
                 <tr>
                   <td colSpan={7} className="px-6 py-8 text-center text-sm text-zinc-500">
