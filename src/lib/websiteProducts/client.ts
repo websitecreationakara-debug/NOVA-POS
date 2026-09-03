@@ -39,6 +39,13 @@ async function request<T>(
     headers: {
       "Content-Type": "application/json",
       Accept: "application/json",
+      // Some storefronts sit behind Cloudflare Bot Fight Mode, which serves a
+      // 403 HTML challenge to requests with no/suspicious User-Agent. The
+      // datacenter this runs in (Vercel) is exactly what that targets, so
+      // present a normal browser UA. Real fix is a WAF skip rule on the
+      // storefront for /api/ traffic; this is the client-side mitigation.
+      "User-Agent":
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
       ...init?.headers,
     },
   });
@@ -48,8 +55,12 @@ async function request<T>(
   if (!res.ok) {
     const body = await res.text().catch(() => "");
     if (looksLikeHtml(contentType, body)) {
+      const cf = res.headers.get("cf-mitigated") || res.headers.get("cf-ray");
+      const snippet = body.replace(/\s+/g, " ").trim().slice(0, 160);
       throw new Error(
-        `Website products API returned HTML (${res.status}) from ${url} — the endpoint looks undeployed or misrouted, not a real JSON API.`
+        `Website products API returned HTML (${res.status}) from ${url}` +
+          (cf ? ` — looks like a Cloudflare block/challenge on the storefront (cf: ${cf}).` : " — the endpoint looks undeployed or misrouted, not a real JSON API.") +
+          (snippet ? ` Body: "${snippet}"` : "")
       );
     }
     throw new Error(
