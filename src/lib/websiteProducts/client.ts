@@ -112,6 +112,30 @@ function relativizeMediaWrite(
   return out;
 }
 
+// The storefront DBs reject an empty string where they want null -- most
+// visibly `category_id`, which is a UUID column, so `""` from a blank form
+// field 500s the whole create. Normalise "" -> null on the nullable text
+// fields before sending.
+const NULLABLE_TEXT_FIELDS = [
+  "description",
+  "category_id",
+  "image_url",
+  "video_url",
+  "weight",
+  "taste_notes",
+  "promotion_id",
+] as const;
+
+function blankToNull(input: Partial<WebsiteProductWrite>): Partial<WebsiteProductWrite> {
+  const out: Record<string, unknown> = { ...input };
+  for (const key of NULLABLE_TEXT_FIELDS) {
+    if (typeof out[key] === "string" && (out[key] as string).trim() === "") {
+      out[key] = null;
+    }
+  }
+  return out as Partial<WebsiteProductWrite>;
+}
+
 // Catalogs disagree on envelope shape: some return a bare array / object, others
 // wrap it as `{ count, products: [...] }` / `{ product: {...} }` (BOSBA Drink &
 // Snack) or `{ data: ... }` (BOSBA Premium Foods). Try each wrapper key in turn.
@@ -160,7 +184,7 @@ export async function createWebsiteProduct(
   const payload = await request<unknown>(catalogId, "", {
     method: "POST",
     headers: authHeaders(catalogId),
-    body: JSON.stringify(relativizeMediaWrite(catalogId, input)),
+    body: JSON.stringify(relativizeMediaWrite(catalogId, blankToNull(input))),
   });
   return unwrap<{ id: string }>(payload, ["data", "product"]);
 }
@@ -173,7 +197,7 @@ export function updateWebsiteProduct(
   return request<void>(catalogId, `/${id}`, {
     method: "PATCH",
     headers: authHeaders(catalogId),
-    body: JSON.stringify(relativizeMediaWrite(catalogId, input)),
+    body: JSON.stringify(relativizeMediaWrite(catalogId, blankToNull(input))),
   });
 }
 

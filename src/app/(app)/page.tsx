@@ -1,10 +1,18 @@
+import { Suspense } from "react";
 import { AlertTriangle, DollarSign, Package, ShoppingCart } from "lucide-react";
-import { getDashboardStats } from "@/lib/supabase/queries";
+import { getDashboardStats, getWebsiteProductTotal } from "@/lib/supabase/queries";
 
 export const dynamic = "force-dynamic";
 
 function formatMoney(n: number) {
   return `$${n.toFixed(2)}`;
+}
+
+// Streamed in its own Suspense boundary: it hits the 3 storefront APIs, which
+// would otherwise hold up the whole dashboard's first paint.
+async function WebsiteProductCount() {
+  const total = await getWebsiteProductTotal();
+  return <>{total ?? "—"}</>;
 }
 
 export default async function Home() {
@@ -25,7 +33,11 @@ export default async function Home() {
     },
     {
       label: "Total Products",
-      value: stats.totalProducts,
+      value: (
+        <Suspense fallback={<span className="text-muted-foreground">…</span>}>
+          <WebsiteProductCount />
+        </Suspense>
+      ),
       icon: Package,
       tint: "bg-success-bg text-success",
     },
