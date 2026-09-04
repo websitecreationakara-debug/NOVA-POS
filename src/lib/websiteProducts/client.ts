@@ -54,6 +54,7 @@ async function request<T>(
 
   if (!res.ok) {
     const body = await res.text().catch(() => "");
+    const label = getCatalog(catalogId).label;
     if (looksLikeHtml(contentType, body)) {
       const cf = res.headers.get("cf-mitigated") || res.headers.get("cf-ray");
       const snippet = body.replace(/\s+/g, " ").trim().slice(0, 160);
@@ -63,8 +64,25 @@ async function request<T>(
           (snippet ? ` Body: "${snippet}"` : "")
       );
     }
+    // Pull the storefront's own error string out of a JSON error body.
+    let storefrontError = "";
+    try {
+      const parsed = JSON.parse(body) as { error?: string; message?: string };
+      storefrontError = parsed.error || parsed.message || "";
+    } catch {
+      /* not JSON */
+    }
+    // 5xx = the storefront is up but its API is broken (missing DB binding,
+    // mid-deploy, etc.). Nothing this app can do about it.
+    if (res.status >= 500) {
+      throw new Error(
+        `The ${label} storefront's product API is down` +
+          (storefrontError ? ` ("${storefrontError}")` : ` (HTTP ${res.status})`) +
+          ` — this is a problem on the storefront itself, not the POS.`
+      );
+    }
     throw new Error(
-      `Website products API ${res.status}: ${body.slice(0, 500) || res.statusText}`
+      `${label} products API ${res.status}: ${storefrontError || body.slice(0, 300) || res.statusText}`
     );
   }
 
