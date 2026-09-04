@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState, useTransition } from "react";
+import { useCallback, useEffect, useRef, useState, useTransition, type ReactNode } from "react";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import type {
   WebsiteCatalogId,
@@ -12,6 +12,7 @@ import {
   deleteWebsiteProductAction,
   listWebsiteProductsAction,
   updateWebsiteProductAction,
+  uploadWebsiteImageAction,
 } from "./websiteActions";
 
 // How often to re-pull the storefront catalog so edits made on the website (or
@@ -21,6 +22,36 @@ const POLL_INTERVAL_MS = 15_000;
 
 // Rows shown per page in the table.
 const PAGE_SIZE = 10;
+
+const fieldInputClass =
+  "rounded border border-black/[.15] bg-transparent px-2.5 py-1.5 text-sm outline-none focus:border-black/40 dark:border-white/[.2] dark:focus:border-white/50";
+
+// A form control with its label and (optional) hint stacked above it, so every
+// box says what it's for even after you've typed in it.
+function Field({
+  label,
+  hint,
+  required,
+  className,
+  children,
+}: {
+  label: string;
+  hint?: string;
+  required?: boolean;
+  className?: string;
+  children: ReactNode;
+}) {
+  return (
+    <label className={`flex flex-col gap-1 ${className ?? ""}`}>
+      <span className="text-xs font-medium text-zinc-500">
+        {label}
+        {required && <span className="text-red-500"> *</span>}
+        {hint && <span className="ml-1 font-normal text-zinc-400">— {hint}</span>}
+      </span>
+      {children}
+    </label>
+  );
+}
 
 const emptyForm: WebsiteProductWrite = {
   title: "",
@@ -63,6 +94,8 @@ export default function WebsiteProductsPanel({
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState<WebsiteProductWrite>(emptyForm);
   const [formError, setFormError] = useState<string | null>(null);
+  const [uploadingImage, setUploadingImage] = useState(false);
+  const [imageError, setImageError] = useState<string | null>(null);
   const [pendingId, setPendingId] = useState<string | null>(null);
   const [, startTransition] = useTransition();
 
@@ -175,12 +208,39 @@ export default function WebsiteProductsPanel({
     });
   }
 
+  function handleImagePick(file: File | null) {
+    if (!file) return;
+    if (!file.type.startsWith("image/")) {
+      setImageError("That file isn't an image");
+      return;
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      setImageError("Image must be under 5MB");
+      return;
+    }
+    setImageError(null);
+    setUploadingImage(true);
+    const fd = new FormData();
+    fd.set("file", file);
+    startTransition(async () => {
+      try {
+        const { url } = await uploadWebsiteImageAction(fd);
+        setForm((f) => ({ ...f, image_url: url }));
+      } catch (e) {
+        setImageError(e instanceof Error ? e.message : "Upload failed");
+      } finally {
+        setUploadingImage(false);
+      }
+    });
+  }
+
   function submitCreate() {
     if (!form.title.trim()) {
       setFormError("Title is required");
       return;
     }
     setFormError(null);
+    setImageError(null);
     startTransition(async () => {
       try {
         await createWebsiteProductAction(catalogId, {
@@ -272,93 +332,164 @@ export default function WebsiteProductsPanel({
       </div>
 
       {showForm && (
-        <div className="border-b border-black/[.08] px-6 py-4 dark:border-white/[.145]">
-          <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-            <input
-              type="text"
-              placeholder="Title *"
-              value={form.title}
-              onChange={(e) => setForm((f) => ({ ...f, title: e.target.value }))}
-              className="rounded border border-black/[.15] bg-transparent px-2 py-1.5 text-sm dark:border-white/[.2]"
-            />
-            <input
-              type="number"
-              min={0}
-              step="0.01"
-              placeholder="Price"
-              value={form.price ?? 0}
-              onChange={(e) => setForm((f) => ({ ...f, price: Number(e.target.value) }))}
-              className="rounded border border-black/[.15] bg-transparent px-2 py-1.5 text-sm dark:border-white/[.2]"
-            />
-            <input
-              type="number"
-              min={0}
-              placeholder="Stock"
-              value={form.stock ?? 0}
-              onChange={(e) => setForm((f) => ({ ...f, stock: Number(e.target.value) }))}
-              className="rounded border border-black/[.15] bg-transparent px-2 py-1.5 text-sm dark:border-white/[.2]"
-            />
-            <select
-              value={form.status}
-              onChange={(e) =>
-                setForm((f) => ({ ...f, status: e.target.value as WebsiteProductWrite["status"] }))
-              }
-              className="rounded border border-black/[.15] bg-card px-2 py-1.5 text-sm dark:border-white/[.2]"
-            >
-              <option value="draft">Draft</option>
-              <option value="published">Published</option>
-            </select>
-            <input
-              type="text"
-              placeholder="Weight (e.g. 500ml)"
-              value={form.weight ?? ""}
-              onChange={(e) => setForm((f) => ({ ...f, weight: e.target.value }))}
-              className="rounded border border-black/[.15] bg-transparent px-2 py-1.5 text-sm dark:border-white/[.2]"
-            />
-            <input
-              type="text"
-              placeholder="Taste notes (e.g. Chili, Garlic)"
-              value={form.taste_notes ?? ""}
-              onChange={(e) => setForm((f) => ({ ...f, taste_notes: e.target.value }))}
-              className="rounded border border-black/[.15] bg-transparent px-2 py-1.5 text-sm dark:border-white/[.2]"
-            />
-            <input
-              type="text"
-              placeholder="Category UUID (optional)"
-              value={form.category_id ?? ""}
-              onChange={(e) => setForm((f) => ({ ...f, category_id: e.target.value }))}
-              className="rounded border border-black/[.15] bg-transparent px-2 py-1.5 text-sm dark:border-white/[.2]"
-            />
-            <input
-              type="text"
-              placeholder="Image URL"
-              value={form.image_url ?? ""}
-              onChange={(e) => setForm((f) => ({ ...f, image_url: e.target.value }))}
-              className="rounded border border-black/[.15] bg-transparent px-2 py-1.5 text-sm dark:border-white/[.2]"
-            />
-            <label className="flex items-center gap-1.5 text-sm text-zinc-500">
+        <div className="border-b border-black/[.08] bg-black/[.02] px-6 py-5 dark:border-white/[.145] dark:bg-white/[.02]">
+          <h3 className="mb-4 text-sm font-semibold">New product</h3>
+          <div className="grid grid-cols-2 gap-x-4 gap-y-3.5 md:grid-cols-4">
+            <Field label="Title" required className="col-span-2">
+              <input
+                type="text"
+                placeholder="e.g. Hojicha Roasted Green Tea"
+                value={form.title}
+                onChange={(e) => setForm((f) => ({ ...f, title: e.target.value }))}
+                className={fieldInputClass}
+              />
+            </Field>
+            <Field label="Price">
+              <div className="flex items-center gap-1 rounded border border-black/[.15] px-2.5 py-1.5 focus-within:border-black/40 dark:border-white/[.2] dark:focus-within:border-white/50">
+                <span className="select-none text-sm text-zinc-400">$</span>
+                <input
+                  type="number"
+                  min={0}
+                  step="0.01"
+                  value={form.price ?? 0}
+                  onChange={(e) => setForm((f) => ({ ...f, price: Number(e.target.value) }))}
+                  className="w-full min-w-0 border-0 bg-transparent p-0 text-right text-sm tabular-nums outline-none"
+                />
+              </div>
+            </Field>
+            <Field label="Stock">
+              <input
+                type="number"
+                min={0}
+                value={form.stock ?? 0}
+                onChange={(e) => setForm((f) => ({ ...f, stock: Number(e.target.value) }))}
+                className={`${fieldInputClass} text-right tabular-nums`}
+              />
+            </Field>
+            <Field label="Status">
+              <select
+                value={form.status}
+                onChange={(e) =>
+                  setForm((f) => ({ ...f, status: e.target.value as WebsiteProductWrite["status"] }))
+                }
+                className={`${fieldInputClass} bg-card`}
+              >
+                <option value="draft">Draft — hidden on the site</option>
+                <option value="published">Published — live on the site</option>
+              </select>
+            </Field>
+            <Field label="Weight" hint="optional">
+              <input
+                type="text"
+                placeholder="e.g. 500ml, 40g"
+                value={form.weight ?? ""}
+                onChange={(e) => setForm((f) => ({ ...f, weight: e.target.value }))}
+                className={fieldInputClass}
+              />
+            </Field>
+            <Field label="Taste notes" hint="optional">
+              <input
+                type="text"
+                placeholder="e.g. Chili, Garlic"
+                value={form.taste_notes ?? ""}
+                onChange={(e) => setForm((f) => ({ ...f, taste_notes: e.target.value }))}
+                className={fieldInputClass}
+              />
+            </Field>
+            <Field label="Category ID" hint="optional, from the storefront">
+              <input
+                type="text"
+                placeholder="Leave blank if unsure"
+                value={form.category_id ?? ""}
+                onChange={(e) => setForm((f) => ({ ...f, category_id: e.target.value }))}
+                className={fieldInputClass}
+              />
+            </Field>
+            <Field label="Image" hint="optional" className="col-span-2 md:col-span-4">
+              <div className="flex flex-wrap items-center gap-3">
+                <div className="h-16 w-16 shrink-0 overflow-hidden rounded border border-black/[.1] bg-zinc-100 dark:border-white/[.15] dark:bg-zinc-800">
+                  {form.image_url ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={form.image_url} alt="" className="h-full w-full object-cover" />
+                  ) : (
+                    <div className="flex h-full w-full items-center justify-center text-[9px] text-zinc-400">
+                      No image
+                    </div>
+                  )}
+                </div>
+                <label className="cursor-pointer rounded border border-black/[.15] px-3 py-1.5 text-sm dark:border-white/[.2]">
+                  {uploadingImage
+                    ? "Uploading…"
+                    : form.image_url
+                      ? "Replace image"
+                      : "Upload from computer"}
+                  <input
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    disabled={uploadingImage}
+                    onChange={(e) => {
+                      const file = e.target.files?.[0] ?? null;
+                      e.target.value = "";
+                      handleImagePick(file);
+                    }}
+                  />
+                </label>
+                {form.image_url && !uploadingImage && (
+                  <button
+                    type="button"
+                    onClick={() => setForm((f) => ({ ...f, image_url: "" }))}
+                    className="text-xs text-red-500"
+                  >
+                    Remove
+                  </button>
+                )}
+                <input
+                  type="text"
+                  placeholder="or paste an image URL"
+                  value={form.image_url ?? ""}
+                  onChange={(e) => setForm((f) => ({ ...f, image_url: e.target.value }))}
+                  className={`${fieldInputClass} min-w-[12rem] flex-1`}
+                />
+              </div>
+              {imageError && <span className="mt-1 text-xs text-red-500">{imageError}</span>}
+            </Field>
+            <label className="col-span-2 flex items-center gap-2 text-sm md:col-span-4">
               <input
                 type="checkbox"
                 checked={form.featured ?? false}
                 onChange={(e) => setForm((f) => ({ ...f, featured: e.target.checked }))}
               />
-              Featured
+              <span>
+                Featured
+                <span className="ml-1 text-xs text-zinc-400">— highlight on the storefront</span>
+              </span>
             </label>
-            <textarea
-              placeholder="Description"
-              value={form.description ?? ""}
-              onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))}
-              className="col-span-2 rounded border border-black/[.15] bg-transparent px-2 py-1.5 text-sm dark:border-white/[.2] md:col-span-4"
-              rows={2}
-            />
+            <Field label="Description" hint="optional" className="col-span-2 md:col-span-4">
+              <textarea
+                placeholder="Shown on the product page"
+                value={form.description ?? ""}
+                onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))}
+                className={`${fieldInputClass} resize-y`}
+                rows={2}
+              />
+            </Field>
           </div>
-          {formError && <p className="mt-2 text-xs text-red-500">{formError}</p>}
-          <button
-            onClick={submitCreate}
-            className="mt-3 rounded border border-black bg-black px-3 py-1.5 text-sm text-white dark:border-white dark:bg-white dark:text-black"
-          >
-            Create
-          </button>
+          {formError && <p className="mt-3 text-xs text-red-500">{formError}</p>}
+          <div className="mt-4 flex gap-2">
+            <button
+              onClick={submitCreate}
+              className="rounded border border-black bg-black px-4 py-1.5 text-sm font-medium text-white dark:border-white dark:bg-white dark:text-black"
+            >
+              Create product
+            </button>
+            <button
+              onClick={() => setShowForm(false)}
+              className="rounded border border-black/[.15] px-4 py-1.5 text-sm dark:border-white/[.2]"
+            >
+              Cancel
+            </button>
+          </div>
         </div>
       )}
 
@@ -409,8 +540,8 @@ export default function WebsiteProductsPanel({
                       )}
                     </td>
                     <td className="px-3 py-2">
-                      <div className="flex items-center gap-1">
-                        <span className="text-zinc-400">$</span>
+                      <label className="flex w-24 items-center gap-1 rounded border border-black/[.15] px-2 py-1 text-sm focus-within:border-black/40 dark:border-white/[.2] dark:focus-within:border-white/50">
+                        <span className="select-none text-zinc-400">$</span>
                         <input
                           type="number"
                           min={0}
@@ -425,9 +556,9 @@ export default function WebsiteProductsPanel({
                             }
                             clearDraft(p.id, "price");
                           }}
-                          className="w-20 rounded border border-black/[.15] bg-transparent px-2 py-1 text-sm dark:border-white/[.2]"
+                          className="w-full min-w-0 border-0 bg-transparent p-0 text-right tabular-nums outline-none"
                         />
-                      </div>
+                      </label>
                     </td>
                     <td className="px-3 py-2">
                       <input
@@ -443,7 +574,7 @@ export default function WebsiteProductsPanel({
                           }
                           clearDraft(p.id, "stock");
                         }}
-                        className="w-16 rounded border border-black/[.15] bg-transparent px-2 py-1 text-sm dark:border-white/[.2]"
+                        className="w-16 rounded border border-black/[.15] bg-transparent px-2 py-1 text-right text-sm tabular-nums focus:border-black/40 focus:outline-none dark:border-white/[.2] dark:focus:border-white/50"
                       />
                     </td>
                     <td className="px-3 py-2">

@@ -179,10 +179,12 @@ export type DashboardStats = {
   }[];
 };
 
-// Total products = the count across the three storefront catalogs (what the
-// Sales/Stock screens actually sell), not the POS `products` table, which still
-// holds a much larger seeded catalog that no longer matches the websites.
-async function getWebsiteProductTotal(): Promise<number | null> {
+// Total products across the three storefront catalogs (what the Sales/Stock
+// screens actually sell), not the POS `products` table, which still holds a
+// much larger seeded catalog that no longer matches the websites. Hits 3
+// external APIs, so the dashboard streams this in separately rather than
+// blocking its first paint on it.
+export async function getWebsiteProductTotal(): Promise<number | null> {
   const catalogs = configuredCatalogs();
   if (catalogs.length === 0) return null;
   const results = await Promise.allSettled(catalogs.map((c) => listWebsiteProducts(c.id)));
@@ -199,10 +201,9 @@ export async function getDashboardStats(): Promise<DashboardStats> {
 
   const [
     { data: paidOrders, error: ordersError },
-    { count: posProductCount, error: prodError },
+    { count: totalProducts, error: prodError },
     { data: stockRows, error: stockError },
     { data: recentOrdersData, error: recentError },
-    websiteProductTotal,
   ] = await Promise.all([
     supabaseAdmin.from("orders").select("total, paid_at").eq("status", "paid"),
     supabaseAdmin.from("products").select("id", { count: "exact", head: true }).eq("is_active", true),
@@ -217,16 +218,12 @@ export async function getDashboardStats(): Promise<DashboardStats> {
       .eq("status", "paid")
       .order("paid_at", { ascending: false })
       .limit(5),
-    getWebsiteProductTotal(),
   ]);
 
   if (ordersError) throw ordersError;
   if (prodError) throw prodError;
   if (stockError) throw stockError;
   if (recentError) throw recentError;
-
-  // Fall back to the POS count only if every storefront API was unreachable.
-  const totalProducts = websiteProductTotal ?? posProductCount ?? 0;
 
   const orders = paidOrders ?? [];
   const totalRevenue = orders.reduce((sum, o) => sum + o.total, 0);
@@ -264,7 +261,7 @@ export async function getDashboardStats(): Promise<DashboardStats> {
   return {
     totalRevenue,
     ordersToday,
-    totalProducts,
+    totalProducts: totalProducts ?? 0,
     lowStockCount,
     last7Days,
     recentOrders,
