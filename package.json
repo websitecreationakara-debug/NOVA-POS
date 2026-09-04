@@ -4,12 +4,13 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "build": "next build",
-    "start": "next start",
     "lint": "eslint",
-    "cf:build": "opennextjs-cloudflare build",
-    "cf:preview": "npm run cf:build && opennextjs-cloudflare preview",
-    "cf:deploy": "npm run cf:build && opennextjs-cloudflare deploy"
+    "typecheck": "tsc --noEmit",
+    "build": "opennextjs-cloudflare build",
+    "build:next": "next build",
+    "preview": "npm run build && opennextjs-cloudflare preview",
+    "deploy": "npm run build && opennextjs-cloudflare deploy",
+    "start": "next start"
   },
   "dependencies": {
     "@supabase/ssr": "^0.12.4",
