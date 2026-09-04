@@ -1,4 +1,6 @@
 import { supabaseAdmin } from "@/lib/supabase/server";
+import { configuredCatalogs } from "@/lib/websiteProducts/catalogs";
+import { listWebsiteProducts } from "@/lib/websiteProducts/client";
 import type {
   Brand,
   CashReconciliation,
@@ -177,14 +179,30 @@ export type DashboardStats = {
   }[];
 };
 
+// Total products = the count across the three storefront catalogs (what the
+// Sales/Stock screens actually sell), not the POS `products` table, which still
+// holds a much larger seeded catalog that no longer matches the websites.
+async function getWebsiteProductTotal(): Promise<number | null> {
+  const catalogs = configuredCatalogs();
+  if (catalogs.length === 0) return null;
+  const results = await Promise.allSettled(catalogs.map((c) => listWebsiteProducts(c.id)));
+  const ok = results.filter(
+    (r): r is PromiseFulfilledResult<Awaited<ReturnType<typeof listWebsiteProducts>>> =>
+      r.status === "fulfilled"
+  );
+  if (ok.length === 0) return null;
+  return ok.reduce((sum, r) => sum + r.value.length, 0);
+}
+
 export async function getDashboardStats(): Promise<DashboardStats> {
   const today = new Date().toISOString().slice(0, 10);
 
   const [
     { data: paidOrders, error: ordersError },
-    { count: totalProducts, error: prodError },
+    { count: posProductCount, error: prodError },
     { data: stockRows, error: stockError },
     { data: recentOrdersData, error: recentError },
+    websiteProductTotal,
   ] = await Promise.all([
     supabaseAdmin.from("orders").select("total, paid_at").eq("status", "paid"),
     supabaseAdmin.from("products").select("id", { count: "exact", head: true }).eq("is_active", true),
@@ -199,12 +217,16 @@ export async function getDashboardStats(): Promise<DashboardStats> {
       .eq("status", "paid")
       .order("paid_at", { ascending: false })
       .limit(5),
+    getWebsiteProductTotal(),
   ]);
 
   if (ordersError) throw ordersError;
   if (prodError) throw prodError;
   if (stockError) throw stockError;
   if (recentError) throw recentError;
+
+  // Fall back to the POS count only if every storefront API was unreachable.
+  const totalProducts = websiteProductTotal ?? posProductCount ?? 0;
 
   const orders = paidOrders ?? [];
   const totalRevenue = orders.reduce((sum, o) => sum + o.total, 0);
@@ -242,7 +264,7 @@ export async function getDashboardStats(): Promise<DashboardStats> {
   return {
     totalRevenue,
     ordersToday,
-    totalProducts: totalProducts ?? 0,
+    totalProducts,
     lowStockCount,
     last7Days,
     recentOrders,

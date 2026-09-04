@@ -72,7 +72,9 @@ export default function StockClient({
   websiteCatalog: WebsiteCatalogData | null;
 }) {
   const router = useRouter();
-  const [activeTab, setActiveTab] = useState<"catalog" | "website">("catalog");
+  // Stock is managed against the storefront catalog. The POS-catalog view only
+  // shows as a fallback for a brand with no storefront wired up.
+  const showWebsite = websiteCatalog !== null;
   const [activeCategoryId, setActiveCategoryId] = useState<string | "all">("all");
   const [search, setSearch] = useState("");
   const [lowStockOnly, setLowStockOnly] = useState(false);
@@ -525,29 +527,7 @@ export default function StockClient({
           ))}
         </select>
         <h1 className="text-lg font-medium">Stock</h1>
-        <div className="flex items-center gap-1 rounded-full border border-black/[.15] p-0.5 dark:border-white/[.2]">
-          <button
-            onClick={() => setActiveTab("catalog")}
-            className={`rounded-full px-3 py-1 text-xs ${
-              activeTab === "catalog"
-                ? "bg-black text-white dark:bg-white dark:text-black"
-                : "text-zinc-500"
-            }`}
-          >
-            Catalog
-          </button>
-          <button
-            onClick={() => setActiveTab("website")}
-            className={`rounded-full px-3 py-1 text-xs ${
-              activeTab === "website"
-                ? "bg-black text-white dark:bg-white dark:text-black"
-                : "text-zinc-500"
-            }`}
-          >
-            Website
-          </button>
-        </div>
-        {activeTab === "catalog" && (
+        {!showWebsite && (
         <div className="ml-auto flex items-center gap-3">
           <input
             type="text"
@@ -577,20 +557,13 @@ export default function StockClient({
         </div>
         )}
       </header>
-      {activeTab === "website" ? (
-        websiteCatalog === null ? (
-          <p className="px-6 py-8 text-center text-sm text-zinc-500">
-            {currentBrand.name} has no website catalog. Set its *_PRODUCTS_API_URL / API key env vars.
-          </p>
-        ) : (
-          <WebsiteProductsPanel
-            key={websiteCatalog.id}
-            catalogId={websiteCatalog.id}
-            catalogLabel={websiteCatalog.label}
-            initialProducts={websiteCatalog.products}
-            initialError={websiteCatalog.error}
-          />
-        )
+      {showWebsite && websiteCatalog ? (
+        <WebsiteProductsPanel
+          key={websiteCatalog.id}
+          catalogId={websiteCatalog.id}
+          initialProducts={websiteCatalog.products}
+          initialError={websiteCatalog.error}
+        />
       ) : (
       <>
       <div className="flex flex-wrap gap-2 border-b border-black/[.08] px-6 py-3 dark:border-white/[.145]">
