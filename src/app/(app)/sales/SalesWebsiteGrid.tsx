@@ -1,9 +1,12 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import type { WebsiteCatalogId, WebsiteProduct } from "@/lib/websiteProducts/types";
 import { listWebsiteProductsAction } from "../stock/websiteActions";
+
+// useLayoutEffect on the client, useEffect on the server (avoids the SSR warning).
+const useIsoLayoutEffect = typeof window !== "undefined" ? useLayoutEffect : useEffect;
 
 // Same cadence the Stock > Website panel polls at: the storefront API has no
 // push channel, so re-pull on an interval to catch edits made on the website
@@ -51,6 +54,17 @@ export default function SalesWebsiteGrid({
 
   const signatureRef = useRef<string>(initialProducts ? catalogSignature(initialProducts) : "");
   const busyRef = useRef(false);
+
+  // Keep the viewport fixed when paging: remember where the pager sits before
+  // the page change, then nudge the scroll container by however much it moved.
+  const scrollerRef = useRef<HTMLElement>(null);
+  const pagerRef = useRef<HTMLDivElement>(null);
+  const anchorTopRef = useRef<number | null>(null);
+
+  function goToPage(next: number) {
+    anchorTopRef.current = pagerRef.current?.getBoundingClientRect().top ?? null;
+    setPage(next);
+  }
 
   // Re-pull the storefront catalog on an interval (it has no push channel) so
   // edits made on the website or by another POS user show up without a manual
@@ -159,8 +173,21 @@ export default function SalesWebsiteGrid({
   const currentPage = Math.min(page, pageCount);
   const paged = visible.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
 
+  // After the paged grid re-renders, restore the pager to the same on-screen
+  // spot it was at when clicked, so the view doesn't jump up or down.
+  useIsoLayoutEffect(() => {
+    const anchor = anchorTopRef.current;
+    anchorTopRef.current = null;
+    if (anchor == null) return;
+    const after = pagerRef.current?.getBoundingClientRect().top;
+    const scroller = scrollerRef.current;
+    if (after == null || !scroller) return;
+    const delta = after - anchor;
+    if (delta !== 0) scroller.scrollTop += delta;
+  }, [currentPage]);
+
   return (
-    <main className="flex-1 overflow-y-auto p-6">
+    <main ref={scrollerRef} className="flex-1 overflow-y-auto p-6">
       {showChips && (
         <div className="mb-4 flex flex-wrap gap-2">
           <button
@@ -249,7 +276,7 @@ export default function SalesWebsiteGrid({
                 </div>
                 {/* Fixed-height text block so every card is the same height and
                     the pager below never shifts between pages. */}
-                <div className="line-clamp-2 min-h-[2.75rem] font-medium">{p.title}</div>
+                <div className="line-clamp-2 h-12 font-medium">{p.title}</div>
                 <div className="mt-1 text-sm text-zinc-500">
                   {onSale ? (
                     <>
@@ -281,8 +308,8 @@ export default function SalesWebsiteGrid({
           {Array.from({ length: Math.max(0, PAGE_SIZE - paged.length) }).map((_, i) => (
             <div key={`ph-${i}`} aria-hidden className="invisible rounded-lg border p-4">
               <div className="mb-2 aspect-square w-full" />
-              <div className="min-h-[2.75rem]" />
-              <div className="mt-1 h-4" />
+              <div className="h-12" />
+              <div className="mt-1 h-5" />
               <div className="mt-1 h-4" />
               <div className="mt-1 h-4" />
             </div>
@@ -291,9 +318,12 @@ export default function SalesWebsiteGrid({
       )}
 
       {products && pageCount > 1 && (
-        <div className="mt-5 flex flex-wrap items-center justify-center gap-1.5">
+        <div
+          ref={pagerRef}
+          className="mt-5 flex flex-wrap items-center justify-center gap-1.5"
+        >
           <button
-            onClick={() => setPage(currentPage - 1)}
+            onClick={() => goToPage(currentPage - 1)}
             disabled={currentPage <= 1}
             aria-label="Previous page"
             className="flex h-8 w-8 shrink-0 items-center justify-center rounded border border-black/[.15] disabled:opacity-30 dark:border-white/[.2]"
@@ -303,7 +333,7 @@ export default function SalesWebsiteGrid({
           {Array.from({ length: pageCount }, (_, i) => i + 1).map((n) => (
             <button
               key={n}
-              onClick={() => setPage(n)}
+              onClick={() => goToPage(n)}
               aria-current={n === currentPage ? "page" : undefined}
               className={`h-8 w-8 shrink-0 rounded border text-sm tabular-nums ${
                 n === currentPage
@@ -315,7 +345,7 @@ export default function SalesWebsiteGrid({
             </button>
           ))}
           <button
-            onClick={() => setPage(currentPage + 1)}
+            onClick={() => goToPage(currentPage + 1)}
             disabled={currentPage >= pageCount}
             aria-label="Next page"
             className="flex h-8 w-8 shrink-0 items-center justify-center rounded border border-black/[.15] disabled:opacity-30 dark:border-white/[.2]"
