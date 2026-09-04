@@ -36,6 +36,7 @@ export default function SalesWebsiteGrid({
   categories,
   onSelect,
   pendingSiteProductId,
+  cartQtyBySiteProduct,
 }: {
   catalogId: WebsiteCatalogId;
   initialProducts: WebsiteProduct[] | null;
@@ -45,6 +46,9 @@ export default function SalesWebsiteGrid({
   onSelect: (product: WebsiteProduct) => void;
   // Site product id currently being linked to a POS product (brief spinner).
   pendingSiteProductId: string | null;
+  // How many of each site product are sitting in the Order right now, so the
+  // card can show remaining-after-this-sale stock.
+  cartQtyBySiteProduct: Map<string, number>;
 }) {
   const [products, setProducts] = useState<WebsiteProduct[] | null>(initialProducts);
   const [loadError, setLoadError] = useState<string | null>(initialError);
@@ -130,6 +134,16 @@ export default function SalesWebsiteGrid({
       window.removeEventListener("focus", tick);
     };
   }, [refresh]);
+
+  // A charge just went through: router.refresh() gave us fresh initialProducts
+  // with the decremented stock -- adopt it now instead of waiting for the poll
+  // (React's "adjust state when a prop changes during render" pattern).
+  const initialSig = catalogSignature(initialProducts ?? []);
+  const [prevInitialSig, setPrevInitialSig] = useState(initialSig);
+  if (initialSig !== prevInitialSig) {
+    setPrevInitialSig(initialSig);
+    setProducts(initialProducts);
+  }
 
   const q = search.trim().toLowerCase();
   const all = products ?? [];
@@ -255,7 +269,11 @@ export default function SalesWebsiteGrid({
         <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
           {paged.map((p) => {
             const onSale = p.sale_price != null && p.sale_price < p.price;
-            const isOut = p.stock != null && p.stock <= 0;
+            // Show stock minus what's already in the Order, so staff see what's
+            // left after this sale. The real decrement happens on Charge.
+            const inCart = cartQtyBySiteProduct.get(p.id) ?? 0;
+            const remaining = p.stock == null ? null : p.stock - inCart;
+            const isOut = remaining != null && remaining <= 0;
             const pending = pendingSiteProductId === p.id;
             return (
               <button
@@ -290,7 +308,11 @@ export default function SalesWebsiteGrid({
                   )}
                 </div>
                 <div className={`mt-1 text-xs ${isOut ? "text-red-500" : "text-zinc-400"}`}>
-                  {p.stock == null ? "Stock untracked" : isOut ? "Out of stock" : `${p.stock} in stock`}
+                  {remaining == null
+                    ? "Stock untracked"
+                    : isOut
+                      ? "Out of stock"
+                      : `${remaining} in stock`}
                 </div>
                 <div className="mt-1 text-xs text-amber-500">
                   {pending ? (

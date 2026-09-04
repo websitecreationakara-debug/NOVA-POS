@@ -198,6 +198,19 @@ export default function SalesClient({
     return map;
   }, [products, linkedThisSession]);
 
+  // site product id -> quantity currently in the Order, for the grid's
+  // remaining-stock display.
+  const cartQtyBySiteProduct = useMemo(() => {
+    const posIdToSiteId = new Map<string, string>();
+    for (const [siteId, pos] of posBySiteProductId) posIdToSiteId.set(pos.id, siteId);
+    const map = new Map<string, number>();
+    for (const line of cart) {
+      const siteId = posIdToSiteId.get(line.productId);
+      if (siteId) map.set(siteId, (map.get(siteId) ?? 0) + line.quantity);
+    }
+    return map;
+  }, [cart, posBySiteProductId]);
+
   // Tapping a website product: if it already maps to a POS product, add it;
   // otherwise create + link one on the fly (in the storefront's brand), then
   // add. The created product shows up in Stock like any hand-linked one.
@@ -440,6 +453,7 @@ export default function SalesClient({
             categories={websiteCatalog.categories}
             onSelect={addWebsiteProductToCart}
             pendingSiteProductId={linkingSiteProductId}
+            cartQtyBySiteProduct={cartQtyBySiteProduct}
           />
         ) : (
         <main className="flex-1 overflow-y-auto p-6">
