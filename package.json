@@ -6,10 +6,10 @@
     "dev": "next dev",
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
-    "build": "opennextjs-cloudflare build",
-    "build:next": "next build",
-    "preview": "npm run build && opennextjs-cloudflare preview",
-    "deploy": "npm run build && opennextjs-cloudflare deploy",
+    "build": "next build",
+    "cf:build": "opennextjs-cloudflare build",
+    "preview": "opennextjs-cloudflare build && opennextjs-cloudflare preview",
+    "deploy": "opennextjs-cloudflare build && opennextjs-cloudflare deploy",
     "start": "next start"
   },
   "dependencies": {
