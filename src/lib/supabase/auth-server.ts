@@ -1,3 +1,4 @@
+import { cache } from "react";
 import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
 
@@ -34,7 +35,11 @@ export type SessionUser = {
   role: string;
 };
 
-export async function getSessionUser(): Promise<SessionUser | null> {
+// `supabase.auth.getUser()` makes a network call to the Supabase Auth server to
+// validate the token. A single page render can call this several times (the app
+// layout, plus every Server Action it invokes re-checks the role) -- `cache()`
+// dedupes them to one round-trip per request.
+export const getSessionUser = cache(async (): Promise<SessionUser | null> => {
   const supabase = await createAuthClient();
   const {
     data: { user },
@@ -48,4 +53,4 @@ export async function getSessionUser(): Promise<SessionUser | null> {
     fullName: (user.user_metadata?.full_name as string | undefined) ?? user.email ?? "Staff",
     role: (user.user_metadata?.role as string | undefined) ?? "",
   };
-}
+});

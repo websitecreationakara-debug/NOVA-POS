@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState, useTransition } from "react";
+import { ChevronLeft, ChevronRight } from "lucide-react";
 import type {
   WebsiteCatalogId,
   WebsiteProduct,
@@ -17,6 +18,9 @@ import {
 // by another POS user) show up here without a manual refresh. The storefront API
 // has no push channel, so this is a poll.
 const POLL_INTERVAL_MS = 15_000;
+
+// Rows shown per page in the table.
+const PAGE_SIZE = 10;
 
 const emptyForm: WebsiteProductWrite = {
   title: "",
@@ -45,17 +49,17 @@ function catalogSignature(products: WebsiteProduct[]): string {
 
 export default function WebsiteProductsPanel({
   catalogId,
-  catalogLabel,
   initialProducts,
   initialError,
 }: {
   catalogId: WebsiteCatalogId;
-  catalogLabel: string;
   initialProducts: WebsiteProduct[] | null;
   initialError: string | null;
 }) {
   const [products, setProducts] = useState<WebsiteProduct[] | null>(initialProducts);
   const [loadError, setLoadError] = useState<string | null>(initialError);
+  const [search, setSearch] = useState("");
+  const [page, setPage] = useState(1);
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState<WebsiteProductWrite>(emptyForm);
   const [formError, setFormError] = useState<string | null>(null);
@@ -66,11 +70,6 @@ export default function WebsiteProductsPanel({
   // has a draft, polling leaves that field alone so it can't wipe what the user
   // is typing.
   const [drafts, setDrafts] = useState<Record<string, { price?: string; stock?: string }>>({});
-
-  const [liveError, setLiveError] = useState(false);
-  // Briefly true right after a background poll brings in changes, to flash the
-  // "Synced" pill.
-  const [justUpdated, setJustUpdated] = useState(false);
 
   // Refs so the polling loop can read current state without re-subscribing.
   const signatureRef = useRef<string>(initialProducts ? catalogSignature(initialProducts) : "");
@@ -97,17 +96,10 @@ export default function WebsiteProductsPanel({
         if (nextSig !== signatureRef.current) {
           signatureRef.current = nextSig;
           setProducts(data);
-          if (background) {
-            setJustUpdated(true);
-            window.setTimeout(() => setJustUpdated(false), 2_000);
-          }
         }
-        setLiveError(false);
         if (!background) setLoadError(null);
       } catch (e) {
-        if (background) {
-          setLiveError(true);
-        } else {
+        if (!background) {
           setLoadError(
             e instanceof Error ? e.message : "Failed to load website products"
           );
@@ -235,38 +227,45 @@ export default function WebsiteProductsPanel({
     });
   }
 
+  // Dynamic search over title / weight / taste notes, then paginate.
+  const q = search.trim().toLowerCase();
+  const filtered = (products ?? []).filter(
+    (p) =>
+      !q ||
+      p.title.toLowerCase().includes(q) ||
+      (p.weight ?? "").toLowerCase().includes(q) ||
+      (p.taste_notes ?? "").toLowerCase().includes(q)
+  );
+  const pageCount = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  // Snap back to page 1 whenever the result set changes under the current page.
+  const filterKey = `${q}|${pageCount}`;
+  const [prevFilterKey, setPrevFilterKey] = useState(filterKey);
+  if (filterKey !== prevFilterKey) {
+    setPrevFilterKey(filterKey);
+    setPage(1);
+  }
+  const currentPage = Math.min(page, pageCount);
+  const paged = filtered.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
+
   return (
     <div className="flex h-full flex-col">
       <div className="flex items-center gap-3 border-b border-black/[.08] px-6 py-3 dark:border-white/[.145]">
-        <h2 className="text-sm font-medium text-zinc-500">{catalogLabel} products</h2>
-        <span
-          className="flex items-center gap-1.5 text-xs text-zinc-400"
-          title={
-            liveError
-              ? "Auto-sync hit an error on the last try — still retrying"
-              : `Auto-syncs with ${catalogLabel} every ${POLL_INTERVAL_MS / 1000}s`
-          }
-        >
-          <span
-            className={`inline-block h-1.5 w-1.5 rounded-full ${
-              liveError
-                ? "bg-amber-500"
-                : justUpdated
-                  ? "bg-green-500 animate-ping"
-                  : "bg-green-500"
-            }`}
-          />
-          {liveError ? "Reconnecting…" : justUpdated ? "Synced" : "Live"}
-        </span>
+        <input
+          type="text"
+          placeholder="Search products…"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          className="min-w-0 flex-1 rounded border border-black/[.15] bg-transparent px-3 py-1.5 text-sm dark:border-white/[.2]"
+        />
         <button
           onClick={() => setShowForm((v) => !v)}
-          className="ml-auto rounded border border-black/[.15] px-3 py-1.5 text-sm dark:border-white/[.2]"
+          className="shrink-0 rounded border border-black/[.15] px-3 py-1.5 text-sm dark:border-white/[.2]"
         >
           {showForm ? "Cancel" : "Add product"}
         </button>
         <button
           onClick={load}
-          className="rounded border border-black/[.15] px-3 py-1.5 text-sm dark:border-white/[.2]"
+          className="shrink-0 rounded border border-black/[.15] px-3 py-1.5 text-sm dark:border-white/[.2]"
         >
           Refresh
         </button>
@@ -382,7 +381,7 @@ export default function WebsiteProductsPanel({
               </tr>
             </thead>
             <tbody>
-              {products.map((p) => {
+              {paged.map((p) => {
                 const priceValue = drafts[p.id]?.price ?? String(p.price);
                 const stockValue = drafts[p.id]?.stock ?? String(p.stock ?? 0);
                 return (
@@ -480,10 +479,10 @@ export default function WebsiteProductsPanel({
                   </tr>
                 );
               })}
-              {products.length === 0 && (
+              {filtered.length === 0 && (
                 <tr>
                   <td colSpan={7} className="px-6 py-8 text-center text-sm text-zinc-500">
-                    No website products yet.
+                    {q ? "No products match your search." : "No website products yet."}
                   </td>
                 </tr>
               )}
@@ -491,6 +490,41 @@ export default function WebsiteProductsPanel({
           </table>
         )}
       </div>
+
+      {products && pageCount > 1 && (
+        <div className="flex flex-wrap items-center justify-center gap-1.5 border-t border-black/[.08] px-6 py-3 dark:border-white/[.145]">
+          <button
+            onClick={() => setPage(currentPage - 1)}
+            disabled={currentPage <= 1}
+            aria-label="Previous page"
+            className="flex h-8 w-8 shrink-0 items-center justify-center rounded border border-black/[.15] disabled:opacity-30 dark:border-white/[.2]"
+          >
+            <ChevronLeft className="size-4" />
+          </button>
+          {Array.from({ length: pageCount }, (_, i) => i + 1).map((n) => (
+            <button
+              key={n}
+              onClick={() => setPage(n)}
+              aria-current={n === currentPage ? "page" : undefined}
+              className={`h-8 w-8 shrink-0 rounded border text-sm tabular-nums ${
+                n === currentPage
+                  ? "border-black bg-black text-white dark:border-white dark:bg-white dark:text-black"
+                  : "border-black/[.15] dark:border-white/[.2]"
+              }`}
+            >
+              {n}
+            </button>
+          ))}
+          <button
+            onClick={() => setPage(currentPage + 1)}
+            disabled={currentPage >= pageCount}
+            aria-label="Next page"
+            className="flex h-8 w-8 shrink-0 items-center justify-center rounded border border-black/[.15] disabled:opacity-30 dark:border-white/[.2]"
+          >
+            <ChevronRight className="size-4" />
+          </button>
+        </div>
+      )}
     </div>
   );
 }

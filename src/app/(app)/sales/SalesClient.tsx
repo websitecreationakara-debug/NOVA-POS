@@ -6,6 +6,9 @@ import { useRouter } from "next/navigation";
 import { ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Plus, User } from "lucide-react";
 import type { Brand, Category, PaymentMethod } from "@/types/database";
 import type { ProductWithStock } from "@/lib/supabase/queries";
+import type { WebsiteProduct } from "@/lib/websiteProducts/types";
+import SalesWebsiteGrid from "./SalesWebsiteGrid";
+import type { SalesWebsiteCatalog } from "./page";
 import {
   chargeOrder,
   searchCustomersByPhone,
@@ -13,6 +16,7 @@ import {
   type ChargeResult,
   type CustomerSuggestion,
 } from "./actions";
+import { ensurePosProductForSiteProduct } from "./websiteActions";
 
 function formatMoney(n: number) {
   return `$${n.toFixed(2)}`;
@@ -57,15 +61,27 @@ export default function SalesClient({
   currentBrand,
   categories,
   products,
+  websiteCatalog,
   initialSearch,
 }: {
   brands: Brand[];
   currentBrand: Brand;
   categories: Category[];
   products: ProductWithStock[];
+  websiteCatalog: SalesWebsiteCatalog | null;
   initialSearch: string;
 }) {
   const router = useRouter();
+  // Sales runs off the storefront catalog. The POS-catalog grid only shows as a
+  // fallback for a brand that has no storefront wired up.
+  const showWebsite = websiteCatalog !== null;
+  // Site product id currently being linked to a new POS product on tap.
+  const [linkingSiteProductId, setLinkingSiteProductId] = useState<string | null>(null);
+  // POS products created this session by tapping an unlinked website product,
+  // keyed by site product id -- lets a repeat tap skip the round trip.
+  const [linkedThisSession, setLinkedThisSession] = useState<Map<string, ProductWithStock>>(
+    new Map()
+  );
   const [activeCategoryId, setActiveCategoryId] = useState<string | "all">("all");
   const [search, setSearch] = useState(initialSearch);
   const [pageSize, setPageSize] = useState(20);
@@ -167,6 +183,55 @@ export default function SalesClient({
         { productId: product.id, name: product.name, unitPrice: product.price, quantity: 1 },
       ];
     });
+  }
+
+  // A website product is charged through the POS product it's linked to
+  // (product_site_links) -- that's the id charge_order expects and the stock
+  // row it decrements. Build the lookup from the catalog we already loaded,
+  // plus anything linked on tap this session.
+  const posBySiteProductId = useMemo(() => {
+    const map = new Map<string, ProductWithStock>();
+    for (const p of products) {
+      if (p.site_link) map.set(p.site_link.site_product_id, p);
+    }
+    for (const [siteProductId, p] of linkedThisSession) map.set(siteProductId, p);
+    return map;
+  }, [products, linkedThisSession]);
+
+  // Tapping a website product: if it already maps to a POS product, add it;
+  // otherwise create + link one on the fly (in the storefront's brand), then
+  // add. The created product shows up in Stock like any hand-linked one.
+  async function addWebsiteProductToCart(wp: WebsiteProduct) {
+    const known = posBySiteProductId.get(wp.id);
+    if (known) {
+      addToCart(known);
+      return;
+    }
+    if (!websiteCatalog || linkingSiteProductId) return;
+    setError(null);
+    setLinkingSiteProductId(wp.id);
+    try {
+      const linked = await ensurePosProductForSiteProduct({
+        catalogId: websiteCatalog.id,
+        siteProductId: wp.id,
+        title: wp.title,
+        price: wp.price,
+        imageUrl: wp.image_url,
+        stock: wp.stock,
+      });
+      const asProduct = {
+        id: linked.id,
+        name: linked.name,
+        price: linked.price,
+        unit: linked.unit,
+      } as ProductWithStock;
+      setLinkedThisSession((prev) => new Map(prev).set(wp.id, asProduct));
+      addToCart(asProduct);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Couldn't add this website product");
+    } finally {
+      setLinkingSiteProductId(null);
+    }
   }
 
   function renderProductCard(p: ProductWithStock) {
@@ -354,16 +419,29 @@ export default function SalesClient({
           ))}
         </select>
         <h1 className="text-lg font-medium">Sales</h1>
-        <input
-          type="text"
-          placeholder="Search name or SKU…"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          className="ml-auto w-64 rounded border border-black/[.15] bg-transparent px-3 py-1.5 text-sm dark:border-white/[.2]"
-        />
+        {!showWebsite && (
+          <input
+            type="text"
+            placeholder="Search name or SKU…"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="ml-auto w-64 rounded border border-black/[.15] bg-transparent px-3 py-1.5 text-sm dark:border-white/[.2]"
+          />
+        )}
       </header>
 
       <div className="flex flex-1 overflow-hidden">
+        {showWebsite && websiteCatalog ? (
+          <SalesWebsiteGrid
+            key={websiteCatalog.id}
+            catalogId={websiteCatalog.id}
+            initialProducts={websiteCatalog.products}
+            initialError={websiteCatalog.error}
+            categories={websiteCatalog.categories}
+            onSelect={addWebsiteProductToCart}
+            pendingSiteProductId={linkingSiteProductId}
+          />
+        ) : (
         <main className="flex-1 overflow-y-auto p-6">
           <div className="mb-4">
             <div
@@ -476,6 +554,7 @@ export default function SalesClient({
             </div>
           )}
         </main>
+        )}
 
         <aside className="flex w-96 flex-col border-l border-black/[.08] dark:border-white/[.145]">
           <div className="border-b border-black/[.08] px-4 py-3 font-medium dark:border-white/[.145]">
