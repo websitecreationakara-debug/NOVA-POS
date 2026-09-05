@@ -1,6 +1,7 @@
 import { Suspense } from "react";
 import { AlertTriangle, DollarSign, Package, ShoppingCart } from "lucide-react";
 import { getDashboardStats, getWebsiteProductTotal } from "@/lib/supabase/queries";
+import RevenueChart from "./RevenueChart";
 
 export const dynamic = "force-dynamic";
 
@@ -49,8 +50,6 @@ export default async function Home() {
     },
   ];
 
-  const maxDay = Math.max(...stats.last7Days.map((d) => d.total), 1);
-
   return (
     <main className="mx-auto w-full max-w-7xl space-y-8 p-8">
       <header>
@@ -74,26 +73,7 @@ export default async function Home() {
         ))}
       </div>
 
-      <section className="rounded-2xl border border-border bg-card p-6">
-        <h2 className="font-display text-lg font-bold">Revenue · Last 7 days</h2>
-        <div className="mt-6 flex h-48 items-end gap-3">
-          {stats.last7Days.map((d) => (
-            <div key={d.day} className="flex flex-1 flex-col items-center gap-2">
-              <div className="flex w-full flex-1 items-end">
-                <div
-                  className="relative w-full overflow-hidden rounded-t-md bg-brand/15"
-                  style={{ height: `${(d.total / maxDay) * 100}%`, minHeight: "4px" }}
-                >
-                  <div className="absolute inset-x-0 bottom-0 h-full bg-brand" />
-                </div>
-              </div>
-              <span className="text-[10px] font-bold tracking-widest text-muted-foreground uppercase">
-                {new Date(`${d.day}T00:00:00`).toLocaleDateString("en", { weekday: "short" })}
-              </span>
-            </div>
-          ))}
-        </div>
-      </section>
+      <RevenueChart dailyRevenue={stats.dailyRevenue} />
 
       <section className="overflow-hidden rounded-2xl border border-border bg-card">
         <div className="border-b border-border px-6 py-4">

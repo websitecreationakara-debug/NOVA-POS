@@ -169,7 +169,7 @@ export type DashboardStats = {
   ordersToday: number;
   totalProducts: number;
   lowStockCount: number;
-  last7Days: { day: string; total: number }[];
+  dailyRevenue: { date: string; total: number }[];
   recentOrders: {
     id: string;
     brandName: string;
@@ -196,22 +196,63 @@ export async function getWebsiteProductTotal(): Promise<number | null> {
   return ok.reduce((sum, r) => sum + r.value.length, 0);
 }
 
+// Matches the Stock page: for a brand with a storefront, the site's own
+// `stock` field (what staff actually see and edit there) is the number that
+// counts, not the internal stock_levels table -- otherwise this stat
+// disagrees with what the Stock page itself shows for the same brands. Only
+// a brand with no storefront configured falls back to the internal
+// per-product threshold.
+async function getLowStockCount(): Promise<number> {
+  const catalogs = configuredCatalogs();
+
+  const [websiteResults, brands] = await Promise.all([
+    Promise.allSettled(catalogs.map((c) => listWebsiteProducts(c.id))),
+    getBrands(),
+  ]);
+
+  const websiteLowStock = websiteResults
+    .filter((r) => r.status === "fulfilled")
+    .reduce(
+      (sum, r) =>
+        sum + r.value.filter((p) => (p.stock ?? 0) > 0 && (p.stock ?? 0) <= 5).length,
+      0
+    );
+
+  const linkedSlugs = new Set(catalogs.map((c) => c.brandSlug));
+  const unlinkedBrandIds = brands.filter((b) => !linkedSlugs.has(b.slug)).map((b) => b.id);
+  if (unlinkedBrandIds.length === 0) return websiteLowStock;
+
+  const { data: stockRows, error } = await supabaseAdmin
+    .from("stock_levels")
+    .select("quantity, low_stock_threshold, products!inner(is_active, brand_id)")
+    .eq("products.is_active", true)
+    .in("products.brand_id", unlinkedBrandIds)
+    .gt("low_stock_threshold", 0);
+  if (error) throw error;
+
+  // Excludes quantity 0 -- most products in this system have never had a
+  // real count entered and sit at 0 by default, so counting those as "low"
+  // would make this stat mostly reflect untracked inventory instead of
+  // products that are actually running out.
+  const internalLowStock = (stockRows ?? []).filter(
+    (s) => s.quantity > 0 && s.quantity <= s.low_stock_threshold
+  ).length;
+
+  return websiteLowStock + internalLowStock;
+}
+
 export async function getDashboardStats(): Promise<DashboardStats> {
   const today = new Date().toISOString().slice(0, 10);
 
   const [
     { data: paidOrders, error: ordersError },
     { count: totalProducts, error: prodError },
-    { data: stockRows, error: stockError },
+    lowStockCount,
     { data: recentOrdersData, error: recentError },
   ] = await Promise.all([
     supabaseAdmin.from("orders").select("total, paid_at").eq("status", "paid"),
     supabaseAdmin.from("products").select("id", { count: "exact", head: true }).eq("is_active", true),
-    supabaseAdmin
-      .from("stock_levels")
-      .select("quantity, low_stock_threshold, products!inner(is_active)")
-      .eq("products.is_active", true)
-      .gt("low_stock_threshold", 0),
+    getLowStockCount(),
     supabaseAdmin
       .from("orders")
       .select("id, status, total, paid_at, brands(name)")
@@ -222,26 +263,24 @@ export async function getDashboardStats(): Promise<DashboardStats> {
 
   if (ordersError) throw ordersError;
   if (prodError) throw prodError;
-  if (stockError) throw stockError;
   if (recentError) throw recentError;
 
   const orders = paidOrders ?? [];
   const totalRevenue = orders.reduce((sum, o) => sum + o.total, 0);
   const ordersToday = orders.filter((o) => (o.paid_at ?? "").slice(0, 10) === today).length;
-  const lowStockCount = (stockRows ?? []).filter((s) => s.quantity <= s.low_stock_threshold).length;
 
-  const dayBuckets = new Map<string, number>();
-  for (let i = 6; i >= 0; i--) {
-    const d = new Date(Date.now() - i * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
-    dayBuckets.set(d, 0);
-  }
+  // One row per calendar day that had any revenue -- the client buckets this
+  // into weeks/months/years and lets staff page back through history, rather
+  // than the server only ever computing "this week/month/year".
+  const dailyTotals = new Map<string, number>();
   for (const o of orders) {
     const d = (o.paid_at ?? "").slice(0, 10);
-    if (dayBuckets.has(d)) {
-      dayBuckets.set(d, (dayBuckets.get(d) ?? 0) + o.total);
-    }
+    if (!d) continue;
+    dailyTotals.set(d, (dailyTotals.get(d) ?? 0) + o.total);
   }
-  const last7Days = Array.from(dayBuckets.entries()).map(([day, total]) => ({ day, total }));
+  const dailyRevenue = Array.from(dailyTotals.entries())
+    .map(([date, total]) => ({ date, total }))
+    .sort((a, b) => (a.date < b.date ? -1 : 1));
 
   type RecentOrderRow = {
     id: string;
@@ -263,7 +302,7 @@ export async function getDashboardStats(): Promise<DashboardStats> {
     ordersToday,
     totalProducts: totalProducts ?? 0,
     lowStockCount,
-    last7Days,
+    dailyRevenue,
     recentOrders,
   };
 }
