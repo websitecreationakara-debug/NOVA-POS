@@ -386,6 +386,11 @@ export default function SalesClient({
           <h1 className="text-xl font-semibold">Sale complete</h1>
           <p className="text-zinc-500">{receipt.invoiceNumber ?? `Order #${receipt.orderId.slice(0, 8)}`}</p>
         </div>
+        {receipt.stockSyncWarning && (
+          <p className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-300">
+            {receipt.stockSyncWarning}
+          </p>
+        )}
         <div className="divide-y divide-black/[.08] rounded-lg border border-black/[.08] dark:divide-white/[.145] dark:border-white/[.145]">
           {receipt.lines.map((l) => (
             <div key={l.productId} className="flex items-center justify-between px-4 py-2 text-sm">

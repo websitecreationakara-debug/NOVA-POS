@@ -18,6 +18,14 @@ export type SiteProductCandidate = {
   type: string;
 };
 
+const SITE_LABEL: Record<ProductSiteLink["site"], string> = {
+  "bosba-premium-foods": "BOSBA Premium Foods",
+  "bosba-drink-snack": "BOSBA Drink & Snack",
+  "sora-sake": "sorasake.wine",
+};
+
+export type StockSyncFailure = { site: ProductSiteLink["site"]; label: string; reason: string };
+
 // Search a linked site's real catalog by name -- used when linking a POS
 // product to its website counterpart, so staff pick from real results
 // instead of needing to know/guess the site's internal product id.
@@ -74,14 +82,14 @@ export async function linkProductToSite(
   }
 }
 
-export async function pushStockToSites(productIds: string[]): Promise<void> {
-  if (productIds.length === 0) return;
+export async function pushStockToSites(productIds: string[]): Promise<StockSyncFailure[]> {
+  if (productIds.length === 0) return [];
 
   const { data: links, error } = await supabaseAdmin
     .from("product_site_links")
     .select("product_id, site, site_product_id")
     .in("product_id", productIds);
-  if (error || !links || links.length === 0) return;
+  if (error || !links || links.length === 0) return [];
 
   const { data: stockRows } = await supabaseAdmin
     .from("stock_levels")
@@ -93,15 +101,28 @@ export async function pushStockToSites(productIds: string[]): Promise<void> {
   const stockByProduct = new Map((stockRows ?? []).map((r) => [r.product_id, r.quantity]));
 
   const secret = process.env.STOCK_SYNC_SECRET;
-  if (!secret) return;
+  if (!secret) {
+    // Without this, every push below is a silent no-op -- the POS's own
+    // stock_levels row is still correct, but the storefront never hears
+    // about it, with nothing in the logs to explain why.
+    console.error(
+      "STOCK_SYNC_SECRET is not set -- skipping stock push to",
+      [...new Set(links.map((l) => l.site))].join(", ")
+    );
+    return [...new Set(links.map((l) => l.site))].map((site) => ({
+      site,
+      label: SITE_LABEL[site],
+      reason: "STOCK_SYNC_SECRET is not configured",
+    }));
+  }
 
-  await Promise.all(
-    links.map(async (link) => {
+  const results = await Promise.all(
+    links.map(async (link): Promise<StockSyncFailure | null> => {
       const baseUrl = SITE_BASE_URL[link.site];
       const stock = stockByProduct.get(link.product_id);
-      if (!baseUrl || stock === undefined) return;
+      if (!baseUrl || stock === undefined) return null;
       try {
-        await fetch(`${baseUrl}/api/stock-sync`, {
+        const res = await fetch(`${baseUrl}/api/stock-sync`, {
           method: "POST",
           headers: {
             "content-type": "application/json",
@@ -110,9 +131,28 @@ export async function pushStockToSites(productIds: string[]): Promise<void> {
           body: JSON.stringify({ productId: link.site_product_id, stock: Math.max(0, stock) }),
           signal: AbortSignal.timeout(8000),
         });
+        // fetch() only rejects on network failure -- a 4xx/5xx response
+        // still resolves "successfully" and was previously ignored here,
+        // so a rejected/broken sync looked identical to a working one.
+        if (!res.ok) {
+          const body = await res.text().catch(() => "");
+          console.error(
+            `stock-sync push rejected by ${link.site} for product ${link.site_product_id} ` +
+              `(HTTP ${res.status}): ${body.slice(0, 300)}`
+          );
+          return { site: link.site, label: SITE_LABEL[link.site], reason: `HTTP ${res.status}` };
+        }
+        return null;
       } catch (e) {
         console.error(`stock-sync push failed for ${link.site} product ${link.site_product_id}`, e);
+        return {
+          site: link.site,
+          label: SITE_LABEL[link.site],
+          reason: e instanceof Error ? e.message : "network error",
+        };
       }
     })
   );
+
+  return results.filter((r): r is StockSyncFailure => r !== null);
 }

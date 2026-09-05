@@ -17,6 +17,10 @@ export interface ChargeResult {
   invoiceNumber: string | null;
   total: number;
   lines: CartLine[];
+  // Set when the sale saved fine but pushing the new stock count out to a
+  // linked storefront failed -- the cashier needs to know that site's
+  // displayed stock is now stale until it's fixed or synced manually.
+  stockSyncWarning: string | null;
 }
 
 export interface CustomerSuggestion {
@@ -153,12 +157,17 @@ export async function chargeOrder(input: {
     .eq("id", orderId)
     .single();
 
-  await pushStockToSites(lines.map((l) => l.productId));
+  const syncFailures = await pushStockToSites(lines.map((l) => l.productId));
+  const stockSyncWarning =
+    syncFailures.length > 0
+      ? `Stock wasn't synced to ${[...new Set(syncFailures.map((f) => f.label))].join(", ")} -- update it there manually.`
+      : null;
 
   return {
     orderId,
     invoiceNumber: order?.invoice_number ?? null,
     total: order?.total ?? 0,
     lines,
+    stockSyncWarning,
   };
 }
