@@ -2,7 +2,7 @@
 
 import { Fragment, useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowDown, ArrowUp, ArrowUpDown, X } from "lucide-react";
+import { ArrowDown, ArrowUp, ArrowUpDown, TriangleAlert, X } from "lucide-react";
 import type { Brand, Category } from "@/types/database";
 import type { ProductWithStock } from "@/lib/supabase/queries";
 import type { WebsiteCatalogData } from "./page";
@@ -165,6 +165,35 @@ export default function StockClient({
     }
     return list;
   }, [products, activeCategoryId, search, lowStockOnly, sortKey, sortDir, categoryName]);
+
+  // Page-level count (not filtered by category/search) so the low-stock
+  // banner reflects the whole brand, not just whatever's currently visible.
+  // Excludes quantity 0 -- most products here have never had a real count
+  // entered and sit at 0 by default, so treating that as "low" would make
+  // the banner permanent noise instead of a real signal.
+  //
+  // For a brand with a storefront, the site's own `stock` field (what the
+  // Website Products panel below shows and edits) is the number staff
+  // actually act on -- counting from the internal POS stock_levels table
+  // instead would count products that aren't even linked to the site, and
+  // disagree with what the panel's own "Low stock" button finds.
+  const lowStockCount = useMemo(() => {
+    if (showWebsite && websiteCatalog?.products) {
+      return websiteCatalog.products.filter((p) => (p.stock ?? 0) > 0 && (p.stock ?? 0) <= 5).length;
+    }
+    return products.filter(
+      (p) =>
+        p.stock_quantity > 0 && p.low_stock_threshold > 0 && p.stock_quantity <= p.low_stock_threshold
+    ).length;
+  }, [products, showWebsite, websiteCatalog]);
+  // Same source as lowStockCount above -- the live site's stock for a brand
+  // with a storefront, otherwise the internal POS table.
+  const outOfStockCount = useMemo(() => {
+    if (showWebsite && websiteCatalog?.products) {
+      return websiteCatalog.products.filter((p) => (p.stock ?? 0) <= 0).length;
+    }
+    return products.filter((p) => p.stock_quantity <= 0).length;
+  }, [products, showWebsite, websiteCatalog]);
 
   const categoryProductCounts = useMemo(() => {
     const map = new Map<string, number>();
@@ -557,6 +586,27 @@ export default function StockClient({
         </div>
         )}
       </header>
+      {(lowStockCount > 0 || outOfStockCount > 0) && (
+        <div className="flex items-center gap-2 border-b border-amber-200 bg-amber-50 px-6 py-2 text-sm text-amber-800 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-300">
+          <TriangleAlert className="size-4 shrink-0" />
+          <span>
+            {lowStockCount > 0 &&
+              `${lowStockCount} product${lowStockCount === 1 ? "" : "s"} low on stock (5 or fewer left)`}
+            {lowStockCount > 0 && outOfStockCount > 0 && " · "}
+            {outOfStockCount > 0 &&
+              `${outOfStockCount} product${outOfStockCount === 1 ? "" : "s"} out of stock`}
+          </span>
+          {!showWebsite && (
+            <button
+              type="button"
+              onClick={() => setLowStockOnly(true)}
+              className="ml-auto shrink-0 rounded-full border border-amber-300 px-2.5 py-1 text-xs font-medium hover:bg-amber-100 dark:border-amber-800 dark:hover:bg-amber-900/40"
+            >
+              Show them
+            </button>
+          )}
+        </div>
+      )}
       {showWebsite && websiteCatalog ? (
         <WebsiteProductsPanel
           key={websiteCatalog.id}

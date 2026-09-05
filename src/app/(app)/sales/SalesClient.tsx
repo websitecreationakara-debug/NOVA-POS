@@ -215,9 +215,13 @@ export default function SalesClient({
   // otherwise create + link one on the fly (in the storefront's brand), then
   // add. The created product shows up in Stock like any hand-linked one.
   async function addWebsiteProductToCart(wp: WebsiteProduct) {
+    // The site's current sale price, if it's on sale -- charge what the card
+    // actually shows, not the linked POS product's (possibly stale, always
+    // full-price-at-link-time) stored price.
+    const effectivePrice = wp.sale_price != null && wp.sale_price < wp.price ? wp.sale_price : wp.price;
     const known = posBySiteProductId.get(wp.id);
     if (known) {
-      addToCart(known);
+      addToCart({ ...known, price: effectivePrice });
       return;
     }
     if (!websiteCatalog || linkingSiteProductId) return;
@@ -228,14 +232,14 @@ export default function SalesClient({
         catalogId: websiteCatalog.id,
         siteProductId: wp.id,
         title: wp.title,
-        price: wp.price,
+        price: effectivePrice,
         imageUrl: wp.image_url,
         stock: wp.stock,
       });
       const asProduct = {
         id: linked.id,
         name: linked.name,
-        price: linked.price,
+        price: effectivePrice,
         unit: linked.unit,
       } as ProductWithStock;
       setLinkedThisSession((prev) => new Map(prev).set(wp.id, asProduct));

@@ -2,6 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getInvoice } from "@/lib/supabase/queries";
 import OrderStatusControl from "@/components/OrderStatusControl";
+import DeleteOrderButton from "@/components/DeleteOrderButton";
 
 function formatMoney(n: number) {
   return `$${n.toFixed(2)}`;
@@ -25,9 +26,12 @@ export default async function OrderDetailPage({
         <Link href="/orders" className="text-sm text-muted-foreground hover:underline">
           ← Back to Orders
         </Link>
-        <Link href={`/invoice/${order.id}`} className="text-sm text-brand hover:underline">
-          View printable invoice →
-        </Link>
+        <div className="flex items-center gap-4">
+          <Link href={`/invoice/${order.id}`} className="text-sm text-brand hover:underline">
+            View printable invoice →
+          </Link>
+          <DeleteOrderButton orderId={order.id} redirectTo="/orders" />
+        </div>
       </div>
 
       <div className="rounded-2xl border border-border bg-card p-6">

@@ -90,6 +90,8 @@ export default function WebsiteProductsPanel({
   const [products, setProducts] = useState<WebsiteProduct[] | null>(initialProducts);
   const [loadError, setLoadError] = useState<string | null>(initialError);
   const [search, setSearch] = useState("");
+  const [outOfStockOnly, setOutOfStockOnly] = useState(false);
+  const [lowStockOnly, setLowStockOnly] = useState(false);
   const [page, setPage] = useState(1);
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState<WebsiteProductWrite>(emptyForm);
@@ -291,14 +293,16 @@ export default function WebsiteProductsPanel({
   const q = search.trim().toLowerCase();
   const filtered = (products ?? []).filter(
     (p) =>
-      !q ||
-      p.title.toLowerCase().includes(q) ||
-      (p.weight ?? "").toLowerCase().includes(q) ||
-      (p.taste_notes ?? "").toLowerCase().includes(q)
+      (!q ||
+        p.title.toLowerCase().includes(q) ||
+        (p.weight ?? "").toLowerCase().includes(q) ||
+        (p.taste_notes ?? "").toLowerCase().includes(q)) &&
+      (!outOfStockOnly || (p.stock ?? 0) <= 0) &&
+      (!lowStockOnly || ((p.stock ?? 0) > 0 && (p.stock ?? 0) <= 5))
   );
   const pageCount = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   // Snap back to page 1 whenever the result set changes under the current page.
-  const filterKey = `${q}|${pageCount}`;
+  const filterKey = `${q}|${outOfStockOnly}|${lowStockOnly}|${pageCount}`;
   const [prevFilterKey, setPrevFilterKey] = useState(filterKey);
   if (filterKey !== prevFilterKey) {
     setPrevFilterKey(filterKey);
@@ -328,6 +332,32 @@ export default function WebsiteProductsPanel({
           className="shrink-0 rounded border border-black/[.15] px-3 py-1.5 text-sm dark:border-white/[.2]"
         >
           Refresh
+        </button>
+        <button
+          onClick={() => {
+            setLowStockOnly((v) => !v);
+            setOutOfStockOnly(false);
+          }}
+          className={`shrink-0 rounded border px-3 py-1.5 text-sm ${
+            lowStockOnly
+              ? "border-amber-500 bg-amber-500 text-white"
+              : "border-black/[.15] dark:border-white/[.2]"
+          }`}
+        >
+          Low stock
+        </button>
+        <button
+          onClick={() => {
+            setOutOfStockOnly((v) => !v);
+            setLowStockOnly(false);
+          }}
+          className={`shrink-0 rounded border px-3 py-1.5 text-sm ${
+            outOfStockOnly
+              ? "border-red-500 bg-red-500 text-white"
+              : "border-black/[.15] dark:border-white/[.2]"
+          }`}
+        >
+          Out of stock
         </button>
       </div>
 
