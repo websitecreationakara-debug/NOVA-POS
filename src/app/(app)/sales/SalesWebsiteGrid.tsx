@@ -2,7 +2,11 @@
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { ChevronLeft, ChevronRight } from "lucide-react";
-import type { WebsiteCatalogId, WebsiteProduct } from "@/lib/websiteProducts/types";
+import type {
+  WebsiteCatalogId,
+  WebsiteProduct,
+  WebsiteProductVariation,
+} from "@/lib/websiteProducts/types";
 import { listWebsiteProductsAction } from "../stock/websiteActions";
 
 // useLayoutEffect on the client, useEffect on the server (avoids the SSR warning).
@@ -22,11 +26,45 @@ function formatMoney(n: number) {
 }
 
 // Cheap "did anything move" check so a poll that returns identical data doesn't
-// re-render the grid.
+// re-render the grid. Folds in each variation's own price/stock so a change
+// to just one size of a "variable" product is still picked up.
 function catalogSignature(products: WebsiteProduct[]): string {
   return products
-    .map((p) => `${p.id}:${p.price}:${p.sale_price ?? ""}:${p.stock ?? ""}:${p.status}:${p.title}:${p.image_url ?? ""}`)
+    .map((p) => {
+      const variationsSig = (p.variations ?? [])
+        .map((v) => `${v.id}:${v.price}:${v.sale_price ?? ""}:${v.stock ?? ""}`)
+        .join(",");
+      return `${p.id}:${p.price}:${p.sale_price ?? ""}:${p.stock ?? ""}:${p.status}:${p.title}:${p.image_url ?? ""}:${variationsSig}`;
+    })
     .join("|");
+}
+
+// A card's worth of sellable data: either a simple product as-is, or one
+// specific size/flavor of a "variable" product. `key` uniquely identifies the
+// card (and, for a variation, doubles as the composite id used to look up its
+// own POS product link -- see SalesClient's posByEntryKey).
+type Entry = {
+  product: WebsiteProduct;
+  variation: WebsiteProductVariation | null;
+  key: string;
+};
+
+// Expand every "variable"/"variant" product with real variations into one
+// entry per size/flavor -- its parent's own price/stock are always 0/null, so
+// selling it as a single card would always show "$0 / Stock untracked".
+// Everything else (including a "variable" product with no variations data)
+// passes through as a single entry, unchanged.
+function toEntries(list: WebsiteProduct[]): Entry[] {
+  const out: Entry[] = [];
+  for (const p of list) {
+    const isVariable = p.type === "variable" || p.type === "variant";
+    if (isVariable && p.variations && p.variations.length > 0) {
+      for (const v of p.variations) out.push({ product: p, variation: v, key: `${p.id}::${v.id}` });
+    } else {
+      out.push({ product: p, variation: null, key: p.id });
+    }
+  }
+  return out;
 }
 
 export default function SalesWebsiteGrid({
@@ -35,20 +73,21 @@ export default function SalesWebsiteGrid({
   initialError,
   categories,
   onSelect,
-  pendingSiteProductId,
-  cartQtyBySiteProduct,
+  pendingEntryKey,
+  cartQtyByEntryKey,
 }: {
   catalogId: WebsiteCatalogId;
   initialProducts: WebsiteProduct[] | null;
   initialError: string | null;
   // Category filter chips for this storefront ({ id: category_id, label }).
   categories: { id: string; label: string }[];
-  onSelect: (product: WebsiteProduct) => void;
-  // Site product id currently being linked to a POS product (brief spinner).
-  pendingSiteProductId: string | null;
-  // How many of each site product are sitting in the Order right now, so the
-  // card can show remaining-after-this-sale stock.
-  cartQtyBySiteProduct: Map<string, number>;
+  // Passes the specific variation tapped, or null for a simple product.
+  onSelect: (product: WebsiteProduct, variation: WebsiteProductVariation | null) => void;
+  // Entry key currently being linked to a POS product (brief spinner).
+  pendingEntryKey: string | null;
+  // How many of each entry are sitting in the Order right now, so the card
+  // can show remaining-after-this-sale stock.
+  cartQtyByEntryKey: Map<string, number>;
 }) {
   const [products, setProducts] = useState<WebsiteProduct[] | null>(initialProducts);
   const [loadError, setLoadError] = useState<string | null>(initialError);
@@ -175,9 +214,13 @@ export default function SalesWebsiteGrid({
     return !q || p.title.toLowerCase().includes(q);
   });
 
+  // Expand each visible product into its sellable card(s) -- a "variable"
+  // product becomes one entry per size/flavor -- before paging.
+  const entries = toEntries(visible);
+
   // Page the filtered view at two rows. Reset to page 1 whenever the result set
   // changes underneath the current page (React's during-render adjust pattern).
-  const pageCount = Math.max(1, Math.ceil(visible.length / PAGE_SIZE));
+  const pageCount = Math.max(1, Math.ceil(entries.length / PAGE_SIZE));
   const filterKey = `${q}|${activeCategoryId}|${pageCount}`;
   const [prevFilterKey, setPrevFilterKey] = useState(filterKey);
   if (filterKey !== prevFilterKey) {
@@ -185,7 +228,7 @@ export default function SalesWebsiteGrid({
     setPage(1);
   }
   const currentPage = Math.min(page, pageCount);
-  const paged = visible.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
+  const paged = entries.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
 
   // After the paged grid re-renders, restore the pager to the same on-screen
   // spot it was at when clicked, so the view doesn't jump up or down.
@@ -255,7 +298,7 @@ export default function SalesWebsiteGrid({
       {loadError && <p className="mb-4 text-sm text-red-500">{loadError}</p>}
       {products === null && !loadError && <p className="text-sm text-zinc-500">Loading…</p>}
 
-      {products && visible.length === 0 && (
+      {products && entries.length === 0 && (
         <p className="text-sm text-zinc-500">
           {q
             ? "No website products match your search."
@@ -265,46 +308,60 @@ export default function SalesWebsiteGrid({
         </p>
       )}
 
-      {products && visible.length > 0 && (
+      {products && entries.length > 0 && (
         <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
-          {paged.map((p) => {
-            const onSale = p.sale_price != null && p.sale_price < p.price;
+          {paged.map((entry) => {
+            const { product: p, variation: v, key } = entry;
+            const price = v ? v.price : p.price;
+            const salePrice = v ? v.sale_price : p.sale_price;
+            const stock = v ? v.stock : p.stock;
+            const imageUrl = v?.image_url ?? p.image_url;
+            const onSale = salePrice != null && salePrice < price;
             // Show stock minus what's already in the Order, so staff see what's
             // left after this sale. The real decrement happens on Charge.
-            const inCart = cartQtyBySiteProduct.get(p.id) ?? 0;
-            const remaining = p.stock == null ? null : p.stock - inCart;
+            const inCart = cartQtyByEntryKey.get(key) ?? 0;
+            const remaining = stock == null ? null : stock - inCart;
             const isOut = remaining != null && remaining <= 0;
-            const pending = pendingSiteProductId === p.id;
+            const pending = pendingEntryKey === key;
             return (
               <button
-                key={p.id}
-                onClick={() => onSelect(p)}
+                key={key}
+                onClick={() => onSelect(p, v)}
                 disabled={pending}
                 className="flex flex-col items-start rounded-lg border border-black/[.08] p-4 text-left transition-colors hover:bg-black/[.03] disabled:opacity-50 dark:border-white/[.145] dark:hover:bg-white/[.05]"
               >
                 <div className="mb-2 aspect-square w-full overflow-hidden rounded bg-zinc-100 dark:bg-zinc-800">
-                  {p.image_url ? (
+                  {imageUrl ? (
                     // eslint-disable-next-line @next/next/no-img-element
-                    <img src={p.image_url} alt="" className="h-full w-full object-cover" />
+                    <img src={imageUrl} alt="" className="h-full w-full object-cover" />
                   ) : (
                     <div className="flex h-full w-full items-center justify-center text-xs text-zinc-400">
                       No image
                     </div>
                   )}
                 </div>
-                {/* Fixed-height text block so every card is the same height and
-                    the pager below never shifts between pages. */}
-                <div className="line-clamp-2 h-12 font-medium">{p.title}</div>
+                {/* Plain fixed-height + overflow-hidden, not line-clamp: for a
+                    title long enough to need a real 3rd line, -webkit-line-
+                    clamp's ellipsis machinery was painting that clipped 3rd
+                    line's text past the box anyway, overlapping the line
+                    below instead of hiding it. leading-6 pins the line-height
+                    so h-12 (2x24px) reliably holds exactly 2 lines, and plain
+                    overflow-hidden clips anything past that the ordinary way
+                    (no ellipsis, but no bleed either). The size (if any) gets
+                    its own line rather than being appended to the title -- a
+                    long product name plus "(24 blts)" could run to 3 lines. */}
+                <div className="h-12 overflow-hidden font-medium leading-6">{p.title}</div>
+                <div className="mt-1 truncate text-xs text-zinc-400">{v?.weight || " "}</div>
                 <div className="mt-1 text-sm text-zinc-500">
                   {onSale ? (
                     <>
-                      <span className="line-through">{formatMoney(p.price)}</span>{" "}
+                      <span className="line-through">{formatMoney(price)}</span>{" "}
                       <span className="text-green-600 dark:text-green-500">
-                        {formatMoney(p.sale_price as number)}
+                        {formatMoney(salePrice as number)}
                       </span>
                     </>
                   ) : (
-                    formatMoney(p.price)
+                    formatMoney(price)
                   )}
                 </div>
                 <div className={`mt-1 text-xs ${isOut ? "text-red-500" : "text-zinc-400"}`}>
@@ -331,6 +388,7 @@ export default function SalesWebsiteGrid({
             <div key={`ph-${i}`} aria-hidden className="invisible rounded-lg border p-4">
               <div className="mb-2 aspect-square w-full" />
               <div className="h-12" />
+              <div className="mt-1 h-4" />
               <div className="mt-1 h-5" />
               <div className="mt-1 h-4" />
               <div className="mt-1 h-4" />

@@ -613,6 +613,7 @@ export default function StockClient({
           catalogId={websiteCatalog.id}
           initialProducts={websiteCatalog.products}
           initialError={websiteCatalog.error}
+          posProducts={products}
         />
       ) : (
       <>

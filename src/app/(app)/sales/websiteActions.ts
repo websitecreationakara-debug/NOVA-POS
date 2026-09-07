@@ -27,13 +27,15 @@ function toLinked(p: EmbeddedProduct): LinkedPosProduct {
 
 async function findExistingLink(
   site: ProductSiteLink["site"],
-  siteProductId: string
+  siteProductId: string,
+  variationId: string
 ): Promise<EmbeddedProduct | null> {
   const { data } = await supabaseAdmin
     .from("product_site_links")
     .select("products(id, name, price, unit, is_active)")
     .eq("site", site)
     .eq("site_product_id", siteProductId)
+    .eq("variation_id", variationId)
     .maybeSingle();
   return (data?.products as unknown as EmbeddedProduct | undefined) ?? null;
 }
@@ -46,16 +48,21 @@ async function findExistingLink(
 export async function ensurePosProductForSiteProduct(input: {
   catalogId: WebsiteCatalogId;
   siteProductId: string;
+  // "" for a simple site product, or a specific variation's id for a
+  // "variable" one -- lets each size/flavor link to its own POS product
+  // under the same parent siteProductId (see migration 0018).
+  variationId: string | null;
   title: string;
   price: number;
   imageUrl: string | null;
   stock: number | null;
 }): Promise<LinkedPosProduct> {
   const { catalogId, siteProductId, title, price, imageUrl, stock } = input;
+  const variationId = input.variationId ?? "";
   const catalog = getCatalog(catalogId);
   const site = catalog.brandSlug as ProductSiteLink["site"];
 
-  const existing = await findExistingLink(site, siteProductId);
+  const existing = await findExistingLink(site, siteProductId, variationId);
   if (existing) {
     if (!existing.is_active) {
       await supabaseAdmin.from("products").update({ is_active: true }).eq("id", existing.id);
@@ -100,16 +107,17 @@ export async function ensurePosProductForSiteProduct(input: {
     product_id: created.id,
     site,
     site_product_id: siteProductId,
+    variation_id: variationId,
     matched_name: name,
     match_confidence: "exact",
   });
 
   if (linkErr) {
-    // Another cashier linked the same site product between our check and this
-    // insert (unique (site, site_product_id)). Park the row we just made and
-    // hand back the one that won the race.
+    // Another cashier linked the same site product/variation between our
+    // check and this insert (unique (site, site_product_id, variation_id)).
+    // Park the row we just made and hand back the one that won the race.
     await supabaseAdmin.from("products").update({ is_active: false }).eq("id", created.id);
-    const raced = await findExistingLink(site, siteProductId);
+    const raced = await findExistingLink(site, siteProductId, variationId);
     if (raced) return toLinked(raced);
     throw linkErr;
   }

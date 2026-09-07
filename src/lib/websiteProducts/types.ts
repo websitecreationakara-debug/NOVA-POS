@@ -7,6 +7,20 @@ export type WebsiteProductType = "simple" | "variant" | "variable";
 // its own catalog; see CATALOGS in ./catalogs.
 export type WebsiteCatalogId = "sorasake" | "bosba_drink_snack" | "bosba_premium_food";
 
+// One size/flavor option of a "variable"/"variant" type WebsiteProduct. The
+// parent product's own price/stock are meaningless for these (always 0/null)
+// -- the real sellable price and stock live here, per variation.
+export type WebsiteProductVariation = {
+  id: string;
+  weight: string | null;
+  flavor: string | null;
+  price: number;
+  sale_price: number | null;
+  image_url: string | null;
+  stock: number | null;
+  pcs: number | null;
+};
+
 // Storefront product. Fields below `video_url` are only returned by some
 // catalogs (BOSBA Drink & Snack), so they're optional.
 export type WebsiteProduct = {
@@ -35,7 +49,7 @@ export type WebsiteProduct = {
   pre_order?: boolean;
   created_at?: string;
   updated_at?: string;
-  variations?: unknown[];
+  variations?: WebsiteProductVariation[];
   images?: unknown[];
   tabs?: unknown[];
 };

@@ -66,6 +66,10 @@ export async function linkProductToSite(
       product_id: productId,
       site,
       site_product_id: siteProductId,
+      // This manual Stock-page link flow only ever offers simple (non-
+      // variable) candidates -- see the "variable" guard in StockClient's
+      // applyLink -- so this is always the simple-product row.
+      variation_id: "",
       matched_name: matchedName,
       match_confidence: "exact",
     },
@@ -85,11 +89,18 @@ export async function linkProductToSite(
 export async function pushStockToSites(productIds: string[]): Promise<StockSyncFailure[]> {
   if (productIds.length === 0) return [];
 
-  const { data: links, error } = await supabaseAdmin
+  const { data: allLinks, error } = await supabaseAdmin
     .from("product_site_links")
-    .select("product_id, site, site_product_id")
+    .select("product_id, site, site_product_id, variation_id")
     .in("product_id", productIds);
-  if (error || !links || links.length === 0) return [];
+  if (error || !allLinks || allLinks.length === 0) return [];
+
+  // A variation-linked product (one size of a "variable" site product) has no
+  // single stock field on the storefront to update -- the parent's own stock
+  // is meaningless there, and pushing a variation's count under the parent id
+  // would either no-op or corrupt it. Quietly skip these, not a failure.
+  const links = allLinks.filter((l) => !l.variation_id);
+  if (links.length === 0) return [];
 
   const { data: stockRows } = await supabaseAdmin
     .from("stock_levels")

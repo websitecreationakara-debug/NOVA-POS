@@ -2,17 +2,20 @@
 
 import { revalidatePath } from "next/cache";
 import { supabaseAdmin } from "@/lib/supabase/server";
+import { ensurePosProductForSiteProduct } from "@/app/(app)/sales/websiteActions";
 import {
   createWebsiteProduct,
   deleteWebsiteProduct,
   listWebsiteProducts,
   updateWebsiteProduct,
+  updateWebsiteProductVariation,
 } from "@/lib/websiteProducts/client";
 import type {
   WebsiteCatalogId,
   WebsiteProduct,
   WebsiteProductWrite,
 } from "@/lib/websiteProducts/types";
+import { adjustStockAction, setProductPriceAction } from "./actions";
 
 // Upload an image chosen from the user's computer to the public product-images
 // bucket and hand back its URL, which then goes into a website product's
@@ -59,6 +62,86 @@ export async function updateWebsiteProductAction(
 ): Promise<void> {
   await updateWebsiteProduct(catalogId, id, input);
   revalidatePath("/stock");
+}
+
+// The storefront now has a real endpoint for a single variation
+// (PATCH /api/products/:id/variations/:variationId -- see server.ts in the
+// BOSBA Drink & Snack repo), so this writes the website first -- the source
+// of truth for this size's price -- and only mirrors into POS's own linked
+// product (the same record Sales creates the first time someone sells that
+// size, see ensurePosProductForSiteProduct) once that succeeds. If the
+// website write fails (e.g. a catalog that hasn't added the route yet), the
+// whole action throws and POS's own data is left untouched, so the two never
+// drift apart silently.
+export async function setVariationPriceAction(input: {
+  catalogId: WebsiteCatalogId;
+  siteProductId: string;
+  variationId: string;
+  title: string;
+  imageUrl: string | null;
+  alreadyLinked: boolean;
+  // Only used to seed stock if this is the first edit and no POS product
+  // exists for this size yet.
+  seedStock: number | null;
+  price: number;
+}): Promise<void> {
+  await updateWebsiteProductVariation(input.catalogId, input.siteProductId, input.variationId, {
+    price: input.price,
+  });
+
+  const linked = await ensurePosProductForSiteProduct({
+    catalogId: input.catalogId,
+    siteProductId: input.siteProductId,
+    variationId: input.variationId,
+    title: input.title,
+    price: input.price,
+    imageUrl: input.imageUrl,
+    stock: input.seedStock,
+  });
+  // ensurePosProductForSiteProduct only sets price at creation time -- if the
+  // link already existed (at a different price), apply the new price now.
+  if (input.alreadyLinked) {
+    await setProductPriceAction({ productId: linked.id, price: input.price });
+  }
+}
+
+export async function setVariationStockAction(input: {
+  catalogId: WebsiteCatalogId;
+  siteProductId: string;
+  variationId: string;
+  title: string;
+  imageUrl: string | null;
+  alreadyLinked: boolean;
+  // Only used to seed price if this is the first edit and no POS product
+  // exists for this size yet.
+  seedPrice: number;
+  // The POS product's stock right now (0 if not yet linked) -- used to turn
+  // the typed absolute value into the delta adjustStockAction expects.
+  currentStock: number;
+  stock: number;
+}): Promise<void> {
+  await updateWebsiteProductVariation(input.catalogId, input.siteProductId, input.variationId, {
+    stock: input.stock,
+  });
+
+  const linked = await ensurePosProductForSiteProduct({
+    catalogId: input.catalogId,
+    siteProductId: input.siteProductId,
+    variationId: input.variationId,
+    title: input.title,
+    price: input.seedPrice,
+    imageUrl: input.imageUrl,
+    stock: input.stock,
+  });
+  // ensurePosProductForSiteProduct seeds stock directly at creation time (to
+  // the target value already) -- only need an explicit adjustment if the
+  // link already existed.
+  if (input.alreadyLinked) {
+    const delta = input.stock - input.currentStock;
+    if (delta !== 0) {
+      await adjustStockAction({ productId: linked.id, delta, reason: "Stock page edit" });
+    }
+  }
 }
 
 export async function deleteWebsiteProductAction(

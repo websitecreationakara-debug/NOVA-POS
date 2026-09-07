@@ -1,19 +1,31 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState, useTransition, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useTransition, type ReactNode } from "react";
+import { useRouter } from "next/navigation";
 import { ChevronLeft, ChevronRight } from "lucide-react";
+import type { ProductWithStock } from "@/lib/supabase/queries";
 import type {
   WebsiteCatalogId,
   WebsiteProduct,
+  WebsiteProductVariation,
   WebsiteProductWrite,
 } from "@/lib/websiteProducts/types";
 import {
   createWebsiteProductAction,
   deleteWebsiteProductAction,
   listWebsiteProductsAction,
+  setVariationPriceAction,
+  setVariationStockAction,
   updateWebsiteProductAction,
   uploadWebsiteImageAction,
 } from "./websiteActions";
+
+// Looked-up POS product for one entry (a simple product or one size of a
+// "variable" one), keyed by `${site_product_id}::${variation_id}` -- "" for
+// variation_id on a simple product's own link.
+function posEntryKey(siteProductId: string, variationId: string): string {
+  return `${siteProductId}::${variationId}`;
+}
 
 // How often to re-pull the storefront catalog so edits made on the website (or
 // by another POS user) show up here without a manual refresh. The storefront API
@@ -78,15 +90,52 @@ function catalogSignature(products: WebsiteProduct[]): string {
     .join("|");
 }
 
+// A table row's worth of data: either a simple product as-is, or one
+// size/flavor of a "variable" product. The storefront's product API has no
+// way to write an individual variation's price/stock (confirmed: PATCH with a
+// `variations` body 422s with "No writable fields in body"), so these rows
+// are display-only for those two columns -- editing still happens wherever
+// the site's own variations are actually managed.
+type Entry = {
+  product: WebsiteProduct;
+  variation: WebsiteProductVariation | null;
+  key: string;
+  // Only the first row of a "variable" product renders the shared,
+  // product-level controls (status/featured/delete) -- every row maps to the
+  // same underlying product, so repeating them per size would just be noise.
+  isPrimaryRow: boolean;
+};
+
+function toEntries(list: WebsiteProduct[]): Entry[] {
+  const out: Entry[] = [];
+  for (const p of list) {
+    const isVariable = p.type === "variable" || p.type === "variant";
+    if (isVariable && p.variations && p.variations.length > 0) {
+      p.variations.forEach((v, i) => {
+        out.push({ product: p, variation: v, key: `${p.id}::${v.id}`, isPrimaryRow: i === 0 });
+      });
+    } else {
+      out.push({ product: p, variation: null, key: p.id, isPrimaryRow: true });
+    }
+  }
+  return out;
+}
+
 export default function WebsiteProductsPanel({
   catalogId,
   initialProducts,
   initialError,
+  posProducts,
 }: {
   catalogId: WebsiteCatalogId;
   initialProducts: WebsiteProduct[] | null;
   initialError: string | null;
+  // The brand's own POS products, so a "variable" product's sizes can show
+  // (and edit) the POS-linked product for that size, if one exists yet --
+  // see setVariationPriceAction/setVariationStockAction.
+  posProducts: ProductWithStock[];
 }) {
+  const router = useRouter();
   const [products, setProducts] = useState<WebsiteProduct[] | null>(initialProducts);
   const [loadError, setLoadError] = useState<string | null>(initialError);
   const [search, setSearch] = useState("");
@@ -105,6 +154,14 @@ export default function WebsiteProductsPanel({
   // has a draft, polling leaves that field alone so it can't wipe what the user
   // is typing.
   const [drafts, setDrafts] = useState<Record<string, { price?: string; stock?: string }>>({});
+
+  const posByEntryKey = useMemo(() => {
+    const map = new Map<string, ProductWithStock>();
+    for (const p of posProducts) {
+      if (p.site_link) map.set(posEntryKey(p.site_link.site_product_id, p.site_link.variation_id), p);
+    }
+    return map;
+  }, [posProducts]);
 
   // Refs so the polling loop can read current state without re-subscribing.
   const signatureRef = useRef<string>(initialProducts ? catalogSignature(initialProducts) : "");
@@ -274,6 +331,70 @@ export default function WebsiteProductsPanel({
     });
   }
 
+  // Editing a "variable" product's size: keyed (pending/drafts) by the
+  // variation's own id, not its parent product's -- variation ids are
+  // distinct UUIDs, so this shares the same drafts/pendingId state as simple
+  // products without collision. Writes the website's own variation first
+  // (the source of truth for this size), then mirrors it into POS's own
+  // linked product (creating it on first edit if needed) so Sales charges
+  // the right amount.
+  function patchVariationPrice(
+    product: WebsiteProduct,
+    variation: WebsiteProductVariation,
+    linked: ProductWithStock | null,
+    price: number
+  ) {
+    setPendingId(variation.id);
+    startTransition(async () => {
+      try {
+        await setVariationPriceAction({
+          catalogId,
+          siteProductId: product.id,
+          variationId: variation.id,
+          title: `${product.title} (${variation.weight ?? ""})`.trim(),
+          imageUrl: variation.image_url ?? product.image_url,
+          alreadyLinked: linked != null,
+          seedStock: variation.stock,
+          price,
+        });
+        setPendingId(null);
+        router.refresh();
+      } catch (e) {
+        setLoadError(e instanceof Error ? e.message : "Failed to update this size's price");
+        setPendingId(null);
+      }
+    });
+  }
+
+  function patchVariationStock(
+    product: WebsiteProduct,
+    variation: WebsiteProductVariation,
+    linked: ProductWithStock | null,
+    stock: number
+  ) {
+    setPendingId(variation.id);
+    startTransition(async () => {
+      try {
+        await setVariationStockAction({
+          catalogId,
+          siteProductId: product.id,
+          variationId: variation.id,
+          title: `${product.title} (${variation.weight ?? ""})`.trim(),
+          imageUrl: variation.image_url ?? product.image_url,
+          alreadyLinked: linked != null,
+          seedPrice: linked?.price ?? variation.price,
+          currentStock: linked?.stock_quantity ?? 0,
+          stock,
+        });
+        setPendingId(null);
+        router.refresh();
+      } catch (e) {
+        setLoadError(e instanceof Error ? e.message : "Failed to update this size's stock");
+        setPendingId(null);
+      }
+    });
+  }
+
   function remove(id: string, title: string) {
     if (!window.confirm(`Delete "${title}" from the website? This cannot be undone.`)) return;
     setPendingId(id);
@@ -289,17 +410,22 @@ export default function WebsiteProductsPanel({
     });
   }
 
-  // Dynamic search over title / weight / taste notes, then paginate.
+  // Expand every "variable" product into one row per size/flavor -- its own
+  // price/stock are meaningless at the parent level (always 0/null) -- then
+  // search/filter over the resulting rows.
   const q = search.trim().toLowerCase();
-  const filtered = (products ?? []).filter(
-    (p) =>
+  const filtered = toEntries(products ?? []).filter(({ product: p, variation: v }) => {
+    const weight = v?.weight ?? p.weight;
+    const stock = v ? v.stock : p.stock;
+    return (
       (!q ||
         p.title.toLowerCase().includes(q) ||
-        (p.weight ?? "").toLowerCase().includes(q) ||
+        (weight ?? "").toLowerCase().includes(q) ||
         (p.taste_notes ?? "").toLowerCase().includes(q)) &&
-      (!outOfStockOnly || (p.stock ?? 0) <= 0) &&
-      (!lowStockOnly || ((p.stock ?? 0) > 0 && (p.stock ?? 0) <= 5))
-  );
+      (!outOfStockOnly || (stock ?? 0) <= 0) &&
+      (!lowStockOnly || ((stock ?? 0) > 0 && (stock ?? 0) <= 5))
+    );
+  });
   const pageCount = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   // Snap back to page 1 whenever the result set changes under the current page.
   const filterKey = `${q}|${outOfStockOnly}|${lowStockOnly}|${pageCount}`;
@@ -542,19 +668,32 @@ export default function WebsiteProductsPanel({
               </tr>
             </thead>
             <tbody>
-              {paged.map((p) => {
-                const priceValue = drafts[p.id]?.price ?? String(p.price);
-                const stockValue = drafts[p.id]?.stock ?? String(p.stock ?? 0);
+              {paged.map(({ product: p, variation: v, key, isPrimaryRow }) => {
+                // The POS product linked to this size, if anyone has already
+                // sold it or edited it here before -- null means editing will
+                // create one on the fly (see patchVariationPrice/Stock).
+                const linked = v ? (posByEntryKey.get(posEntryKey(p.id, v.id)) ?? null) : null;
+                const editId = v ? v.id : p.id;
+                const currentPrice = v ? (linked?.price ?? v.price) : p.price;
+                const currentStock = v ? (linked?.stock_quantity ?? v.stock ?? 0) : p.stock;
+                const priceValue = drafts[editId]?.price ?? String(currentPrice);
+                const stockValue = drafts[editId]?.stock ?? String(currentStock ?? 0);
+                const imageUrl = v?.image_url ?? p.image_url;
+                const weight = v?.weight ?? p.weight;
+                // A size's own price/stock is POS's tracked value for it (see
+                // patchVariationPrice/Stock) -- separate from, and never
+                // written back to, the website's own listing for this size.
+                const editTitle = v ? "Updates this size's price/stock on the website too" : undefined;
                 return (
                   <tr
-                    key={p.id}
+                    key={key}
                     className="border-b border-black/[.06] align-top dark:border-white/[.08]"
                   >
                     <td className="px-6 py-2">
                       <div className="h-10 w-10 shrink-0 overflow-hidden rounded border border-black/[.1] bg-zinc-100 dark:border-white/[.15] dark:bg-zinc-800">
-                        {p.image_url ? (
+                        {imageUrl ? (
                           // eslint-disable-next-line @next/next/no-img-element
-                          <img src={p.image_url} alt="" className="h-full w-full object-cover" />
+                          <img src={imageUrl} alt="" className="h-full w-full object-cover" />
                         ) : (
                           <div className="flex h-full w-full items-center justify-center text-[9px] text-zinc-400">
                             No img
@@ -562,29 +701,38 @@ export default function WebsiteProductsPanel({
                         )}
                       </div>
                     </td>
-                    <td className="px-6 py-2">
-                      <div className="font-medium">{p.title}</div>
-                      {p.weight && <div className="text-xs text-zinc-400">{p.weight}</div>}
+                    <td className="max-w-xs px-6 py-2">
+                      {/* break-words: some titles run long comma-separated
+                          lists with no spaces (e.g. "...-Sakura,Strawberry,
+                          Chocolate,Matcha)"), which the browser can't wrap on
+                          its own -- left alone it overflows straight into the
+                          Price column instead of onto a second line. */}
+                      <div className="break-words font-medium">{p.title}</div>
+                      {weight && <div className="text-xs text-zinc-400">{weight}</div>}
                       {p.taste_notes && (
-                        <div className="text-xs text-zinc-400">{p.taste_notes}</div>
+                        <div className="break-words text-xs text-zinc-400">{p.taste_notes}</div>
                       )}
                     </td>
                     <td className="px-3 py-2">
-                      <label className="flex w-24 items-center gap-1 rounded border border-black/[.15] px-2 py-1 text-sm focus-within:border-black/40 dark:border-white/[.2] dark:focus-within:border-white/50">
+                      <label
+                        title={editTitle}
+                        className="flex w-24 items-center gap-1 rounded border border-black/[.15] px-2 py-1 text-sm focus-within:border-black/40 dark:border-white/[.2] dark:focus-within:border-white/50"
+                      >
                         <span className="select-none text-zinc-400">$</span>
                         <input
                           type="number"
                           min={0}
                           step="0.01"
                           value={priceValue}
-                          disabled={pendingId === p.id}
-                          onChange={(e) => setDraft(p.id, "price", e.target.value)}
+                          disabled={pendingId === editId}
+                          onChange={(e) => setDraft(editId, "price", e.target.value)}
                           onBlur={(e) => {
                             const price = Number(e.target.value);
-                            if (!Number.isNaN(price) && price !== p.price) {
-                              patch(p.id, { price });
+                            if (!Number.isNaN(price) && price !== currentPrice) {
+                              if (v) patchVariationPrice(p, v, linked, price);
+                              else patch(p.id, { price });
                             }
-                            clearDraft(p.id, "price");
+                            clearDraft(editId, "price");
                           }}
                           className="w-full min-w-0 border-0 bg-transparent p-0 text-right tabular-nums outline-none"
                         />
@@ -594,48 +742,56 @@ export default function WebsiteProductsPanel({
                       <input
                         type="number"
                         min={0}
+                        title={editTitle}
                         value={stockValue}
-                        disabled={pendingId === p.id}
-                        onChange={(e) => setDraft(p.id, "stock", e.target.value)}
+                        disabled={pendingId === editId}
+                        onChange={(e) => setDraft(editId, "stock", e.target.value)}
                         onBlur={(e) => {
                           const stock = Number(e.target.value);
-                          if (!Number.isNaN(stock) && stock !== (p.stock ?? 0)) {
-                            patch(p.id, { stock });
+                          if (!Number.isNaN(stock) && stock !== (currentStock ?? 0)) {
+                            if (v) patchVariationStock(p, v, linked, stock);
+                            else patch(p.id, { stock });
                           }
-                          clearDraft(p.id, "stock");
+                          clearDraft(editId, "stock");
                         }}
                         className="w-16 rounded border border-black/[.15] bg-transparent px-2 py-1 text-right text-sm tabular-nums focus:border-black/40 focus:outline-none dark:border-white/[.2] dark:focus:border-white/50"
                       />
                     </td>
                     <td className="px-3 py-2">
-                      <select
-                        value={p.status}
-                        disabled={pendingId === p.id}
-                        onChange={(e) =>
-                          patch(p.id, { status: e.target.value as WebsiteProductWrite["status"] })
-                        }
-                        className="rounded border border-black/[.15] bg-card px-2 py-1 text-sm dark:border-white/[.2]"
-                      >
-                        <option value="draft">Draft</option>
-                        <option value="published">Published</option>
-                      </select>
+                      {isPrimaryRow && (
+                        <select
+                          value={p.status}
+                          disabled={pendingId === p.id}
+                          onChange={(e) =>
+                            patch(p.id, { status: e.target.value as WebsiteProductWrite["status"] })
+                          }
+                          className="rounded border border-black/[.15] bg-card px-2 py-1 text-sm dark:border-white/[.2]"
+                        >
+                          <option value="draft">Draft</option>
+                          <option value="published">Published</option>
+                        </select>
+                      )}
                     </td>
                     <td className="px-3 py-2">
-                      <input
-                        type="checkbox"
-                        checked={p.featured}
-                        disabled={pendingId === p.id}
-                        onChange={(e) => patch(p.id, { featured: e.target.checked })}
-                      />
+                      {isPrimaryRow && (
+                        <input
+                          type="checkbox"
+                          checked={p.featured}
+                          disabled={pendingId === p.id}
+                          onChange={(e) => patch(p.id, { featured: e.target.checked })}
+                        />
+                      )}
                     </td>
                     <td className="px-3 py-2">
-                      <button
-                        disabled={pendingId === p.id}
-                        onClick={() => remove(p.id, p.title)}
-                        className="rounded border border-red-300 px-2 py-1 text-xs text-red-500 disabled:opacity-40 dark:border-red-900"
-                      >
-                        {pendingId === p.id ? "…" : "Delete"}
-                      </button>
+                      {isPrimaryRow && (
+                        <button
+                          disabled={pendingId === p.id}
+                          onClick={() => remove(p.id, p.title)}
+                          className="rounded border border-red-300 px-2 py-1 text-xs text-red-500 disabled:opacity-40 dark:border-red-900"
+                        >
+                          {pendingId === p.id ? "…" : "Delete"}
+                        </button>
+                      )}
                     </td>
                   </tr>
                 );

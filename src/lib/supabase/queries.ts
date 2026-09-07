@@ -14,7 +14,7 @@ import type {
 export type ProductWithStock = Product & {
   stock_quantity: number;
   low_stock_threshold: number;
-  site_link: { site: string; site_product_id: string } | null;
+  site_link: { site: string; site_product_id: string; variation_id: string } | null;
 };
 
 // Sales/Stock fall back to brands[0] as the default brand when no ?brand= is
@@ -34,7 +34,7 @@ export async function getBrands(): Promise<Brand[]> {
 
 type ProductRow = Product & {
   stock_levels: { quantity: number; low_stock_threshold: number } | null;
-  product_site_links: { site: string; site_product_id: string }[];
+  product_site_links: { site: string; site_product_id: string; variation_id: string }[];
 };
 
 function mapProductRows(products: ProductRow[]): ProductWithStock[] {
@@ -65,7 +65,9 @@ export async function getCatalogForBrand(brandId: string): Promise<{
       // grew past a few hundred products (URL length limit on the GET).
       supabaseAdmin
         .from("products")
-        .select("*, stock_levels(quantity, low_stock_threshold), product_site_links(site, site_product_id)")
+        .select(
+          "*, stock_levels(quantity, low_stock_threshold), product_site_links(site, site_product_id, variation_id)"
+        )
         .eq("brand_id", brandId)
         .eq("is_active", true)
         .order("name"),
@@ -96,7 +98,7 @@ export async function getCatalogForBrandSlug(slug: string): Promise<{
       supabaseAdmin
         .from("products")
         .select(
-          "*, stock_levels(quantity, low_stock_threshold), product_site_links(site, site_product_id), brands!inner(slug)"
+          "*, stock_levels(quantity, low_stock_threshold), product_site_links(site, site_product_id, variation_id), brands!inner(slug)"
         )
         .eq("brands.slug", slug)
         .eq("is_active", true)
@@ -170,6 +172,7 @@ export type DashboardStats = {
   totalProducts: number;
   lowStockCount: number;
   dailyRevenue: { date: string; total: number }[];
+  dailyOrders: { date: string; total: number }[];
   recentOrders: {
     id: string;
     brandName: string;
@@ -282,6 +285,17 @@ export async function getDashboardStats(): Promise<DashboardStats> {
     .map(([date, total]) => ({ date, total }))
     .sort((a, b) => (a.date < b.date ? -1 : 1));
 
+  // Same idea, but counting orders instead of summing their totals.
+  const dailyOrderCounts = new Map<string, number>();
+  for (const o of orders) {
+    const d = (o.paid_at ?? "").slice(0, 10);
+    if (!d) continue;
+    dailyOrderCounts.set(d, (dailyOrderCounts.get(d) ?? 0) + 1);
+  }
+  const dailyOrders = Array.from(dailyOrderCounts.entries())
+    .map(([date, total]) => ({ date, total }))
+    .sort((a, b) => (a.date < b.date ? -1 : 1));
+
   type RecentOrderRow = {
     id: string;
     status: string;
@@ -303,6 +317,7 @@ export async function getDashboardStats(): Promise<DashboardStats> {
     totalProducts: totalProducts ?? 0,
     lowStockCount,
     dailyRevenue,
+    dailyOrders,
     recentOrders,
   };
 }

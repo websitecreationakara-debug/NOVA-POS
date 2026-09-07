@@ -80,6 +80,9 @@ export type ProductSiteLink = {
   product_id: string;
   site: "bosba-premium-foods" | "bosba-drink-snack" | "sora-sake";
   site_product_id: string;
+  // "" for a simple site product. For a "variable" site product, the
+  // specific variation this row links -- see migration 0018.
+  variation_id: string;
   matched_name: string | null;
   match_confidence: "exact" | "loose";
   created_at: string;

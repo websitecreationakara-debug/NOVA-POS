@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation";
 import { ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Plus, User } from "lucide-react";
 import type { Brand, Category, PaymentMethod } from "@/types/database";
 import type { ProductWithStock } from "@/lib/supabase/queries";
-import type { WebsiteProduct } from "@/lib/websiteProducts/types";
+import type { WebsiteProduct, WebsiteProductVariation } from "@/lib/websiteProducts/types";
 import SalesWebsiteGrid from "./SalesWebsiteGrid";
 import type { SalesWebsiteCatalog } from "./page";
 import {
@@ -75,10 +75,13 @@ export default function SalesClient({
   // Sales runs off the storefront catalog. The POS-catalog grid only shows as a
   // fallback for a brand that has no storefront wired up.
   const showWebsite = websiteCatalog !== null;
-  // Site product id currently being linked to a new POS product on tap.
-  const [linkingSiteProductId, setLinkingSiteProductId] = useState<string | null>(null);
-  // POS products created this session by tapping an unlinked website product,
-  // keyed by site product id -- lets a repeat tap skip the round trip.
+  // Entry key (site product id, or `${siteProductId}::${variationId}` for one
+  // size of a "variable" product) currently being linked to a new POS product
+  // on tap.
+  const [linkingEntryKey, setLinkingEntryKey] = useState<string | null>(null);
+  // POS products created this session by tapping an unlinked website product
+  // (or one size of a variable one), keyed by entry key -- lets a repeat tap
+  // skip the round trip.
   const [linkedThisSession, setLinkedThisSession] = useState<Map<string, ProductWithStock>>(
     new Map()
   );
@@ -103,6 +106,11 @@ export default function SalesClient({
   const [phoneDropdownOpen, setPhoneDropdownOpen] = useState(false);
   const [receipt, setReceipt] = useState<ChargeResult | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // A brief, self-dismissing toast for "you tapped an out-of-stock product" --
+  // separate from `error` (which stays until the user fixes a real problem,
+  // e.g. a missing phone number) since this is just a heads-up, not something
+  // blocking checkout.
+  const [stockNotice, setStockNotice] = useState<string | null>(null);
   const [isCharging, startCharging] = useTransition();
   const [, startLookup] = useTransition();
   const searchDebounce = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -112,6 +120,12 @@ export default function SalesClient({
       if (searchDebounce.current) clearTimeout(searchDebounce.current);
     };
   }, []);
+
+  useEffect(() => {
+    if (!stockNotice) return;
+    const t = setTimeout(() => setStockNotice(null), 3000);
+    return () => clearTimeout(t);
+  }, [stockNotice]);
 
   const isExistingCustomer = selectedCustomer?.phone === customerPhone.trim() && !!selectedCustomer;
 
@@ -170,6 +184,19 @@ export default function SalesClient({
   const discountAmount = subtotal * (discountPercentValue / 100) + minusValue;
   const finalTotal = Math.max(subtotal - discountAmount + deliveryFeeValue, 0);
 
+  // Blocks adding a product once it's out of stock -- accounting for what's
+  // already in the Order, so tapping past the last available unit is blocked
+  // too, not just a product that started at 0.
+  function handleProductCardClick(product: ProductWithStock) {
+    const inCart = cart.find((l) => l.productId === product.id)?.quantity ?? 0;
+    const remaining = product.stock_quantity - inCart;
+    if (remaining <= 0) {
+      setStockNotice(`${product.name} is out of stock`);
+      return;
+    }
+    addToCart(product);
+  }
+
   function addToCart(product: ProductWithStock) {
     setCart((prev) => {
       const existing = prev.find((l) => l.productId === product.id);
@@ -185,56 +212,87 @@ export default function SalesClient({
     });
   }
 
+  // The entry key for a website product/variation pair -- matches the one
+  // SalesWebsiteGrid uses for its own cards (see toEntries there).
+  function entryKeyFor(siteProductId: string, variationId: string | null): string {
+    return variationId ? `${siteProductId}::${variationId}` : siteProductId;
+  }
+
   // A website product is charged through the POS product it's linked to
   // (product_site_links) -- that's the id charge_order expects and the stock
   // row it decrements. Build the lookup from the catalog we already loaded,
-  // plus anything linked on tap this session.
-  const posBySiteProductId = useMemo(() => {
+  // plus anything linked on tap this session. Keyed by entry key so each size
+  // of a "variable" product (same site_product_id, distinct variation_id)
+  // gets its own POS product.
+  const posByEntryKey = useMemo(() => {
     const map = new Map<string, ProductWithStock>();
     for (const p of products) {
-      if (p.site_link) map.set(p.site_link.site_product_id, p);
+      if (p.site_link) {
+        const key = entryKeyFor(p.site_link.site_product_id, p.site_link.variation_id || null);
+        map.set(key, p);
+      }
     }
-    for (const [siteProductId, p] of linkedThisSession) map.set(siteProductId, p);
+    for (const [key, p] of linkedThisSession) map.set(key, p);
     return map;
   }, [products, linkedThisSession]);
 
-  // site product id -> quantity currently in the Order, for the grid's
+  // entry key -> quantity currently in the Order, for the grid's
   // remaining-stock display.
-  const cartQtyBySiteProduct = useMemo(() => {
-    const posIdToSiteId = new Map<string, string>();
-    for (const [siteId, pos] of posBySiteProductId) posIdToSiteId.set(pos.id, siteId);
+  const cartQtyByEntryKey = useMemo(() => {
+    const posIdToEntryKey = new Map<string, string>();
+    for (const [key, pos] of posByEntryKey) posIdToEntryKey.set(pos.id, key);
     const map = new Map<string, number>();
     for (const line of cart) {
-      const siteId = posIdToSiteId.get(line.productId);
-      if (siteId) map.set(siteId, (map.get(siteId) ?? 0) + line.quantity);
+      const key = posIdToEntryKey.get(line.productId);
+      if (key) map.set(key, (map.get(key) ?? 0) + line.quantity);
     }
     return map;
-  }, [cart, posBySiteProductId]);
+  }, [cart, posByEntryKey]);
 
-  // Tapping a website product: if it already maps to a POS product, add it;
-  // otherwise create + link one on the fly (in the storefront's brand), then
-  // add. The created product shows up in Stock like any hand-linked one.
-  async function addWebsiteProductToCart(wp: WebsiteProduct) {
+  // Tapping a website product (or one size of a "variable" one): if it
+  // already maps to a POS product, add it; otherwise create + link one on the
+  // fly (in the storefront's brand), then add. The created product shows up
+  // in Stock like any hand-linked one. `variation` is null for a simple
+  // product, or the specific size/flavor tapped for a variable one.
+  async function addWebsiteProductToCart(wp: WebsiteProduct, variation: WebsiteProductVariation | null) {
+    const entryKey = entryKeyFor(wp.id, variation?.id ?? null);
+    const price = variation ? variation.price : wp.price;
+    const salePrice = variation ? variation.sale_price : wp.sale_price;
+    const stock = variation ? variation.stock : wp.stock;
+    const imageUrl = variation?.image_url ?? wp.image_url;
+    const title = variation?.weight ? `${wp.title} (${variation.weight})` : wp.title;
+
+    // Same "remaining" the card itself shows (stock minus what's already in
+    // the Order) -- blocks adding once it hits 0, including tapping past the
+    // last unit of something that started in stock. `stock == null` (never
+    // tracked) is never treated as out of stock.
+    const inCart = cartQtyByEntryKey.get(entryKey) ?? 0;
+    const remaining = stock == null ? null : stock - inCart;
+    if (remaining != null && remaining <= 0) {
+      setStockNotice(`${title} is out of stock`);
+      return;
+    }
+
     // The site's current sale price, if it's on sale -- charge what the card
     // actually shows, not the linked POS product's (possibly stale, always
     // full-price-at-link-time) stored price.
-    const effectivePrice = wp.sale_price != null && wp.sale_price < wp.price ? wp.sale_price : wp.price;
-    const known = posBySiteProductId.get(wp.id);
+    const effectivePrice = salePrice != null && salePrice < price ? salePrice : price;
+    const known = posByEntryKey.get(entryKey);
     if (known) {
       addToCart({ ...known, price: effectivePrice });
       return;
     }
-    if (!websiteCatalog || linkingSiteProductId) return;
-    setError(null);
-    setLinkingSiteProductId(wp.id);
+    if (!websiteCatalog || linkingEntryKey) return;
+    setLinkingEntryKey(entryKey);
     try {
       const linked = await ensurePosProductForSiteProduct({
         catalogId: websiteCatalog.id,
         siteProductId: wp.id,
-        title: wp.title,
+        variationId: variation?.id ?? null,
+        title,
         price: effectivePrice,
-        imageUrl: wp.image_url,
-        stock: wp.stock,
+        imageUrl,
+        stock,
       });
       const asProduct = {
         id: linked.id,
@@ -242,12 +300,12 @@ export default function SalesClient({
         price: effectivePrice,
         unit: linked.unit,
       } as ProductWithStock;
-      setLinkedThisSession((prev) => new Map(prev).set(wp.id, asProduct));
+      setLinkedThisSession((prev) => new Map(prev).set(entryKey, asProduct));
       addToCart(asProduct);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Couldn't add this website product");
     } finally {
-      setLinkingSiteProductId(null);
+      setLinkingEntryKey(null);
     }
   }
 
@@ -257,7 +315,7 @@ export default function SalesClient({
     return (
       <button
         key={p.id}
-        onClick={() => addToCart(p)}
+        onClick={() => handleProductCardClick(p)}
         className="flex flex-col items-start rounded-lg border border-black/[.08] p-4 text-left transition-colors hover:bg-black/[.03] dark:border-white/[.145] dark:hover:bg-white/[.05]"
       >
         <div className="mb-2 aspect-square w-full overflow-hidden rounded bg-zinc-100 dark:bg-zinc-800">
@@ -428,6 +486,16 @@ export default function SalesClient({
 
   return (
     <div className="flex h-full flex-col">
+      {stockNotice && (
+        <div
+          role="status"
+          className="pointer-events-none fixed inset-x-0 top-4 z-50 flex justify-center"
+        >
+          <div className="rounded-full border border-red-300 bg-red-50 px-4 py-2 text-sm font-medium text-red-700 shadow-lg dark:border-red-900 dark:bg-red-950 dark:text-red-300">
+            {stockNotice}
+          </div>
+        </div>
+      )}
       <header className="flex items-center gap-3 border-b border-black/[.08] px-6 py-3 dark:border-white/[.145]">
         <select
           className="rounded border border-black/[.15] bg-card px-3 py-1.5 text-sm text-foreground dark:border-white/[.2]"
@@ -461,8 +529,8 @@ export default function SalesClient({
             initialError={websiteCatalog.error}
             categories={websiteCatalog.categories}
             onSelect={addWebsiteProductToCart}
-            pendingSiteProductId={linkingSiteProductId}
-            cartQtyBySiteProduct={cartQtyBySiteProduct}
+            pendingEntryKey={linkingEntryKey}
+            cartQtyByEntryKey={cartQtyByEntryKey}
           />
         ) : (
         <main className="flex-1 overflow-y-auto p-6">

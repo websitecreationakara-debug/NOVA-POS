@@ -44,12 +44,17 @@ export async function POST(request: NextRequest) {
   }
 
   // Idempotent: if this site product is already linked (e.g. a retried
-  // webhook), don't create a second POS product for it.
+  // webhook), don't create a second POS product for it. Restricted to the
+  // simple-product row (variation_id "") -- this route is only ever called
+  // for a brand-new simple product (see comment above), and a variable
+  // product can otherwise have several linked rows sharing this
+  // site_product_id (migration 0018), which would break .maybeSingle().
   const { data: existingLink } = await supabaseAdmin
     .from("product_site_links")
     .select("product_id")
     .eq("site", site)
     .eq("site_product_id", siteProductId)
+    .eq("variation_id", "")
     .maybeSingle();
   if (existingLink) {
     return NextResponse.json({ ok: true, productId: existingLink.product_id, skipped: true });
@@ -86,6 +91,9 @@ export async function POST(request: NextRequest) {
     product_id: product.id,
     site,
     site_product_id: siteProductId,
+    // This webhook only ever fires for a brand-new simple (non-variable)
+    // product (see comment above), so this is always the simple-product row.
+    variation_id: "",
     matched_name: title.trim(),
     match_confidence: "exact",
   });

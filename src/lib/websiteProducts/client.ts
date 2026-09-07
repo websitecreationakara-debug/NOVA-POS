@@ -106,12 +106,18 @@ async function request<T>(
 // Catalogs store `image_url` (and `video_url`) as a site-relative path like
 // `/media/hojicha-abc123.jpg` — the filename is derived from the product. Those
 // resolve against the storefront origin, not this app's, so make them absolute
-// using the API base URL's origin before handing them to the UI.
+// using the API base URL's origin before handing them to the UI. A "variable"
+// product's variations carry their own image_url the same way.
 function absolutizeMedia(catalogId: WebsiteCatalogId, product: WebsiteProduct): WebsiteProduct {
   const { origin } = new URL(config(catalogId).baseUrl);
   const fix = (u: string | null) =>
     u && u.startsWith("/") ? `${origin}${u}` : u;
-  return { ...product, image_url: fix(product.image_url), video_url: fix(product.video_url) };
+  return {
+    ...product,
+    image_url: fix(product.image_url),
+    video_url: fix(product.video_url),
+    variations: product.variations?.map((v) => ({ ...v, image_url: fix(v.image_url) })),
+  };
 }
 
 // Inverse of absolutizeMedia: strip our own origin prefix off a media URL so the
@@ -217,6 +223,25 @@ export function updateWebsiteProduct(
     headers: authHeaders(catalogId),
     body: JSON.stringify(relativizeMediaWrite(catalogId, blankToNull(input))),
   });
+}
+
+// Updates one variation's own price/stock (etc.) directly on the storefront,
+// via its dedicated sub-route -- the plain product PATCH/PUT never touches
+// child variation rows (confirmed: a `variations` body 422s there, or on
+// catalogs where PUT tolerates unknown fields, silently drops the change).
+// Currently only implemented on the BOSBA Drink & Snack storefront; calling
+// this for a catalog that hasn't added the route yet will 404.
+export function updateWebsiteProductVariation(
+  catalogId: WebsiteCatalogId,
+  productId: string,
+  variationId: string,
+  input: { price?: number; stock?: number | null }
+): Promise<WebsiteProduct> {
+  return request<{ product: WebsiteProduct }>(catalogId, `/${productId}/variations/${variationId}`, {
+    method: "PATCH",
+    headers: authHeaders(catalogId),
+    body: JSON.stringify(input),
+  }).then((data) => absolutizeMedia(catalogId, data.product));
 }
 
 export function deleteWebsiteProduct(
