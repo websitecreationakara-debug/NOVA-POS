@@ -229,19 +229,23 @@ export function updateWebsiteProduct(
 // via its dedicated sub-route -- the plain product PATCH/PUT never touches
 // child variation rows (confirmed: a `variations` body 422s there, or on
 // catalogs where PUT tolerates unknown fields, silently drops the change).
-// Currently only implemented on the BOSBA Drink & Snack storefront; calling
-// this for a catalog that hasn't added the route yet will 404.
-export function updateWebsiteProductVariation(
+// Catalogs disagree on the response envelope key just like everywhere else
+// in this file (BOSBA Drink & Snack and sorasake wrap it as `{ product }`,
+// BOSBA Premium Foods as `{ data }`) -- unwrap() tries each in turn instead
+// of assuming one, which crashed here reading `.image_url` off `undefined`
+// on the catalog that doesn't use `product`.
+export async function updateWebsiteProductVariation(
   catalogId: WebsiteCatalogId,
   productId: string,
   variationId: string,
   input: { price?: number; stock?: number | null }
 ): Promise<WebsiteProduct> {
-  return request<{ product: WebsiteProduct }>(catalogId, `/${productId}/variations/${variationId}`, {
+  const payload = await request<unknown>(catalogId, `/${productId}/variations/${variationId}`, {
     method: "PATCH",
     headers: authHeaders(catalogId),
     body: JSON.stringify(input),
-  }).then((data) => absolutizeMedia(catalogId, data.product));
+  });
+  return absolutizeMedia(catalogId, unwrap<WebsiteProduct>(payload, ["data", "product"]));
 }
 
 export function deleteWebsiteProduct(
