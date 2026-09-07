@@ -1,7 +1,7 @@
 import { Suspense } from "react";
 import { AlertTriangle, DollarSign, Package, ShoppingCart } from "lucide-react";
 import { getDashboardStats, getWebsiteProductTotal } from "@/lib/supabase/queries";
-import RevenueChart from "./RevenueChart";
+import PeriodBarChart from "./PeriodBarChart";
 
 export const dynamic = "force-dynamic";
 
@@ -73,7 +73,9 @@ export default async function Home() {
         ))}
       </div>
 
-      <RevenueChart dailyRevenue={stats.dailyRevenue} />
+      <PeriodBarChart title="Revenue" dailyData={stats.dailyRevenue} metric="money" />
+
+      <PeriodBarChart title="Orders" dailyData={stats.dailyOrders} metric="count" />
 
       <section className="overflow-hidden rounded-2xl border border-border bg-card">
         <div className="border-b border-border px-6 py-4">

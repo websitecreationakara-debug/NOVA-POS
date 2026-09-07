@@ -13,6 +13,7 @@ import {
 } from "recharts";
 
 type Range = "day" | "month" | "year";
+type Metric = "money" | "count";
 
 const RANGE_LABEL: Record<Range, string> = { day: "Day", month: "Month", year: "Year" };
 const UNIT: Record<Range, string> = { day: "day", month: "week", year: "month" };
@@ -21,13 +22,22 @@ const MONTH_LABELS = [
   "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
 ];
 
-function formatMoney(n: number) {
-  return `$${n.toFixed(2)}`;
-}
-
-function formatTick(n: number) {
-  return `$${new Intl.NumberFormat("en", { notation: "compact" }).format(n)}`;
-}
+// Functions can't cross the server/client boundary as props, so formatting
+// is picked here from a plain string flag instead of being passed in.
+const METRIC = {
+  money: {
+    barColor: "var(--chart-revenue)",
+    allowDecimalTicks: true,
+    formatValue: (n: number) => `$${n.toFixed(2)}`,
+    formatTick: (n: number) => `$${new Intl.NumberFormat("en", { notation: "compact" }).format(n)}`,
+  },
+  count: {
+    barColor: "var(--chart-orders)",
+    allowDecimalTicks: false,
+    formatValue: (n: number) => `${n} order${n === 1 ? "" : "s"}`,
+    formatTick: (n: number) => new Intl.NumberFormat("en", { notation: "compact" }).format(n),
+  },
+};
 
 function utcMidnight(d: Date): Date {
   return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
@@ -61,33 +71,45 @@ function fmtShort(d: Date): string {
   return d.toLocaleDateString("en", { month: "short", day: "numeric", timeZone: "UTC" });
 }
 
-function ChartTooltip({
-  active,
-  payload,
-}: {
-  active?: boolean;
-  payload?: readonly { value?: unknown; payload?: Record<string, unknown> }[];
-}) {
-  if (!active || !payload?.length) return null;
-  const point = payload[0];
-  return (
-    <div className="rounded-lg border border-border bg-card px-3 py-2 text-sm shadow-lg">
-      <p className="text-muted-foreground">{String(point.payload?.label)}</p>
-      <p className="font-semibold text-foreground">{formatMoney(Number(point.value))}</p>
-    </div>
-  );
+function makeTooltip(formatValue: (n: number) => string) {
+  return function ChartTooltip({
+    active,
+    payload,
+  }: {
+    active?: boolean;
+    payload?: readonly { value?: unknown; payload?: Record<string, unknown> }[];
+  }) {
+    if (!active || !payload?.length) return null;
+    const point = payload[0];
+    return (
+      <div className="rounded-lg border border-border bg-card px-3 py-2 text-sm shadow-lg">
+        <p className="text-muted-foreground">{String(point.payload?.label)}</p>
+        <p className="font-semibold text-foreground">{formatValue(Number(point.value))}</p>
+      </div>
+    );
+  };
 }
 
-export default function RevenueChart({
-  dailyRevenue,
+// Shared by every "value per day, browsable by day/week-of-month/year" chart
+// on the dashboard (Revenue, Orders, ...) -- only what a value *means* differs
+// between them (formatting, the bar color), not how it's bucketed or browsed.
+export default function PeriodBarChart({
+  title,
+  dailyData,
+  metric,
 }: {
-  dailyRevenue: { date: string; total: number }[];
+  title: string;
+  dailyData: { date: string; total: number }[];
+  metric: Metric;
 }) {
+  const { barColor, allowDecimalTicks, formatValue, formatTick } = METRIC[metric];
   const [range, setRange] = useState<Range>("day");
   const today = useMemo(() => utcMidnight(new Date()), []);
   const [anchor, setAnchor] = useState<Date>(today);
 
-  const dailyMap = useMemo(() => new Map(dailyRevenue.map((d) => [d.date, d.total])), [dailyRevenue]);
+  const dailyMap = useMemo(() => new Map(dailyData.map((d) => [d.date, d.total])), [dailyData]);
+
+  const ChartTooltip = useMemo(() => makeTooltip(formatValue), [formatValue]);
 
   const { data, periodLabel, isCurrent } = useMemo(() => {
     if (range === "day") {
@@ -160,8 +182,7 @@ export default function RevenueChart({
   }, [range, anchor, dailyMap, today]);
 
   // Only call out a best/worst when there's an actual spread to report --
-  // an all-zero period (no sales, or none entered yet) has no "best day"
-  // worth labeling.
+  // an all-zero period (nothing happened yet) has no "best day" worth labeling.
   const { best, worst } = useMemo(() => {
     const nonZero = data.filter((d) => d.total > 0);
     if (nonZero.length < 2) return { best: null, worst: null };
@@ -182,7 +203,7 @@ export default function RevenueChart({
   return (
     <section className="rounded-2xl border border-border bg-card p-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <h2 className="font-display text-lg font-bold">Revenue</h2>
+        <h2 className="font-display text-lg font-bold">{title}</h2>
         <div className="flex gap-2">
           {(["day", "month", "year"] as const).map((r) => (
             <button
@@ -236,7 +257,7 @@ export default function RevenueChart({
               <span className="size-2 rounded-full bg-success" />
               <span className="text-muted-foreground">Best {UNIT[range]}</span>
               <span className="font-semibold text-foreground">
-                {best.key} · {formatMoney(best.total)}
+                {best.key} · {formatValue(best.total)}
               </span>
             </span>
           )}
@@ -245,7 +266,7 @@ export default function RevenueChart({
               <span className="size-2 rounded-full bg-warning" />
               <span className="text-muted-foreground">Slowest {UNIT[range]}</span>
               <span className="font-semibold text-foreground">
-                {worst.key} · {formatMoney(worst.total)}
+                {worst.key} · {formatValue(worst.total)}
               </span>
             </span>
           )}
@@ -269,9 +290,10 @@ export default function RevenueChart({
               width={48}
               tick={{ fill: "var(--muted-foreground)", fontSize: 11 }}
               tickFormatter={formatTick}
+              allowDecimals={allowDecimalTicks}
             />
             <Tooltip cursor={{ fill: "var(--muted)" }} content={ChartTooltip} />
-            <Bar dataKey="total" fill="var(--chart-revenue)" radius={[4, 4, 0, 0]} maxBarSize={24} />
+            <Bar dataKey="total" fill={barColor} radius={[4, 4, 0, 0]} maxBarSize={24} />
           </BarChart>
         </ResponsiveContainer>
       </div>

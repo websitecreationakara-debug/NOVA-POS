@@ -17,6 +17,11 @@
      the brand token itself is ~2.3:1 on a white card, under the 3:1 mark
      threshold; this clears 3.6:1 while staying in the same hue family. */
   --chart-revenue: #a97f2d;
+  /* A second chart bar hue (for Orders) distinct from revenue's gold, and from
+     the success/warning tokens the best/slowest callouts already use in the
+     same card -- clears 3:1 on both a white and dark card at this one value,
+     so it doesn't need a dark-mode override. */
+  --chart-orders: #2a78d6;
   --warning: #b45309;
   --warning-bg: #fef3c7;
   --success: #15803d;
