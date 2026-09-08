@@ -103,21 +103,26 @@ export default async function InvoicePage({
       {/* Printed document: one invoice fills an A4 page; always white/black
           regardless of app theme. */}
       <div className="invoice-sheet flex w-[210mm] max-w-full min-h-[297mm] flex-col rounded-xl border border-zinc-200 bg-white p-[16mm] text-black shadow-sm print:w-auto print:min-h-0 print:max-w-none print:rounded-none print:border-0 print:p-0 print:shadow-none">
-        {/* 1. Header */}
-        <header className="flex items-center">
+        {/* 1. Header -- logo left, contact line to its right */}
+        <header className="flex items-start justify-between gap-4">
           {logo ? (
             // eslint-disable-next-line @next/next/no-img-element
-            <img src={logo} alt={brandName} className="h-24 w-auto object-contain" />
+            <img
+              src={logo}
+              alt={brandName}
+              className="h-16 w-auto max-w-[55%] object-contain"
+            />
           ) : (
-            <h1 className="text-[40px] font-bold tracking-wide">{brandName}</h1>
+            <h1 className="text-[32px] font-bold tracking-wide">{brandName}</h1>
+          )}
+          {brand.contactLine && (
+            <p className="max-w-[42%] pt-2 text-right text-[13px] leading-snug">
+              {brand.contactLine}
+            </p>
           )}
         </header>
 
-        {brand.contactLine && (
-          <p className="mt-4 text-right text-[13px] leading-snug">{brand.contactLine}</p>
-        )}
-
-        <div className="mt-1.5 border-2 border-black py-2.5 text-center text-lg font-bold tracking-wide">
+        <div className="mt-4 border-2 border-black py-2.5 text-center text-lg font-bold tracking-wide">
           INVOICE វិក្កយបត្រ
         </div>
 
