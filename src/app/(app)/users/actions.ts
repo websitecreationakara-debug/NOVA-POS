@@ -49,6 +49,34 @@ export async function createStaffAccountAction(input: {
   revalidatePath("/users");
 }
 
+export async function updateStaffRoleAction(userId: string, role: StaffRole): Promise<void> {
+  const caller = await getSessionUser();
+  if (caller?.role !== "admin") {
+    throw new Error("Only admins can change staff roles");
+  }
+  if (!VALID_ROLES.includes(role)) throw new Error("Invalid role");
+  if (caller.id === userId) {
+    throw new Error("You can't change your own role while logged in as it");
+  }
+
+  // The route guard (middleware) and getSessionUser both read the role off the
+  // auth user's metadata, so that has to be updated for the change to take
+  // effect; profiles.role is kept in sync for the staff list / any RLS that
+  // keys off it. user_metadata is merged top-level, so full_name is preserved.
+  const { error: authError } = await supabaseAdmin.auth.admin.updateUserById(userId, {
+    user_metadata: { role },
+  });
+  if (authError) throw new Error(authError.message);
+
+  const { error: profileError } = await supabaseAdmin
+    .from("profiles")
+    .update({ role })
+    .eq("id", userId);
+  if (profileError) throw new Error(profileError.message);
+
+  revalidatePath("/users");
+}
+
 export async function deleteStaffAccountAction(userId: string): Promise<void> {
   const caller = await getSessionUser();
   if (caller?.role !== "admin") {

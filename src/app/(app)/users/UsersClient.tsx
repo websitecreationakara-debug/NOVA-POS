@@ -3,7 +3,11 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { staffRoleLabel, type StaffRole } from "@/types/database";
-import { createStaffAccountAction, deleteStaffAccountAction } from "./actions";
+import {
+  createStaffAccountAction,
+  deleteStaffAccountAction,
+  updateStaffRoleAction,
+} from "./actions";
 
 const ROLES: StaffRole[] = ["admin", "sales", "stock", "accountance", "marketing"];
 
@@ -17,6 +21,8 @@ export default function UsersClient({
   const router = useRouter();
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [savingRoleId, setSavingRoleId] = useState<string | null>(null);
+  const [roleError, setRoleError] = useState<string | null>(null);
   const [fullName, setFullName] = useState("");
   const [email, setEmail] = useState("");
   const [role, setRole] = useState<StaffRole>("sales");
@@ -57,6 +63,21 @@ export default function UsersClient({
     navigator.clipboard.writeText(`Email: ${created.email}\nPassword: ${created.password}`);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
+  }
+
+  function changeRole(id: string, newRole: StaffRole) {
+    setRoleError(null);
+    setSavingRoleId(id);
+    startTransition(async () => {
+      try {
+        await updateStaffRoleAction(id, newRole);
+        router.refresh();
+      } catch (e) {
+        setRoleError(e instanceof Error ? e.message : "Failed to change role");
+      } finally {
+        setSavingRoleId(null);
+      }
+    });
   }
 
   function deleteAccount(id: string, name: string) {
@@ -176,6 +197,7 @@ export default function UsersClient({
           <h2 className="font-display font-bold">All staff</h2>
         </div>
         {deleteError && <p className="px-6 pt-4 text-sm text-red-500">{deleteError}</p>}
+        {roleError && <p className="px-6 pt-4 text-sm text-red-500">{roleError}</p>}
         <table className="w-full text-sm">
           <thead className="bg-muted text-xs font-bold tracking-widest text-muted-foreground uppercase">
             <tr>
@@ -191,7 +213,27 @@ export default function UsersClient({
               <tr key={s.id} className="border-t border-border">
                 <td className="px-6 py-3">{s.fullName}</td>
                 <td className="px-3 py-3 text-muted-foreground">{s.email ?? "—"}</td>
-                <td className="px-3 py-3">{staffRoleLabel(s.role)}</td>
+                <td className="px-3 py-3">
+                  {s.id === currentUserId ? (
+                    staffRoleLabel(s.role)
+                  ) : (
+                    <select
+                      value={s.role}
+                      disabled={savingRoleId === s.id}
+                      onChange={(e) => changeRole(s.id, e.target.value as StaffRole)}
+                      className="rounded-lg border border-border bg-card px-2 py-1 text-sm text-foreground outline-none focus:border-brand disabled:opacity-50"
+                    >
+                      {!ROLES.includes(s.role as StaffRole) && (
+                        <option value={s.role}>{staffRoleLabel(s.role)}</option>
+                      )}
+                      {ROLES.map((r) => (
+                        <option key={r} value={r}>
+                          {staffRoleLabel(r)}
+                        </option>
+                      ))}
+                    </select>
+                  )}
+                </td>
                 <td className="px-3 py-3 text-right text-muted-foreground">
                   {new Date(s.createdAt).toLocaleDateString()}
                 </td>
