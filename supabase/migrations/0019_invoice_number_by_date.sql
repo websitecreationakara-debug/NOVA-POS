@@ -1,6 +1,7 @@
--- Invoice numbers now follow the month an order is created in: `YYYYMM-NN`
--- (e.g. 202609-66), NN restarting at 1 each calendar month (Asia/Phnom_Penh,
--- so the number lines up with the local invoice date). Existing orders keep
+-- Invoice numbers now follow the order's creation date: `YYYYMMDD`
+-- (e.g. 20260908), in Asia/Phnom_Penh so it matches the local invoice date.
+-- If more than one order is created on the same day the 2nd, 3rd, ... get a
+-- `-2`, `-3` suffix so invoice_number stays unique. Existing orders keep
 -- their old global `INV-000045` numbers.
 --
 -- Implemented as a BEFORE INSERT trigger on `orders` rather than by editing
@@ -9,7 +10,7 @@
 -- next number race-free under concurrent checkouts.
 
 create table if not exists invoice_counters (
-  period text primary key,          -- 'YYYYMM' in Asia/Phnom_Penh
+  period text primary key,          -- 'YYYYMMDD' in Asia/Phnom_Penh
   last_seq integer not null default 0
 );
 
@@ -18,7 +19,7 @@ returns text
 language plpgsql
 as $$
 declare
-  v_period text := to_char((now() at time zone 'Asia/Phnom_Penh'), 'YYYYMM');
+  v_period text := to_char((now() at time zone 'Asia/Phnom_Penh'), 'YYYYMMDD');
   v_seq integer;
 begin
   insert into invoice_counters (period, last_seq)
@@ -27,11 +28,12 @@ begin
     do update set last_seq = invoice_counters.last_seq + 1
   returning last_seq into v_seq;
 
-  return v_period || '-' || lpad(v_seq::text, 2, '0');
+  -- First order of the day is just the date; later ones get -2, -3, ...
+  return case when v_seq = 1 then v_period else v_period || '-' || v_seq end;
 end;
 $$;
 
--- Assign the monthly number whenever an order comes in without one, or with
+-- Assign the date-based number whenever an order comes in without one, or with
 -- an old-style INV-###### number (which charge_order still generates from the
 -- legacy sequence -- harmless, we just overwrite it here).
 create or replace function public.orders_assign_invoice_number()
