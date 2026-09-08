@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, useTransition, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
-import { ChevronLeft, ChevronRight } from "lucide-react";
+import { ChevronLeft, ChevronRight, TriangleAlert } from "lucide-react";
 import type { ProductWithStock } from "@/lib/supabase/queries";
 import Dropdown from "@/components/Dropdown";
 import { getCatalog } from "@/lib/websiteProducts/catalogs";
@@ -148,6 +148,34 @@ export default function WebsiteProductsPanel({
   const [imageError, setImageError] = useState<string | null>(null);
   const [pendingId, setPendingId] = useState<string | null>(null);
   const [, startTransition] = useTransition();
+
+  // A brief bottom-right toast confirming a save (price/stock/status/delete) or
+  // surfacing an action failure. `loadError` stays reserved for the initial
+  // load / background poll failing -- those need to stay on screen.
+  const [toast, setToast] = useState<{ text: string; kind: "ok" | "err" } | null>(null);
+  useEffect(() => {
+    if (!toast) return;
+    const t = setTimeout(() => setToast(null), toast.kind === "err" ? 6000 : 2500);
+    return () => clearTimeout(t);
+  }, [toast]);
+  const notify = useCallback((text: string, kind: "ok" | "err" = "ok") => {
+    setToast({ text, kind });
+  }, []);
+
+  // Set while the delete-confirmation dialog is open; carries which row the
+  // user clicked Delete on. Replaces the old window.confirm().
+  const [confirmTarget, setConfirmTarget] = useState<{
+    p: WebsiteProduct;
+    v: WebsiteProductVariation | null;
+  } | null>(null);
+  useEffect(() => {
+    if (!confirmTarget) return;
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape") setConfirmTarget(null);
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [confirmTarget]);
 
   // Per-product unsaved edits to the inline price/stock fields. While a product
   // has a draft, polling leaves that field alone so it can't wipe what the user
@@ -326,6 +354,7 @@ export default function WebsiteProductsPanel({
         });
         setForm(emptyForm);
         setShowForm(false);
+        notify(`Created “${form.title.trim()}”`);
         load();
       } catch (e) {
         setFormError(e instanceof Error ? e.message : "Failed to create product");
@@ -333,15 +362,16 @@ export default function WebsiteProductsPanel({
     });
   }
 
-  function patch(id: string, input: Partial<WebsiteProductWrite>) {
+  function patch(id: string, input: Partial<WebsiteProductWrite>, label = "Saved") {
     setPendingId(id);
     startTransition(async () => {
       try {
         await updateWebsiteProductAction(catalogId, id, input);
         setPendingId(null);
+        notify(label);
         load();
       } catch (e) {
-        setLoadError(e instanceof Error ? e.message : "Failed to update product");
+        notify(e instanceof Error ? e.message : "Failed to update product", "err");
         setPendingId(null);
       }
     });
@@ -374,9 +404,10 @@ export default function WebsiteProductsPanel({
           price,
         });
         setPendingId(null);
+        notify(`Price updated — ${product.title}${variation.weight ? ` (${variation.weight})` : ""}`);
         router.refresh();
       } catch (e) {
-        setLoadError(e instanceof Error ? e.message : "Failed to update this size's price");
+        notify(e instanceof Error ? e.message : "Failed to update this size's price", "err");
         setPendingId(null);
       }
     });
@@ -403,50 +434,75 @@ export default function WebsiteProductsPanel({
           stock,
         });
         setPendingId(null);
+        notify(`Stock updated — ${product.title}${variation.weight ? ` (${variation.weight})` : ""}`);
         router.refresh();
       } catch (e) {
-        setLoadError(e instanceof Error ? e.message : "Failed to update this size's stock");
+        notify(e instanceof Error ? e.message : "Failed to update this size's stock", "err");
         setPendingId(null);
       }
     });
   }
 
-  // Delete one row. For a "variable" product's size, remove just that size via
-  // its own sub-route so the product and its other sizes stay -- unless it's the
-  // last size left, where an empty variable product is useless, so drop the
-  // whole product instead. For a simple product, remove the whole product.
-  // Pending state is keyed on the same id the row's other controls use
-  // (variation id, else product id) so only the clicked row shows "…" --
-  // sibling sizes share the product id.
-  function remove(p: WebsiteProduct, v: WebsiteProductVariation | null) {
+  // What a delete on this row actually does. For a "variable" product's size we
+  // remove just that size via its own sub-route so the product and its other
+  // sizes stay -- unless it's the last size left, where an empty variable
+  // product is useless, so we drop the whole product instead. For a simple
+  // product it's always the whole product.
+  function deletePlan(p: WebsiteProduct, v: WebsiteProductVariation | null) {
     const lastSize = v != null && (p.variations?.length ?? 0) <= 1;
-    const deleteWholeProduct = v == null || lastSize;
-    const sizeLabel = v?.weight ? ` (${v.weight})` : "";
-    const msg = !deleteWholeProduct
-      ? `Delete the${sizeLabel || " selected"} size of "${p.title}" from the website? This cannot be undone.`
-      : lastSize
-        ? `That's the last size of "${p.title}" — delete the whole product from the website? This cannot be undone.`
-        : `Delete "${p.title}" from the website? This cannot be undone.`;
-    if (!window.confirm(msg)) return;
-    const pending = v && !deleteWholeProduct ? v.id : p.id;
-    setPendingId(pending);
+    const wholeProduct = v == null || lastSize;
+    const sizeLabel = v?.weight ? `“${v.weight}”` : "this size";
+    return {
+      wholeProduct,
+      lastSize,
+      // Id the row's pending "…" is keyed on (variation id for a lone-size
+      // delete, else product id -- sibling sizes share the product id).
+      pendingId: v && !wholeProduct ? v.id : p.id,
+      title: wholeProduct ? "Delete this product?" : "Delete this size?",
+      body: !wholeProduct
+        ? `Removes ${sizeLabel} of “${p.title}” from the website. This can’t be undone.`
+        : lastSize
+          ? `${sizeLabel} is the last size of “${p.title}”, so the whole product will be removed from the website. This can’t be undone.`
+          : `Removes “${p.title}” from the website. This can’t be undone.`,
+    };
+  }
+
+  // Clicking Delete just opens the confirmation dialog (see confirmTarget).
+  function remove(p: WebsiteProduct, v: WebsiteProductVariation | null) {
+    setConfirmTarget({ p, v });
+  }
+
+  // Runs the delete the dialog is confirming.
+  function confirmRemove() {
+    if (!confirmTarget) return;
+    const { p, v } = confirmTarget;
+    const plan = deletePlan(p, v);
+    setPendingId(plan.pendingId);
     startTransition(async () => {
       try {
-        if (v && !deleteWholeProduct) {
+        if (v && !plan.wholeProduct) {
           await deleteWebsiteProductVariationAction(catalogId, p.id, v.id);
         } else {
           await deleteWebsiteProductAction(catalogId, p.id);
         }
         setPendingId(null);
+        setConfirmTarget(null);
+        notify(
+          plan.wholeProduct
+            ? `Deleted “${p.title}”`
+            : `Deleted ${v?.weight ? `“${v.weight}”` : "the"} size of “${p.title}”`
+        );
         load();
       } catch (e) {
         const detail = e instanceof Error ? e.message : "Failed to delete";
-        setLoadError(
-          v && !deleteWholeProduct
+        notify(
+          v && !plan.wholeProduct
             ? `Couldn't delete this size — the storefront may not support removing sizes one at a time yet. (${detail})`
-            : detail
+            : detail,
+          "err"
         );
         setPendingId(null);
+        setConfirmTarget(null);
       }
     });
   }
@@ -754,7 +810,7 @@ export default function WebsiteProductsPanel({
                             const price = Number(e.target.value);
                             if (!Number.isNaN(price) && price !== currentPrice) {
                               if (v) patchVariationPrice(p, v, linked, price);
-                              else patch(p.id, { price });
+                              else patch(p.id, { price }, "Price updated");
                             }
                             clearDraft(editId, "price");
                           }}
@@ -774,7 +830,7 @@ export default function WebsiteProductsPanel({
                           const stock = Number(e.target.value);
                           if (!Number.isNaN(stock) && stock !== (currentStock ?? 0)) {
                             if (v) patchVariationStock(p, v, linked, stock);
-                            else patch(p.id, { stock });
+                            else patch(p.id, { stock }, "Stock updated");
                           }
                           clearDraft(editId, "stock");
                         }}
@@ -785,9 +841,14 @@ export default function WebsiteProductsPanel({
                       <select
                         value={p.status}
                         disabled={pendingId === p.id}
-                        onChange={(e) =>
-                          patch(p.id, { status: e.target.value as WebsiteProductWrite["status"] })
-                        }
+                        onChange={(e) => {
+                          const status = e.target.value as WebsiteProductWrite["status"];
+                          patch(
+                            p.id,
+                            { status },
+                            `Status set to ${status === "published" ? "Published" : "Draft"}`
+                          );
+                        }}
                         className="rounded border border-black/[.15] bg-card px-2 py-1 text-sm dark:border-white/[.2]"
                       >
                         <option value="draft">Draft</option>
@@ -852,6 +913,66 @@ export default function WebsiteProductsPanel({
           </button>
         </div>
       )}
+
+      {toast && (
+        <div
+          role="status"
+          aria-live="polite"
+          className={`pointer-events-none fixed bottom-4 right-4 z-50 max-w-xs rounded-lg px-4 py-2.5 text-sm shadow-lg ${
+            toast.kind === "err"
+              ? "bg-red-600 text-white"
+              : "bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900"
+          }`}
+        >
+          {toast.text}
+        </div>
+      )}
+
+      {confirmTarget &&
+        (() => {
+          const plan = deletePlan(confirmTarget.p, confirmTarget.v);
+          const busy = pendingId === plan.pendingId;
+          return (
+            <div
+              className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+              onClick={() => {
+                if (!busy) setConfirmTarget(null);
+              }}
+            >
+              <div
+                role="alertdialog"
+                aria-modal="true"
+                aria-label={plan.title}
+                className="w-full max-w-sm rounded-2xl border border-border bg-card p-6 text-center shadow-2xl"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-red-100 text-red-600 dark:bg-red-950 dark:text-red-400">
+                  <TriangleAlert className="h-6 w-6" />
+                </div>
+                <h2 className="mt-4 text-base font-semibold text-foreground">{plan.title}</h2>
+                <p className="mt-1.5 text-sm text-muted-foreground">{plan.body}</p>
+                <div className="mt-6 flex justify-center gap-2">
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={() => setConfirmTarget(null)}
+                    className="flex-1 rounded-full border border-border px-4 py-2 text-sm font-medium transition-colors hover:bg-muted disabled:opacity-50"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={confirmRemove}
+                    className="flex-1 rounded-full bg-red-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-red-700 disabled:opacity-50"
+                  >
+                    {busy ? "Deleting…" : "Delete"}
+                  </button>
+                </div>
+              </div>
+            </div>
+          );
+        })()}
     </div>
   );
 }
