@@ -257,3 +257,18 @@ export function deleteWebsiteProduct(
     headers: authHeaders(catalogId),
   });
 }
+
+// Deletes a single variation of a "variable" product via its dedicated
+// sub-route, leaving the parent product and its other variations in place --
+// the plain product DELETE above takes the whole product with every size. Same
+// route family as updateWebsiteProductVariation (PATCH /:id/variations/:vid).
+export function deleteWebsiteProductVariation(
+  catalogId: WebsiteCatalogId,
+  productId: string,
+  variationId: string
+): Promise<void> {
+  return request<void>(catalogId, `/${productId}/variations/${variationId}`, {
+    method: "DELETE",
+    headers: authHeaders(catalogId),
+  });
+}

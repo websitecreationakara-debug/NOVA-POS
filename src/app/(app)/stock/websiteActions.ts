@@ -6,6 +6,7 @@ import { ensurePosProductForSiteProduct } from "@/app/(app)/sales/websiteActions
 import {
   createWebsiteProduct,
   deleteWebsiteProduct,
+  deleteWebsiteProductVariation,
   listWebsiteProducts,
   updateWebsiteProduct,
   updateWebsiteProductVariation,
@@ -149,5 +150,17 @@ export async function deleteWebsiteProductAction(
   id: string
 ): Promise<void> {
   await deleteWebsiteProduct(catalogId, id);
+  revalidatePath("/stock");
+}
+
+// Removes just one size of a "variable" product; the product and its other
+// sizes stay on the site. Deleting the last remaining size is left to the
+// storefront to handle (it keeps an empty variable product).
+export async function deleteWebsiteProductVariationAction(
+  catalogId: WebsiteCatalogId,
+  productId: string,
+  variationId: string
+): Promise<void> {
+  await deleteWebsiteProductVariation(catalogId, productId, variationId);
   revalidatePath("/stock");
 }
