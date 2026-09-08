@@ -228,20 +228,18 @@ export default async function InvoicePage({
             closing lines, so it fills the page without a big top gap */}
         {brand.khqrUrl && (
           <div className="flex flex-1 flex-col items-center justify-center py-8">
-            <div className="relative rounded-2xl border border-zinc-200 bg-white px-7 pt-6 pb-5 shadow-sm">
-              {/* "KHQR" tab, centered on the top edge */}
-              <span className="absolute -top-2.5 left-1/2 -translate-x-1/2 rounded bg-red-600 px-2.5 py-0.5 text-[10px] font-bold tracking-wide text-white">
-                KHQR
-              </span>
-              {/* QR with the four rounded corner brackets */}
-              <div className="relative p-3.5">
-                <span className="absolute top-0 left-0 h-5 w-5 rounded-tl-lg border-t-2 border-l-2 border-zinc-400" />
-                <span className="absolute top-0 right-0 h-5 w-5 rounded-tr-lg border-t-2 border-r-2 border-zinc-400" />
-                <span className="absolute bottom-0 left-0 h-5 w-5 rounded-bl-lg border-b-2 border-l-2 border-zinc-400" />
-                <span className="absolute right-0 bottom-0 h-5 w-5 rounded-br-lg border-r-2 border-b-2 border-zinc-400" />
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src={brand.khqrUrl} alt="KHQR" className="h-52 w-52 object-contain" />
-              </div>
+            {/* "KHQR" pill */}
+            <span className="rounded bg-red-600 px-2.5 py-0.5 text-[10px] font-bold tracking-wide text-white">
+              KHQR
+            </span>
+            {/* QR with four rounded corner brackets, no outer box */}
+            <div className="relative mt-3 p-5">
+              <span className="absolute top-0 left-0 h-6 w-6 rounded-tl-lg border-t-2 border-l-2 border-zinc-400" />
+              <span className="absolute top-0 right-0 h-6 w-6 rounded-tr-lg border-t-2 border-r-2 border-zinc-400" />
+              <span className="absolute bottom-0 left-0 h-6 w-6 rounded-bl-lg border-b-2 border-l-2 border-zinc-400" />
+              <span className="absolute right-0 bottom-0 h-6 w-6 rounded-br-lg border-r-2 border-b-2 border-zinc-400" />
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={brand.khqrUrl} alt="KHQR" className="h-52 w-52 object-contain" />
             </div>
             <p className="mt-3 text-lg font-bold tracking-wide">{brand.khqrLabel}</p>
           </div>
