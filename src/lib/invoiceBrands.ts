@@ -29,7 +29,7 @@ const DEFAULT_CLOSING = [
 ];
 
 const FALLBACK: InvoiceBrandConfig = {
-  contactLine: "",
+  contactLine: "ផ្លូវ388 ទួលស្វាយព្រៃ ភ្នំពេញ: 099 361 350",
   khqrUrl: null,
   khqrLabel: "NOVA",
   remarks: DEFAULT_REMARKS,
@@ -57,7 +57,7 @@ export const INVOICE_BRANDS: Record<string, InvoiceBrandConfig> = {
   },
   "sora-sake": {
     // TODO: confirm the shop address/phone for SORA SAKE.
-    contactLine: "",
+    contactLine: "ផ្លូវ388 ទួលស្វាយព្រៃ ភ្នំពេញ: 099 361 350",
     khqrUrl: null, // e.g. "/khqr/sora-sake.png"
     khqrLabel: "SORA SAKE",
     remarks: DEFAULT_REMARKS,
