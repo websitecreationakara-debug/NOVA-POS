@@ -224,28 +224,28 @@ export default async function InvoicePage({
           ))}
         </div>
 
-        {/* 6. KHQR + footer -- pushed to the bottom so the page fills out */}
-        <div className="mt-auto pt-10">
-          {brand.khqrUrl && (
-            <div className="flex flex-col items-center">
-              <div className="relative rounded-lg border border-black/70 p-3.5">
-                <span className="absolute -top-2.5 left-3 bg-red-600 px-2 py-0.5 text-[10px] font-bold text-white">
-                  KHQR
-                </span>
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src={brand.khqrUrl} alt="KHQR" className="h-56 w-56 object-contain" />
-              </div>
-              <p className="mt-3 text-lg font-bold tracking-wide">{brand.khqrLabel}</p>
+        {/* 6. KHQR -- centered in the space between the Remarks and the
+            closing lines, so it fills the page without a big top gap */}
+        {brand.khqrUrl && (
+          <div className="flex flex-1 flex-col items-center justify-center py-8">
+            <div className="relative rounded-lg border border-black/70 p-3.5">
+              <span className="absolute -top-2.5 left-3 bg-red-600 px-2 py-0.5 text-[10px] font-bold text-white">
+                KHQR
+              </span>
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={brand.khqrUrl} alt="KHQR" className="h-56 w-56 object-contain" />
             </div>
-          )}
-
-          <div className="mt-8 space-y-1.5 text-center text-[13px]">
-            {brand.closing.map((line, i) => (
-              <p key={i} className={i === 0 ? "font-bold" : ""}>
-                {line}
-              </p>
-            ))}
+            <p className="mt-3 text-lg font-bold tracking-wide">{brand.khqrLabel}</p>
           </div>
+        )}
+
+        {/* 7. Closing lines -- bottom of the page */}
+        <div className={`space-y-1.5 text-center text-[13px] ${brand.khqrUrl ? "" : "mt-auto pt-10"}`}>
+          {brand.closing.map((line, i) => (
+            <p key={i} className={i === 0 ? "font-bold" : ""}>
+              {line}
+            </p>
+          ))}
         </div>
       </div>
     </div>

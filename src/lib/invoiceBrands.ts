@@ -36,13 +36,12 @@ const FALLBACK: InvoiceBrandConfig = {
   closing: DEFAULT_CLOSING,
 };
 
-// NOTE: khqrUrl is null until the brand's KHQR merchant QR image is added to
-// /public/khqr/<slug>.png (or any public path) and set here -- the invoice
-// simply skips the QR block while it's null.
+// All three currently share the NOVA merchant KHQR (public/khqr/nova.png).
+// Set khqrUrl to null to hide the QR block for a brand.
 export const INVOICE_BRANDS: Record<string, InvoiceBrandConfig> = {
   "bosba-premium-foods": {
     contactLine: "ផ្លូវ388 ទួលស្វាយព្រៃ ភ្នំពេញ: 099 361 350",
-    khqrUrl: null, // e.g. "/khqr/bosba-premium-foods.png"
+    khqrUrl: "/khqr/nova.png",
     khqrLabel: "NOVA",
     remarks: DEFAULT_REMARKS,
     closing: DEFAULT_CLOSING,
@@ -50,7 +49,7 @@ export const INVOICE_BRANDS: Record<string, InvoiceBrandConfig> = {
   "bosba-drink-snack": {
     // TODO: confirm the shop address/phone for BOSBA Drink & Snack.
     contactLine: "ផ្លូវ388 ទួលស្វាយព្រៃ ភ្នំពេញ: 099 361 350",
-    khqrUrl: null, // e.g. "/khqr/bosba-drink-snack.png"
+    khqrUrl: "/khqr/nova.png",
     khqrLabel: "NOVA",
     remarks: DEFAULT_REMARKS,
     closing: DEFAULT_CLOSING,
@@ -58,13 +57,10 @@ export const INVOICE_BRANDS: Record<string, InvoiceBrandConfig> = {
   "sora-sake": {
     // TODO: confirm the shop address/phone for SORA SAKE.
     contactLine: "ផ្លូវ388 ទួលស្វាយព្រៃ ភ្នំពេញ: 099 361 350",
-    khqrUrl: null, // e.g. "/khqr/sora-sake.png"
-    khqrLabel: "SORA SAKE",
+    khqrUrl: "/khqr/nova.png",
+    khqrLabel: "NOVA",
     remarks: DEFAULT_REMARKS,
-    closing: [
-      "សូមអរគុណសម្រាប់ការគាំទ្រ Thank you for your purchase",
-      "សូមជូនពរឲ្យលោកអ្នកទទួលបានសុភមង្គល និងសំណាងល្អ",
-    ],
+    closing: DEFAULT_CLOSING,
   },
 };
 
