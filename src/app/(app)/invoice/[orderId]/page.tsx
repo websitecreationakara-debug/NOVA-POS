@@ -98,28 +98,29 @@ export default async function InvoicePage({
         <PrintButton />
       </div>
 
-      {/* Printed document: A5 portrait, always white/black regardless of app theme. */}
-      <div className="invoice-sheet w-[148mm] max-w-full rounded-xl border border-zinc-200 bg-white p-[10mm] text-black shadow-sm print:w-auto print:max-w-none print:rounded-none print:border-0 print:p-0 print:shadow-none">
+      {/* Printed document: one invoice fills an A4 page; always white/black
+          regardless of app theme. */}
+      <div className="invoice-sheet flex w-[210mm] max-w-full min-h-[297mm] flex-col rounded-xl border border-zinc-200 bg-white p-[16mm] text-black shadow-sm print:w-auto print:min-h-0 print:max-w-none print:rounded-none print:border-0 print:p-0 print:shadow-none">
         {/* 1. Header */}
         <header className="flex items-center">
           {logo ? (
             // eslint-disable-next-line @next/next/no-img-element
-            <img src={logo} alt={brandName} className="h-[72px] w-auto object-contain" />
+            <img src={logo} alt={brandName} className="h-24 w-auto object-contain" />
           ) : (
-            <h1 className="text-[30px] font-bold tracking-wide">{brandName}</h1>
+            <h1 className="text-[40px] font-bold tracking-wide">{brandName}</h1>
           )}
         </header>
 
         {brand.contactLine && (
-          <p className="mt-3 text-right text-[11px] leading-snug">{brand.contactLine}</p>
+          <p className="mt-4 text-right text-[13px] leading-snug">{brand.contactLine}</p>
         )}
 
-        <div className="mt-1 border-2 border-black py-2 text-center text-sm font-bold tracking-wide">
+        <div className="mt-1.5 border-2 border-black py-2.5 text-center text-lg font-bold tracking-wide">
           INVOICE វិក្កយបត្រ
         </div>
 
         {/* 2. Customer & metadata grid */}
-        <div className="mt-4 grid grid-cols-2 gap-x-10 gap-y-1.5 text-[12px]">
+        <div className="mt-6 grid grid-cols-2 gap-x-12 gap-y-2.5 text-[14px]">
           <Meta kh="ឈ្មោះ" value={order.customer_name || "—"} />
           <Meta kh="លេខវិក្កយបត្រ" value={invoiceNumber} />
           <Meta kh="លេខទូរស័ព្ទ" value={order.customer_phone || "—"} />
@@ -128,28 +129,28 @@ export default async function InvoicePage({
         </div>
 
         {/* 3 + 4. Items table with sub-details / summary footer */}
-        <table className="mt-4 w-full border-collapse text-[12px]">
+        <table className="mt-6 w-full border-collapse text-[13px]">
           <thead>
             <tr>
               <Th className="text-left">
                 បរិយាយទំនិញ
-                <span className="block text-[10px] font-normal">Product Name</span>
-              </Th>
-              <Th className="w-14">
-                បរិមាណ
-                <span className="block text-[10px] font-normal">QTY</span>
+                <span className="block text-[11px] font-normal">Product Name</span>
               </Th>
               <Th className="w-16">
+                បរិមាណ
+                <span className="block text-[11px] font-normal">QTY</span>
+              </Th>
+              <Th className="w-20">
                 ឯកតា
-                <span className="block text-[10px] font-normal">UOM</span>
+                <span className="block text-[11px] font-normal">UOM</span>
               </Th>
-              <Th className="w-20">
+              <Th className="w-24">
                 តម្លៃរាយ
-                <span className="block text-[10px] font-normal">Unit Price</span>
+                <span className="block text-[11px] font-normal">Unit Price</span>
               </Th>
-              <Th className="w-20">
+              <Th className="w-24">
                 សរុប
-                <span className="block text-[10px] font-normal">Total</span>
+                <span className="block text-[11px] font-normal">Total</span>
               </Th>
             </tr>
           </thead>
@@ -169,9 +170,9 @@ export default async function InvoicePage({
                 {i === 0 && (
                   <td
                     rowSpan={summary.length}
-                    className="border border-black align-top p-2 text-[11px]"
+                    className="border border-black align-top p-3 text-[13px]"
                   >
-                    <dl className="flex flex-col gap-1">
+                    <dl className="flex flex-col gap-1.5">
                       {subDetails.map((d) => (
                         <div key={d.en} className="flex flex-wrap gap-x-1.5">
                           <dt className="font-bold">{d.kh}:</dt>
@@ -183,9 +184,9 @@ export default async function InvoicePage({
                 )}
                 <td
                   colSpan={3}
-                  className={`border border-black px-2 py-1 whitespace-nowrap ${
+                  className={`border border-black px-3 py-2 whitespace-nowrap ${
                     row.kind === "total"
-                      ? "bg-green-50 text-sm font-bold text-green-700"
+                      ? "bg-green-50 text-base font-bold text-green-700"
                       : row.kind === "subtotal"
                         ? "font-semibold"
                         : ""
@@ -194,9 +195,9 @@ export default async function InvoicePage({
                   {row.kh}
                 </td>
                 <td
-                  className={`border border-black px-2 py-1 text-right tabular-nums ${
+                  className={`border border-black px-3 py-2 text-right tabular-nums ${
                     row.kind === "total"
-                      ? "bg-green-50 text-base font-bold text-green-700"
+                      ? "bg-green-50 text-lg font-bold text-green-700"
                       : row.kind === "subtotal"
                         ? "font-semibold"
                         : ""
@@ -210,33 +211,35 @@ export default async function InvoicePage({
         </table>
 
         {/* 5. Remarks */}
-        <div className="mt-4 text-[11px] leading-relaxed">
+        <div className="mt-6 text-[13px] leading-relaxed">
           <p className="font-bold">Remarks: កំណត់ចំណាំ៖</p>
           {brand.remarks.map((r, i) => (
             <p key={i}>- {r}</p>
           ))}
         </div>
 
-        {/* 6. KHQR + footer */}
-        {brand.khqrUrl && (
-          <div className="mt-6 flex flex-col items-center">
-            <div className="relative rounded-lg border border-black/70 p-3">
-              <span className="absolute -top-2 left-3 bg-red-600 px-1.5 py-0.5 text-[9px] font-bold text-white">
-                KHQR
-              </span>
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={brand.khqrUrl} alt="KHQR" className="h-44 w-44 object-contain" />
+        {/* 6. KHQR + footer -- pushed to the bottom so the page fills out */}
+        <div className="mt-auto pt-10">
+          {brand.khqrUrl && (
+            <div className="flex flex-col items-center">
+              <div className="relative rounded-lg border border-black/70 p-3.5">
+                <span className="absolute -top-2.5 left-3 bg-red-600 px-2 py-0.5 text-[10px] font-bold text-white">
+                  KHQR
+                </span>
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={brand.khqrUrl} alt="KHQR" className="h-56 w-56 object-contain" />
+              </div>
+              <p className="mt-3 text-lg font-bold tracking-wide">{brand.khqrLabel}</p>
             </div>
-            <p className="mt-2 text-sm font-bold tracking-wide">{brand.khqrLabel}</p>
-          </div>
-        )}
+          )}
 
-        <div className="mt-8 space-y-1 text-center text-[11px]">
-          {brand.closing.map((line, i) => (
-            <p key={i} className={i === 0 ? "font-bold" : ""}>
-              {line}
-            </p>
-          ))}
+          <div className="mt-8 space-y-1.5 text-center text-[13px]">
+            {brand.closing.map((line, i) => (
+              <p key={i} className={i === 0 ? "font-bold" : ""}>
+                {line}
+              </p>
+            ))}
+          </div>
         </div>
       </div>
     </div>
@@ -255,7 +258,7 @@ function Meta({ kh, value }: { kh: string; value: string }) {
 function Th({ children, className = "" }: { children: React.ReactNode; className?: string }) {
   return (
     <th
-      className={`border border-black bg-zinc-100 px-2 py-1.5 align-bottom text-[11px] font-bold ${className}`}
+      className={`border border-black bg-zinc-100 px-3 py-2 align-bottom text-[12px] font-bold ${className}`}
     >
       {children}
     </th>
@@ -263,5 +266,5 @@ function Th({ children, className = "" }: { children: React.ReactNode; className
 }
 
 function Td({ children, className = "" }: { children: React.ReactNode; className?: string }) {
-  return <td className={`border border-black px-2 py-1.5 align-top ${className}`}>{children}</td>;
+  return <td className={`border border-black px-3 py-2 align-top ${className}`}>{children}</td>;
 }

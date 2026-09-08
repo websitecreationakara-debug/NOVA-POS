@@ -108,19 +108,21 @@ input[type="number"]::-webkit-inner-spin-button {
   }
 }
 
-/* Printable invoice: A5 portrait, and keep the green totals, header fill and
-   KHQR badge in the PDF (browsers drop background/branded colours by default). */
+/* Printable invoice: one invoice per A4 page, and keep the green totals,
+   header fill and KHQR badge in the PDF (browsers drop background/branded
+   colours by default). */
 .invoice-sheet {
   -webkit-print-color-adjust: exact;
   print-color-adjust: exact;
 }
 @media print {
   @page {
-    size: A5 portrait;
-    margin: 10mm;
+    size: A4 portrait;
+    margin: 14mm;
   }
   .invoice-sheet {
     width: auto;
+    min-height: 0;
     max-width: none;
   }
 }
