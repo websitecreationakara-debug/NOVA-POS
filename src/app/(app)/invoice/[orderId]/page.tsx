@@ -174,9 +174,7 @@ export default async function InvoicePage({
                     <dl className="flex flex-col gap-1">
                       {subDetails.map((d) => (
                         <div key={d.en} className="flex flex-wrap gap-x-1.5">
-                          <dt className="font-bold">
-                            {d.kh} / {d.en}:
-                          </dt>
+                          <dt className="font-bold">{d.kh}:</dt>
                           <dd>{d.value}</dd>
                         </div>
                       ))}
@@ -193,7 +191,7 @@ export default async function InvoicePage({
                         : ""
                   }`}
                 >
-                  {row.kh} <span className="text-[10px] font-normal">/ {row.en}</span>
+                  {row.kh}
                 </td>
                 <td
                   className={`border border-black px-2 py-1 text-right tabular-nums ${
