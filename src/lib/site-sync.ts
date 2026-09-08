@@ -1,4 +1,6 @@
 import { supabaseAdmin } from "@/lib/supabase/server";
+import { catalogForBrandSlug } from "@/lib/websiteProducts/catalogs";
+import { updateWebsiteProductVariation } from "@/lib/websiteProducts/client";
 import type { ProductSiteLink } from "@/types/database";
 
 // POS is the source of truth for stock on the ~28 products that also exist on a
@@ -89,18 +91,11 @@ export async function linkProductToSite(
 export async function pushStockToSites(productIds: string[]): Promise<StockSyncFailure[]> {
   if (productIds.length === 0) return [];
 
-  const { data: allLinks, error } = await supabaseAdmin
+  const { data: links, error } = await supabaseAdmin
     .from("product_site_links")
     .select("product_id, site, site_product_id, variation_id")
     .in("product_id", productIds);
-  if (error || !allLinks || allLinks.length === 0) return [];
-
-  // A variation-linked product (one size of a "variable" site product) has no
-  // single stock field on the storefront to update -- the parent's own stock
-  // is meaningless there, and pushing a variation's count under the parent id
-  // would either no-op or corrupt it. Quietly skip these, not a failure.
-  const links = allLinks.filter((l) => !l.variation_id);
-  if (links.length === 0) return [];
+  if (error || !links || links.length === 0) return [];
 
   const { data: stockRows } = await supabaseAdmin
     .from("stock_levels")
@@ -110,6 +105,67 @@ export async function pushStockToSites(productIds: string[]): Promise<StockSyncF
       links.map((l) => l.product_id)
     );
   const stockByProduct = new Map((stockRows ?? []).map((r) => [r.product_id, r.quantity]));
+
+  // A "variable" site product keeps its real stock on the variation row, not a
+  // single field on the parent -- so one size of it is pushed through the
+  // catalog's own PATCH .../:id/variations/:variationId endpoint (same call the
+  // Stock page uses), reached with that catalog's API key. The flat
+  // /api/stock-sync hook the simple products use can't reach a variation, so a
+  // sale of a size-variant product (most of BOSBA Premium Foods and
+  // sorasake.wine) used to leave the storefront's displayed stock untouched.
+  const variationLinks = links.filter((l) => l.variation_id);
+  const simpleLinks = links.filter((l) => !l.variation_id);
+
+  const variationResults = await Promise.all(
+    variationLinks.map(async (link): Promise<StockSyncFailure | null> => {
+      const stock = stockByProduct.get(link.product_id);
+      if (stock === undefined) return null;
+      const catalog = catalogForBrandSlug(link.site);
+      if (!catalog) {
+        console.error(
+          `no configured storefront catalog for ${link.site} -- skipping variation stock push`
+        );
+        return {
+          site: link.site,
+          label: SITE_LABEL[link.site],
+          reason: "storefront catalog API is not configured",
+        };
+      }
+      try {
+        await updateWebsiteProductVariation(
+          catalog.id,
+          link.site_product_id,
+          link.variation_id,
+          { stock: Math.max(0, stock) }
+        );
+        return null;
+      } catch (e) {
+        console.error(
+          `variation stock push failed for ${link.site} product ${link.site_product_id} ` +
+            `variation ${link.variation_id}`,
+          e
+        );
+        return {
+          site: link.site,
+          label: SITE_LABEL[link.site],
+          reason: e instanceof Error ? e.message : "network error",
+        };
+      }
+    })
+  );
+
+  const simpleResults = await pushSimpleLinkStock(simpleLinks, stockByProduct);
+
+  return [...variationResults, ...simpleResults].filter(
+    (r): r is StockSyncFailure => r !== null
+  );
+}
+
+async function pushSimpleLinkStock(
+  links: { product_id: string; site: ProductSiteLink["site"]; site_product_id: string }[],
+  stockByProduct: Map<string, number>
+): Promise<(StockSyncFailure | null)[]> {
+  if (links.length === 0) return [];
 
   const secret = process.env.STOCK_SYNC_SECRET;
   if (!secret) {
@@ -127,7 +183,7 @@ export async function pushStockToSites(productIds: string[]): Promise<StockSyncF
     }));
   }
 
-  const results = await Promise.all(
+  return Promise.all(
     links.map(async (link): Promise<StockSyncFailure | null> => {
       const baseUrl = SITE_BASE_URL[link.site];
       const stock = stockByProduct.get(link.product_id);
@@ -164,6 +220,4 @@ export async function pushStockToSites(productIds: string[]): Promise<StockSyncF
       }
     })
   );
-
-  return results.filter((r): r is StockSyncFailure => r !== null);
 }
