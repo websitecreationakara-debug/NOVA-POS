@@ -187,7 +187,7 @@ export default async function InvoicePage({
                     row.kind === "total"
                       ? "bg-green-50 text-sm font-bold text-green-700"
                       : row.kind === "subtotal"
-                        ? "font-semibold text-green-700"
+                        ? "font-semibold"
                         : ""
                   }`}
                 >
@@ -198,7 +198,7 @@ export default async function InvoicePage({
                     row.kind === "total"
                       ? "bg-green-50 text-base font-bold text-green-700"
                       : row.kind === "subtotal"
-                        ? "font-semibold text-green-700"
+                        ? "font-semibold"
                         : ""
                   }`}
                 >
