@@ -126,7 +126,9 @@ function InvoiceDoc({
   });
 
   return (
-    <div className="flex min-h-[285mm] break-inside-avoid flex-col p-[12mm]">
+    // min-h keeps it looking like a full page without ever spilling past one
+    // (A4 usable height with the 6mm @page margin is ~285mm).
+    <div className="flex min-h-[262mm] flex-col p-[12mm]">
       {/* 1. Header -- logo left, contact line bottom-aligned to its right */}
       <header className="flex items-end justify-between gap-4">
         {logo ? (
