@@ -68,15 +68,15 @@ export default async function InvoicePage({
   type SumRow = { kh: string; en: string; value: string; kind?: "subtotal" | "total" };
   const summary: SumRow[] = [];
   summary.push({
-    kh: "បញ្ចុះតម្លៃ",
-    en: "Discount",
-    value: order.discount > 0 ? `-${formatMoney(order.discount)}` : formatMoney(0),
-  });
-  summary.push({
     kh: "ទំនិញសរុប",
     en: "Subtotal",
     value: formatMoney(order.subtotal),
     kind: "subtotal",
+  });
+  summary.push({
+    kh: "បញ្ចុះតម្លៃ",
+    en: "Discount",
+    value: order.discount > 0 ? `-${formatMoney(order.discount)}` : formatMoney(0),
   });
   if (order.tax > 0) summary.push({ kh: "ពន្ធ", en: "Tax", value: formatMoney(order.tax) });
   summary.push({
@@ -101,21 +101,20 @@ export default async function InvoicePage({
       {/* Printed document: A5 portrait, always white/black regardless of app theme. */}
       <div className="invoice-sheet w-[148mm] max-w-full rounded-xl border border-zinc-200 bg-white p-[10mm] text-black shadow-sm print:w-auto print:max-w-none print:rounded-none print:border-0 print:p-0 print:shadow-none">
         {/* 1. Header */}
-        <header className="flex items-start justify-between gap-4">
+        <header className="flex items-center">
           {logo ? (
             // eslint-disable-next-line @next/next/no-img-element
-            <img src={logo} alt={brandName} className="h-14 w-auto object-contain" />
+            <img src={logo} alt={brandName} className="h-[72px] w-auto object-contain" />
           ) : (
-            <h1 className="text-2xl font-bold tracking-wide">{brandName}</h1>
-          )}
-          {brand.contactLine && (
-            <p className="max-w-[46%] pt-1 text-right text-[11px] leading-relaxed">
-              {brand.contactLine}
-            </p>
+            <h1 className="text-[30px] font-bold tracking-wide">{brandName}</h1>
           )}
         </header>
 
-        <div className="mt-4 border-2 border-black py-2 text-center text-sm font-bold tracking-wide">
+        {brand.contactLine && (
+          <p className="mt-3 text-right text-[11px] leading-snug">{brand.contactLine}</p>
+        )}
+
+        <div className="mt-1 border-2 border-black py-2 text-center text-sm font-bold tracking-wide">
           INVOICE វិក្កយបត្រ
         </div>
 
@@ -191,17 +190,21 @@ export default async function InvoicePage({
                 <td
                   colSpan={3}
                   className={`border border-black px-2 py-1 whitespace-nowrap ${
-                    row.kind === "total" ? "text-sm font-bold" : ""
-                  } ${row.kind === "subtotal" ? "bg-green-50 font-semibold text-green-700" : ""}`}
+                    row.kind === "total"
+                      ? "bg-green-50 text-sm font-bold text-green-700"
+                      : row.kind === "subtotal"
+                        ? "font-semibold text-green-700"
+                        : ""
+                  }`}
                 >
                   {row.kh} <span className="text-[10px] font-normal">/ {row.en}</span>
                 </td>
                 <td
                   className={`border border-black px-2 py-1 text-right tabular-nums ${
                     row.kind === "total"
-                      ? "text-base font-bold text-green-600"
+                      ? "bg-green-50 text-base font-bold text-green-700"
                       : row.kind === "subtotal"
-                        ? "bg-green-50 font-semibold text-green-700"
+                        ? "font-semibold text-green-700"
                         : ""
                   }`}
                 >
