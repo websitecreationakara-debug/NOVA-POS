@@ -48,7 +48,9 @@ export default async function InvoicePage({
   const { order, invoiceNumber, brandName, brandSlug, brandLogoUrl, customerAddress, items } =
     invoice;
   const brand = invoiceBrandConfig(brandSlug);
-  const logo = brandLogoUrl ?? brandLogoPath(brandSlug);
+  // Prefer the curated file in /public/logos over whatever brands.logo_url
+  // happens to hold -- the invoice logos are managed there.
+  const logo = brandLogoPath(brandSlug) ?? brandLogoUrl;
 
   const paymentLabel = order.payment_method
     ? (PAYMENT_LABELS[order.payment_method] ?? order.payment_method)

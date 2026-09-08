@@ -72,8 +72,16 @@ export function invoiceBrandConfig(slug: string | null): InvoiceBrandConfig {
   return (slug && INVOICE_BRANDS[slug]) || FALLBACK;
 }
 
-// The brand logo lives in /public/logos/<slug>.png (see public/logos). Falls
-// back to null so the invoice can print the plain brand name instead.
+// The brand logo files live in /public/logos (see that folder). Not all are
+// PNGs, so map slug -> filename explicitly. Returns null for an unknown brand
+// so the invoice can print the plain brand name instead.
+const BRAND_LOGO_FILE: Record<string, string> = {
+  "bosba-premium-foods": "bosba-premium-foods.png",
+  "bosba-drink-snack": "bosba-drink-snack.webp",
+  "sora-sake": "sora-sake.png",
+};
+
 export function brandLogoPath(slug: string | null): string | null {
-  return slug ? `/logos/${slug}.png` : null;
+  const file = slug ? BRAND_LOGO_FILE[slug] : undefined;
+  return file ? `/logos/${file}` : null;
 }
