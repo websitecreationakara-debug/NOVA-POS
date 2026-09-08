@@ -91,14 +91,14 @@ export default async function InvoicePage({
   });
 
   return (
-    <div className={`${hanuman.className} mx-auto max-w-2xl p-8 print:p-0`}>
-      <div className="mb-6 flex items-center justify-end gap-3 print:hidden">
+    <div className={`${hanuman.className} mx-auto w-fit max-w-full p-6 print:p-0`}>
+      <div className="mb-4 flex items-center justify-end gap-3 print:hidden">
         <OrderStatusControl orderId={order.id} status={order.fulfillment_status} />
         <PrintButton />
       </div>
 
-      {/* Printed document: always white/black regardless of app theme. */}
-      <div className="invoice-sheet rounded-2xl border border-zinc-200 bg-white p-8 text-black print:rounded-none print:border-0 print:p-0">
+      {/* Printed document: A5 portrait, always white/black regardless of app theme. */}
+      <div className="invoice-sheet w-[148mm] max-w-full rounded-xl border border-zinc-200 bg-white p-[10mm] text-black shadow-sm print:w-auto print:max-w-none print:rounded-none print:border-0 print:p-0 print:shadow-none">
         {/* 1. Header */}
         <header className="flex items-start justify-between gap-4">
           {logo ? (
