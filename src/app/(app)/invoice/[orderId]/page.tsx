@@ -57,9 +57,14 @@ export default async function InvoicePage({
         <PrintButton />
       </div>
 
-      {/* One invoice per A4 sheet. */}
-      <div className="invoice-sheet w-[210mm] max-w-full overflow-hidden rounded-xl border border-zinc-200 bg-white text-black shadow-sm print:w-auto print:max-w-none print:rounded-none print:border-0 print:shadow-none">
+      {/* Two identical copies -- a "duplicate voucher" (customer + shop). Each
+          is a full page, so the print job is 2 pages and Chrome's
+          "Pages per sheet: 2" tiles both onto one sheet. */}
+      <div className="invoice-sheet w-[210mm] max-w-full overflow-hidden rounded-xl border border-zinc-200 bg-white text-black shadow-sm print:w-auto print:max-w-none print:overflow-visible print:rounded-none print:border-0 print:shadow-none">
         <InvoiceDoc invoice={invoice} brand={brand} logo={logo} />
+        <div className="break-before-page border-t-4 border-dashed border-zinc-300 print:border-0">
+          <InvoiceDoc invoice={invoice} brand={brand} logo={logo} />
+        </div>
       </div>
     </div>
   );
@@ -115,7 +120,7 @@ function InvoiceDoc({
   });
 
   return (
-    <div className="flex min-h-[285mm] flex-col p-[12mm] print:min-h-0">
+    <div className="flex min-h-[285mm] break-inside-avoid flex-col p-[12mm]">
       {/* 1. Header -- logo left, contact line bottom-aligned to its right */}
       <header className="flex items-end justify-between gap-4">
         {logo ? (
