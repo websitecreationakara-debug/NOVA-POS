@@ -4,6 +4,8 @@ import { useCallback, useEffect, useMemo, useRef, useState, useTransition, type 
 import { useRouter } from "next/navigation";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import type { ProductWithStock } from "@/lib/supabase/queries";
+import Dropdown from "@/components/Dropdown";
+import { getCatalog } from "@/lib/websiteProducts/catalogs";
 import type {
   WebsiteCatalogId,
   WebsiteProduct,
@@ -13,6 +15,7 @@ import type {
 import {
   createWebsiteProductAction,
   deleteWebsiteProductAction,
+  deleteWebsiteProductVariationAction,
   listWebsiteProductsAction,
   setVariationPriceAction,
   setVariationStockAction,
@@ -68,13 +71,13 @@ function Field({
 const emptyForm: WebsiteProductWrite = {
   title: "",
   description: "",
-  price: 0,
+  // price/stock left unset so their fields start empty (showing a "0"
+  // placeholder) instead of a stuck literal 0 -- submitCreate defaults them
+  // back to 0 if still blank.
   category_id: "",
-  stock: 0,
   status: "draft",
   image_url: "",
   weight: "",
-  taste_notes: "",
   type: "simple",
   featured: false,
 };
@@ -100,10 +103,6 @@ type Entry = {
   product: WebsiteProduct;
   variation: WebsiteProductVariation | null;
   key: string;
-  // Only the first row of a "variable" product renders the shared,
-  // product-level controls (status/featured/delete) -- every row maps to the
-  // same underlying product, so repeating them per size would just be noise.
-  isPrimaryRow: boolean;
 };
 
 function toEntries(list: WebsiteProduct[]): Entry[] {
@@ -111,11 +110,11 @@ function toEntries(list: WebsiteProduct[]): Entry[] {
   for (const p of list) {
     const isVariable = p.type === "variable" || p.type === "variant";
     if (isVariable && p.variations && p.variations.length > 0) {
-      p.variations.forEach((v, i) => {
-        out.push({ product: p, variation: v, key: `${p.id}::${v.id}`, isPrimaryRow: i === 0 });
-      });
+      for (const v of p.variations) {
+        out.push({ product: p, variation: v, key: `${p.id}::${v.id}` });
+      }
     } else {
-      out.push({ product: p, variation: null, key: p.id, isPrimaryRow: true });
+      out.push({ product: p, variation: null, key: p.id });
     }
   }
   return out;
@@ -162,6 +161,23 @@ export default function WebsiteProductsPanel({
     }
     return map;
   }, [posProducts]);
+
+  // Options for the "Category" picker in the add-product form. The storefront
+  // APIs expose no category list, so start from the hand-maintained names in
+  // catalogs.ts and add any other category id seen on a live product (labelled
+  // by its id, since we have no name for it) so nothing already in use is
+  // missing. A brand-new empty category still has to be created on the
+  // storefront first.
+  const categoryOptions = useMemo(() => {
+    const known = getCatalog(catalogId).categories ?? [];
+    const byId = new Map(known.map((c) => [c.id, c.label]));
+    for (const p of products ?? []) {
+      if (p.category_id && !byId.has(p.category_id)) {
+        byId.set(p.category_id, `Unnamed category (${p.category_id.slice(0, 8)}…)`);
+      }
+    }
+    return [...byId].map(([id, label]) => ({ id, label }));
+  }, [catalogId, products]);
 
   // Refs so the polling loop can read current state without re-subscribing.
   const signatureRef = useRef<string>(initialProducts ? catalogSignature(initialProducts) : "");
@@ -305,8 +321,8 @@ export default function WebsiteProductsPanel({
         await createWebsiteProductAction(catalogId, {
           ...form,
           title: form.title.trim(),
-          price: Number(form.price) || 0,
-          stock: form.stock === null || form.stock === undefined ? null : Number(form.stock),
+          price: Number(form.price ?? 0) || 0,
+          stock: Number(form.stock ?? 0) || 0,
         });
         setForm(emptyForm);
         setShowForm(false);
@@ -395,16 +411,41 @@ export default function WebsiteProductsPanel({
     });
   }
 
-  function remove(id: string, title: string) {
-    if (!window.confirm(`Delete "${title}" from the website? This cannot be undone.`)) return;
-    setPendingId(id);
+  // Delete one row. For a "variable" product's size, remove just that size via
+  // its own sub-route so the product and its other sizes stay -- unless it's the
+  // last size left, where an empty variable product is useless, so drop the
+  // whole product instead. For a simple product, remove the whole product.
+  // Pending state is keyed on the same id the row's other controls use
+  // (variation id, else product id) so only the clicked row shows "…" --
+  // sibling sizes share the product id.
+  function remove(p: WebsiteProduct, v: WebsiteProductVariation | null) {
+    const lastSize = v != null && (p.variations?.length ?? 0) <= 1;
+    const deleteWholeProduct = v == null || lastSize;
+    const sizeLabel = v?.weight ? ` (${v.weight})` : "";
+    const msg = !deleteWholeProduct
+      ? `Delete the${sizeLabel || " selected"} size of "${p.title}" from the website? This cannot be undone.`
+      : lastSize
+        ? `That's the last size of "${p.title}" — delete the whole product from the website? This cannot be undone.`
+        : `Delete "${p.title}" from the website? This cannot be undone.`;
+    if (!window.confirm(msg)) return;
+    const pending = v && !deleteWholeProduct ? v.id : p.id;
+    setPendingId(pending);
     startTransition(async () => {
       try {
-        await deleteWebsiteProductAction(catalogId, id);
+        if (v && !deleteWholeProduct) {
+          await deleteWebsiteProductVariationAction(catalogId, p.id, v.id);
+        } else {
+          await deleteWebsiteProductAction(catalogId, p.id);
+        }
         setPendingId(null);
         load();
       } catch (e) {
-        setLoadError(e instanceof Error ? e.message : "Failed to delete product");
+        const detail = e instanceof Error ? e.message : "Failed to delete";
+        setLoadError(
+          v && !deleteWholeProduct
+            ? `Couldn't delete this size — the storefront may not support removing sizes one at a time yet. (${detail})`
+            : detail
+        );
         setPendingId(null);
       }
     });
@@ -507,8 +548,14 @@ export default function WebsiteProductsPanel({
                   type="number"
                   min={0}
                   step="0.01"
-                  value={form.price ?? 0}
-                  onChange={(e) => setForm((f) => ({ ...f, price: Number(e.target.value) }))}
+                  placeholder="0"
+                  value={form.price ?? ""}
+                  onChange={(e) =>
+                    setForm((f) => ({
+                      ...f,
+                      price: e.target.value === "" ? undefined : Number(e.target.value),
+                    }))
+                  }
                   className="w-full min-w-0 border-0 bg-transparent p-0 text-right text-sm tabular-nums outline-none"
                 />
               </div>
@@ -517,22 +564,28 @@ export default function WebsiteProductsPanel({
               <input
                 type="number"
                 min={0}
-                value={form.stock ?? 0}
-                onChange={(e) => setForm((f) => ({ ...f, stock: Number(e.target.value) }))}
+                placeholder="0"
+                value={form.stock ?? ""}
+                onChange={(e) =>
+                  setForm((f) => ({
+                    ...f,
+                    stock: e.target.value === "" ? undefined : Number(e.target.value),
+                  }))
+                }
                 className={`${fieldInputClass} text-right tabular-nums`}
               />
             </Field>
             <Field label="Status">
-              <select
-                value={form.status}
-                onChange={(e) =>
-                  setForm((f) => ({ ...f, status: e.target.value as WebsiteProductWrite["status"] }))
+              <Dropdown
+                value={form.status ?? "draft"}
+                onChange={(v) =>
+                  setForm((f) => ({ ...f, status: v as WebsiteProductWrite["status"] }))
                 }
-                className={`${fieldInputClass} bg-card`}
-              >
-                <option value="draft">Draft — hidden on the site</option>
-                <option value="published">Published — live on the site</option>
-              </select>
+                options={[
+                  { value: "draft", label: "Draft — hidden on the site" },
+                  { value: "published", label: "Published — live on the site" },
+                ]}
+              />
             </Field>
             <Field label="Weight" hint="optional">
               <input
@@ -543,22 +596,14 @@ export default function WebsiteProductsPanel({
                 className={fieldInputClass}
               />
             </Field>
-            <Field label="Taste notes" hint="optional">
-              <input
-                type="text"
-                placeholder="e.g. Chili, Garlic"
-                value={form.taste_notes ?? ""}
-                onChange={(e) => setForm((f) => ({ ...f, taste_notes: e.target.value }))}
-                className={fieldInputClass}
-              />
-            </Field>
-            <Field label="Category ID" hint="optional, from the storefront">
-              <input
-                type="text"
-                placeholder="Leave blank if unsure"
+            <Field label="Category" hint="optional">
+              <Dropdown
                 value={form.category_id ?? ""}
-                onChange={(e) => setForm((f) => ({ ...f, category_id: e.target.value }))}
-                className={fieldInputClass}
+                onChange={(v) => setForm((f) => ({ ...f, category_id: v }))}
+                options={[
+                  { value: "", label: "— No category —" },
+                  ...categoryOptions.map((c) => ({ value: c.id, label: c.label })),
+                ]}
               />
             </Field>
             <Field label="Image" hint="optional" className="col-span-2 md:col-span-4">
@@ -610,26 +655,6 @@ export default function WebsiteProductsPanel({
               </div>
               {imageError && <span className="mt-1 text-xs text-red-500">{imageError}</span>}
             </Field>
-            <label className="col-span-2 flex items-center gap-2 text-sm md:col-span-4">
-              <input
-                type="checkbox"
-                checked={form.featured ?? false}
-                onChange={(e) => setForm((f) => ({ ...f, featured: e.target.checked }))}
-              />
-              <span>
-                Featured
-                <span className="ml-1 text-xs text-zinc-400">— highlight on the storefront</span>
-              </span>
-            </label>
-            <Field label="Description" hint="optional" className="col-span-2 md:col-span-4">
-              <textarea
-                placeholder="Shown on the product page"
-                value={form.description ?? ""}
-                onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))}
-                className={`${fieldInputClass} resize-y`}
-                rows={2}
-              />
-            </Field>
           </div>
           {formError && <p className="mt-3 text-xs text-red-500">{formError}</p>}
           <div className="mt-4 flex gap-2">
@@ -663,12 +688,11 @@ export default function WebsiteProductsPanel({
                 <th className="px-3 py-2 font-medium">Price</th>
                 <th className="px-3 py-2 font-medium">Stock</th>
                 <th className="px-3 py-2 font-medium">Status</th>
-                <th className="px-3 py-2 font-medium">Featured</th>
                 <th className="px-3 py-2 font-medium">Actions</th>
               </tr>
             </thead>
             <tbody>
-              {paged.map(({ product: p, variation: v, key, isPrimaryRow }) => {
+              {paged.map(({ product: p, variation: v, key }) => {
                 // The POS product linked to this size, if anyone has already
                 // sold it or edited it here before -- null means editing will
                 // create one on the fly (see patchVariationPrice/Stock).
@@ -758,47 +782,33 @@ export default function WebsiteProductsPanel({
                       />
                     </td>
                     <td className="px-3 py-2">
-                      {isPrimaryRow && (
-                        <select
-                          value={p.status}
-                          disabled={pendingId === p.id}
-                          onChange={(e) =>
-                            patch(p.id, { status: e.target.value as WebsiteProductWrite["status"] })
-                          }
-                          className="rounded border border-black/[.15] bg-card px-2 py-1 text-sm dark:border-white/[.2]"
-                        >
-                          <option value="draft">Draft</option>
-                          <option value="published">Published</option>
-                        </select>
-                      )}
+                      <select
+                        value={p.status}
+                        disabled={pendingId === p.id}
+                        onChange={(e) =>
+                          patch(p.id, { status: e.target.value as WebsiteProductWrite["status"] })
+                        }
+                        className="rounded border border-black/[.15] bg-card px-2 py-1 text-sm dark:border-white/[.2]"
+                      >
+                        <option value="draft">Draft</option>
+                        <option value="published">Published</option>
+                      </select>
                     </td>
                     <td className="px-3 py-2">
-                      {isPrimaryRow && (
-                        <input
-                          type="checkbox"
-                          checked={p.featured}
-                          disabled={pendingId === p.id}
-                          onChange={(e) => patch(p.id, { featured: e.target.checked })}
-                        />
-                      )}
-                    </td>
-                    <td className="px-3 py-2">
-                      {isPrimaryRow && (
-                        <button
-                          disabled={pendingId === p.id}
-                          onClick={() => remove(p.id, p.title)}
-                          className="rounded border border-red-300 px-2 py-1 text-xs text-red-500 disabled:opacity-40 dark:border-red-900"
-                        >
-                          {pendingId === p.id ? "…" : "Delete"}
-                        </button>
-                      )}
+                      <button
+                        disabled={pendingId === editId || pendingId === p.id}
+                        onClick={() => remove(p, v)}
+                        className="rounded border border-red-300 px-2 py-1 text-xs text-red-500 disabled:opacity-40 dark:border-red-900"
+                      >
+                        {pendingId === editId || pendingId === p.id ? "…" : "Delete"}
+                      </button>
                     </td>
                   </tr>
                 );
               })}
               {filtered.length === 0 && (
                 <tr>
-                  <td colSpan={7} className="px-6 py-8 text-center text-sm text-zinc-500">
+                  <td colSpan={6} className="px-6 py-8 text-center text-sm text-zinc-500">
                     {q ? "No products match your search." : "No website products yet."}
                   </td>
                 </tr>
