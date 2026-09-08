@@ -1,7 +1,8 @@
 import Link from "next/link";
 import { getOrdersList } from "@/lib/supabase/queries";
-import { FULFILLMENT_STATUSES, STATUS_LABELS } from "@/lib/orderStatus";
+import { FULFILLMENT_STATUSES } from "@/lib/orderStatus";
 import OrderStatusControl from "@/components/OrderStatusControl";
+import OrderStatusFilter from "@/components/OrderStatusFilter";
 import DeleteOrderButton from "@/components/DeleteOrderButton";
 import type { FulfillmentStatus } from "@/types/database";
 
@@ -30,27 +31,7 @@ export default async function OrdersPage({
         </span>
       </header>
 
-      <div className="flex flex-wrap gap-2 px-6 py-4">
-        <Link
-          href="/orders"
-          className={`rounded-full px-3 py-1.5 text-sm font-medium ${
-            !status ? "bg-brand text-black" : "bg-muted text-muted-foreground"
-          }`}
-        >
-          All
-        </Link>
-        {FULFILLMENT_STATUSES.map((s) => (
-          <Link
-            key={s}
-            href={`/orders?status=${s}`}
-            className={`rounded-full px-3 py-1.5 text-sm font-medium ${
-              status === s ? "bg-brand text-black" : "bg-muted text-muted-foreground"
-            }`}
-          >
-            {STATUS_LABELS[s]}
-          </Link>
-        ))}
-      </div>
+      <OrderStatusFilter active={status ?? null} />
 
       <div className="flex-1 overflow-auto px-6 pb-6">
         {orders.length === 0 ? (
