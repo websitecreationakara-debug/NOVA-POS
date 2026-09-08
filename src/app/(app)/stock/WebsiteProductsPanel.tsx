@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, useTransition, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
-import { ChevronLeft, ChevronRight, TriangleAlert } from "lucide-react";
+import { Check, ChevronLeft, ChevronRight, TriangleAlert } from "lucide-react";
 import type { ProductWithStock } from "@/lib/supabase/queries";
 import Dropdown from "@/components/Dropdown";
 import { getCatalog } from "@/lib/websiteProducts/catalogs";
@@ -152,14 +152,16 @@ export default function WebsiteProductsPanel({
   // A brief bottom-right toast confirming a save (price/stock/status/delete) or
   // surfacing an action failure. `loadError` stays reserved for the initial
   // load / background poll failing -- those need to stay on screen.
-  const [toast, setToast] = useState<{ text: string; kind: "ok" | "err" } | null>(null);
+  const [toast, setToast] = useState<{ id: number; text: string; kind: "ok" | "err" } | null>(null);
   useEffect(() => {
     if (!toast) return;
-    const t = setTimeout(() => setToast(null), toast.kind === "err" ? 6000 : 2500);
+    const t = setTimeout(() => setToast(null), toast.kind === "err" ? 6000 : 3000);
     return () => clearTimeout(t);
   }, [toast]);
   const notify = useCallback((text: string, kind: "ok" | "err" = "ok") => {
-    setToast({ text, kind });
+    // id keys the element so a new toast replays the slide-in even while one
+    // is still on screen.
+    setToast({ id: Date.now(), text, kind });
   }, []);
 
   // Set while the delete-confirmation dialog is open; carries which row the
@@ -915,16 +917,29 @@ export default function WebsiteProductsPanel({
       )}
 
       {toast && (
-        <div
-          role="status"
-          aria-live="polite"
-          className={`pointer-events-none fixed bottom-4 right-4 z-50 max-w-xs rounded-lg px-4 py-2.5 text-sm shadow-lg ${
-            toast.kind === "err"
-              ? "bg-red-600 text-white"
-              : "bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900"
-          }`}
-        >
-          {toast.text}
+        <div className="fixed inset-x-0 bottom-4 z-50 flex justify-center px-4 sm:inset-x-auto sm:right-4 sm:justify-end">
+          <div
+            key={toast.id}
+            role="status"
+            aria-live="polite"
+            onClick={() => setToast(null)}
+            className="animate-toast-in flex w-full max-w-sm cursor-pointer items-start gap-3 rounded-xl border border-border bg-card px-4 py-3 shadow-lg shadow-black/[.08] dark:shadow-black/40"
+          >
+            <span
+              className={`mt-px flex size-5 shrink-0 items-center justify-center rounded-full ${
+                toast.kind === "err"
+                  ? "bg-red-100 text-red-600 dark:bg-red-950 dark:text-red-400"
+                  : "bg-success-bg text-success"
+              }`}
+            >
+              {toast.kind === "err" ? (
+                <TriangleAlert className="size-3" />
+              ) : (
+                <Check className="size-3.5" strokeWidth={3} />
+              )}
+            </span>
+            <p className="text-sm leading-snug font-medium text-foreground">{toast.text}</p>
+          </div>
         </div>
       )}
 
