@@ -3,7 +3,6 @@ import { Hanuman } from "next/font/google";
 import { getInvoice, type InvoiceData } from "@/lib/supabase/queries";
 import { invoiceBrandConfig, brandLogoPath, type InvoiceBrandConfig } from "@/lib/invoiceBrands";
 import PrintButton from "@/components/PrintButton";
-import PerSheetControl from "@/components/PerSheetControl";
 import OrderStatusControl from "@/components/OrderStatusControl";
 
 // Khmer + Latin webfont for the printed document so the bilingual labels
@@ -13,9 +12,6 @@ const hanuman = Hanuman({
   weight: ["400", "700"],
   display: "swap",
 });
-
-// How much to shrink each invoice when N copies share one A4 sheet.
-const PER_ZOOM: Record<number, number> = { 1: 1, 2: 0.45, 3: 0.29 };
 
 function formatMoney(n: number) {
   return `$${n.toFixed(2)}`;
@@ -41,19 +37,14 @@ const PAYMENT_LABELS: Record<string, string> = {
 
 export default async function InvoicePage({
   params,
-  searchParams,
 }: {
   params: Promise<{ orderId: string }>;
-  searchParams: Promise<{ per?: string }>;
 }) {
   const { orderId } = await params;
-  const { per: perParam } = await searchParams;
   const invoice = await getInvoice(orderId);
 
   if (!invoice) notFound();
 
-  const per = perParam === "2" ? 2 : perParam === "3" ? 3 : 1;
-  const zoom = PER_ZOOM[per];
   const brand = invoiceBrandConfig(invoice.brandSlug);
   // Prefer the curated file in /public/logos over whatever brands.logo_url
   // happens to hold -- the invoice logos are managed there.
@@ -63,21 +54,12 @@ export default async function InvoicePage({
     <div className={`${hanuman.className} mx-auto w-fit max-w-full p-6 print:p-0`}>
       <div className="mb-4 flex items-center justify-end gap-3 print:hidden">
         <OrderStatusControl orderId={invoice.order.id} status={invoice.order.fulfillment_status} />
-        <PerSheetControl current={per} />
         <PrintButton />
       </div>
 
-      {/* One A4 sheet holding `per` copies of the invoice. */}
+      {/* One invoice per A4 sheet. */}
       <div className="invoice-sheet w-[210mm] max-w-full overflow-hidden rounded-xl border border-zinc-200 bg-white text-black shadow-sm print:w-auto print:max-w-none print:rounded-none print:border-0 print:shadow-none">
-        {Array.from({ length: per }).map((_, i) => (
-          <div
-            key={i}
-            style={{ zoom }}
-            className={i > 0 ? "border-t border-dashed border-zinc-400" : ""}
-          >
-            <InvoiceDoc invoice={invoice} brand={brand} logo={logo} single={per === 1} />
-          </div>
-        ))}
+        <InvoiceDoc invoice={invoice} brand={brand} logo={logo} />
       </div>
     </div>
   );
@@ -87,12 +69,10 @@ function InvoiceDoc({
   invoice,
   brand,
   logo,
-  single,
 }: {
   invoice: InvoiceData;
   brand: InvoiceBrandConfig;
   logo: string | null;
-  single: boolean;
 }) {
   const { order, invoiceNumber, brandName, customerAddress, items } = invoice;
 
@@ -134,12 +114,8 @@ function InvoiceDoc({
     kind: "total",
   });
 
-  // Only the single-per-sheet layout stretches to a full page; when 2-3 share
-  // a sheet each copy is just as tall as its content.
   return (
-    <div
-      className={`flex flex-col p-[12mm] ${single ? "min-h-[285mm] print:min-h-0" : ""}`}
-    >
+    <div className="flex min-h-[285mm] flex-col p-[12mm] print:min-h-0">
       {/* 1. Header -- logo left, contact line bottom-aligned to its right */}
       <header className="flex items-end justify-between gap-4">
         {logo ? (
@@ -258,9 +234,7 @@ function InvoiceDoc({
 
       {/* 6. KHQR -- centered between the Remarks and the closing lines */}
       {brand.khqrUrl && (
-        <div
-          className={`flex flex-col items-center justify-center py-6 ${single ? "flex-1" : "mt-6"}`}
-        >
+        <div className="flex flex-1 flex-col items-center justify-center py-6">
           <span className="rounded bg-red-600 px-2.5 py-0.5 text-[10px] font-bold tracking-wide text-white">
             KHQR
           </span>
@@ -278,9 +252,7 @@ function InvoiceDoc({
 
       {/* 7. Closing lines -- bottom of the page */}
       <div
-        className={`space-y-1.5 text-center text-[13px] ${
-          single && !brand.khqrUrl ? "mt-auto pt-10" : "mt-6"
-        }`}
+        className={`space-y-1.5 text-center text-[13px] ${brand.khqrUrl ? "mt-6" : "mt-auto pt-10"}`}
       >
         {brand.closing.map((line, i) => (
           <p key={i} className={i === 0 ? "font-bold" : ""}>
