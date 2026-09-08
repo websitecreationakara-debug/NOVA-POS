@@ -16,12 +16,14 @@ import type {
   WebsiteProduct,
   WebsiteProductWrite,
 } from "@/lib/websiteProducts/types";
+import { requireStockAccess } from "@/lib/stockAccess";
 import { adjustStockAction, setProductPriceAction } from "./actions";
 
 // Upload an image chosen from the user's computer to the public product-images
 // bucket and hand back its URL, which then goes into a website product's
 // image_url. Same bucket the POS catalog uses (migration 0010).
 export async function uploadWebsiteImageAction(formData: FormData): Promise<{ url: string }> {
+  await requireStockAccess();
   const file = formData.get("file");
   if (!(file instanceof File) || file.size === 0) throw new Error("Choose an image file");
   if (!file.type.startsWith("image/")) throw new Error("File must be an image");
@@ -44,6 +46,7 @@ export async function uploadWebsiteImageAction(formData: FormData): Promise<{ ur
 export async function listWebsiteProductsAction(
   catalogId: WebsiteCatalogId
 ): Promise<WebsiteProduct[]> {
+  await requireStockAccess();
   return listWebsiteProducts(catalogId);
 }
 
@@ -51,6 +54,7 @@ export async function createWebsiteProductAction(
   catalogId: WebsiteCatalogId,
   input: WebsiteProductWrite
 ): Promise<{ id: string }> {
+  await requireStockAccess();
   const result = await createWebsiteProduct(catalogId, input);
   revalidatePath("/stock");
   return result;
@@ -61,6 +65,7 @@ export async function updateWebsiteProductAction(
   id: string,
   input: Partial<WebsiteProductWrite>
 ): Promise<void> {
+  await requireStockAccess();
   await updateWebsiteProduct(catalogId, id, input);
   revalidatePath("/stock");
 }
@@ -86,6 +91,7 @@ export async function setVariationPriceAction(input: {
   seedStock: number | null;
   price: number;
 }): Promise<void> {
+  await requireStockAccess();
   await updateWebsiteProductVariation(input.catalogId, input.siteProductId, input.variationId, {
     price: input.price,
   });
@@ -121,6 +127,7 @@ export async function setVariationStockAction(input: {
   currentStock: number;
   stock: number;
 }): Promise<void> {
+  await requireStockAccess();
   await updateWebsiteProductVariation(input.catalogId, input.siteProductId, input.variationId, {
     stock: input.stock,
   });
@@ -149,6 +156,7 @@ export async function deleteWebsiteProductAction(
   catalogId: WebsiteCatalogId,
   id: string
 ): Promise<void> {
+  await requireStockAccess();
   await deleteWebsiteProduct(catalogId, id);
   revalidatePath("/stock");
 }
@@ -161,6 +169,7 @@ export async function deleteWebsiteProductVariationAction(
   productId: string,
   variationId: string
 ): Promise<void> {
+  await requireStockAccess();
   await deleteWebsiteProductVariation(catalogId, productId, variationId);
   revalidatePath("/stock");
 }

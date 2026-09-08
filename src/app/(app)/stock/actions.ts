@@ -2,8 +2,8 @@
 
 import { revalidatePath } from "next/cache";
 import { supabaseAdmin } from "@/lib/supabase/server";
-import { getSessionUser } from "@/lib/supabase/auth-server";
 import { pushStockToSites, searchSiteProducts, linkProductToSite, type SiteProductCandidate } from "@/lib/site-sync";
+import { requireStockAccess } from "@/lib/stockAccess";
 import type { ProductSiteLink } from "@/types/database";
 
 export async function adjustStockAction(input: {
@@ -12,7 +12,7 @@ export async function adjustStockAction(input: {
   reason?: string;
 }): Promise<{ quantity: number }> {
   const { productId, delta, reason } = input;
-  const user = await getSessionUser();
+  const user = await requireStockAccess();
 
   const { data, error } = await supabaseAdmin.rpc("adjust_stock", {
     p_product_id: productId,
@@ -32,6 +32,7 @@ export async function adjustStockAction(input: {
 }
 
 export async function uploadProductImageAction(formData: FormData): Promise<{ imageUrl: string }> {
+  await requireStockAccess();
   const productId = formData.get("productId");
   const file = formData.get("file");
 
@@ -72,6 +73,7 @@ export async function uploadProductImageAction(formData: FormData): Promise<{ im
 }
 
 export async function removeProductImageAction(input: { productId: string }): Promise<void> {
+  await requireStockAccess();
   const { productId } = input;
 
   const { data: product, error: fetchError } = await supabaseAdmin
@@ -101,6 +103,7 @@ export async function setLowStockThresholdAction(input: {
   productId: string;
   threshold: number;
 }): Promise<void> {
+  await requireStockAccess();
   const { productId, threshold } = input;
   if (threshold < 0) {
     throw new Error("Threshold cannot be negative");
@@ -121,6 +124,7 @@ export async function setProductPriceAction(input: {
   productId: string;
   price: number;
 }): Promise<void> {
+  await requireStockAccess();
   const { productId, price } = input;
   if (Number.isNaN(price) || price < 0) {
     throw new Error("Price cannot be negative");
@@ -144,6 +148,7 @@ export async function searchSiteProductForLinkAction(input: {
   site: string;
   query: string;
 }): Promise<SiteProductCandidate[]> {
+  await requireStockAccess();
   const { site, query } = input;
   if (!VALID_SITES.includes(site as ProductSiteLink["site"])) return [];
   return searchSiteProducts(site as ProductSiteLink["site"], query);
@@ -156,6 +161,7 @@ export async function linkProductToSiteAction(input: {
   matchedName: string;
   siteStock: number | null;
 }): Promise<void> {
+  await requireStockAccess();
   const { productId, site, siteProductId, matchedName, siteStock } = input;
   if (!VALID_SITES.includes(site as ProductSiteLink["site"])) {
     throw new Error("Invalid site");
@@ -177,6 +183,7 @@ export async function linkProductToSiteAction(input: {
 // it -- a real DELETE would either fail on those foreign keys or silently
 // erase order history.
 export async function deactivateProductAction(input: { productId: string }): Promise<void> {
+  await requireStockAccess();
   const { error } = await supabaseAdmin
     .from("products")
     .update({ is_active: false })
@@ -192,6 +199,7 @@ export async function setProductCategoryAction(input: {
   productId: string;
   categoryId: string | null;
 }): Promise<void> {
+  await requireStockAccess();
   const { productId, categoryId } = input;
 
   const { error } = await supabaseAdmin
@@ -209,6 +217,7 @@ export async function createCategoryAction(input: {
   brandId: string;
   name: string;
 }): Promise<{ id: string }> {
+  await requireStockAccess();
   const { brandId, name } = input;
   const trimmed = name.trim();
   if (!trimmed) {
@@ -245,6 +254,7 @@ export async function createCategoryAction(input: {
 // products_category_id_fkey FK is ON DELETE SET NULL) rather than being
 // deleted themselves or blocking the delete.
 export async function deleteCategoryAction(input: { categoryId: string }): Promise<void> {
+  await requireStockAccess();
   const { error } = await supabaseAdmin.from("categories").delete().eq("id", input.categoryId);
 
   if (error) throw error;
@@ -254,6 +264,7 @@ export async function deleteCategoryAction(input: { categoryId: string }): Promi
 }
 
 export async function renameProductAction(input: { productId: string; name: string }): Promise<void> {
+  await requireStockAccess();
   const { productId, name } = input;
   const trimmed = name.trim();
   if (!trimmed) {
@@ -279,6 +290,7 @@ export async function createProductAction(input: {
   price: number;
   unit: string;
 }): Promise<{ id: string }> {
+  await requireStockAccess();
   const { brandId, categoryId, name, sku, price, unit } = input;
   const trimmedName = name.trim();
   if (!trimmedName) {
