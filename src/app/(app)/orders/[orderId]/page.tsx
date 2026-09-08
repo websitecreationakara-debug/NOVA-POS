@@ -18,7 +18,7 @@ export default async function OrderDetailPage({
 
   if (!invoice) notFound();
 
-  const { order, brandName, customerAddress, items } = invoice;
+  const { order, invoiceNumber, brandName, customerAddress, items } = invoice;
 
   return (
     <main className="mx-auto max-w-3xl p-6">
@@ -38,7 +38,7 @@ export default async function OrderDetailPage({
         <div className="flex items-start justify-between gap-4 border-b border-border pb-4">
           <div>
             <h1 className="text-xl font-semibold">
-              {order.invoice_number ?? `#${order.id.slice(0, 8)}`}
+              {invoiceNumber}
             </h1>
             <p className="mt-1 text-sm text-muted-foreground">
               {order.paid_at ? new Date(order.paid_at).toLocaleString() : "—"}

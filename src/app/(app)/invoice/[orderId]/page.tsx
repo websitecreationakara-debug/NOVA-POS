@@ -45,7 +45,8 @@ export default async function InvoicePage({
 
   if (!invoice) notFound();
 
-  const { order, brandName, brandSlug, brandLogoUrl, customerAddress, items } = invoice;
+  const { order, invoiceNumber, brandName, brandSlug, brandLogoUrl, customerAddress, items } =
+    invoice;
   const brand = invoiceBrandConfig(brandSlug);
   const logo = brandLogoUrl ?? brandLogoPath(brandSlug);
 
@@ -124,7 +125,7 @@ export default async function InvoicePage({
           <Meta
             kh="លេខវិក្កយបត្រ"
             en="Invoice Number"
-            value={order.invoice_number ?? `#${order.id.slice(0, 8)}`}
+            value={invoiceNumber}
           />
           <Meta kh="លេខទូរស័ព្ទ" en="Phone Number" value={order.customer_phone || "—"} />
           <Meta kh="ថ្ងៃបញ្ជាទិញ" en="Order Date" value={formatDateTime(order.paid_at)} />

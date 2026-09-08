@@ -1,6 +1,7 @@
 import { supabaseAdmin } from "@/lib/supabase/server";
 import { configuredCatalogs } from "@/lib/websiteProducts/catalogs";
 import { listWebsiteProducts } from "@/lib/websiteProducts/client";
+import { formatInvoiceNumber, invoiceDateStamp, invoiceDayStartIso } from "@/lib/invoiceNumber";
 import type {
   Brand,
   CashReconciliation,
@@ -336,7 +337,7 @@ export type OrderListRow = {
 export async function getOrdersList(status?: FulfillmentStatus): Promise<OrderListRow[]> {
   let query = supabaseAdmin
     .from("orders")
-    .select("id, invoice_number, customer_name, customer_phone, total, fulfillment_status, paid_at, brands(name)")
+    .select("id, customer_name, customer_phone, total, fulfillment_status, paid_at, brands(name)")
     .eq("status", "paid")
     .order("paid_at", { ascending: false })
     .limit(200);
@@ -350,7 +351,6 @@ export async function getOrdersList(status?: FulfillmentStatus): Promise<OrderLi
 
   type Row = {
     id: string;
-    invoice_number: string | null;
     customer_name: string | null;
     customer_phone: string | null;
     total: number;
@@ -359,9 +359,9 @@ export async function getOrdersList(status?: FulfillmentStatus): Promise<OrderLi
     brands: { name: string } | null;
   };
 
-  return ((data ?? []) as Row[]).map((o) => ({
+  const rows: OrderListRow[] = ((data ?? []) as Row[]).map((o) => ({
     id: o.id,
-    invoiceNumber: o.invoice_number,
+    invoiceNumber: null,
     brandName: o.brands?.name ?? "—",
     customerName: o.customer_name,
     customerPhone: o.customer_phone,
@@ -369,10 +369,46 @@ export async function getOrdersList(status?: FulfillmentStatus): Promise<OrderLi
     fulfillmentStatus: o.fulfillment_status,
     paidAt: o.paid_at,
   }));
+
+  // Date-based invoice numbers (YYYYMMDD[-N]). Group by Phnom Penh day,
+  // number oldest-first. Every day in this window is fully present except
+  // possibly the oldest one -- if the 200-row cap truncated it, one count
+  // query recovers how many earlier same-day orders were left out.
+  const byDay = new Map<string, OrderListRow[]>();
+  for (const r of rows) {
+    if (!r.paidAt) continue;
+    const key = invoiceDateStamp(r.paidAt);
+    const group = byDay.get(key);
+    if (group) group.push(r);
+    else byDay.set(key, [r]);
+  }
+  const oldestKey = [...byDay.keys()].at(-1);
+  for (const [key, group] of byDay) {
+    group.sort((a, b) => (a.paidAt! < b.paidAt! ? -1 : 1));
+    let base = 0;
+    if (key === oldestKey && rows.length >= 200) {
+      const { count } = await supabaseAdmin
+        .from("orders")
+        .select("id", { count: "exact", head: true })
+        .eq("status", "paid")
+        .gte("paid_at", invoiceDayStartIso(group[0].paidAt!))
+        .lt("paid_at", group[0].paidAt!);
+      base = count ?? 0;
+    }
+    group.forEach((r, i) => {
+      r.invoiceNumber = formatInvoiceNumber(r.paidAt, base + i + 1);
+    });
+  }
+
+  return rows;
 }
 
 export type InvoiceData = {
   order: Order;
+  // Date-based number (YYYYMMDD[-N]) computed from paid_at -- see
+  // src/lib/invoiceNumber.ts. Falls back to a short order-id tag if the order
+  // has no paid_at yet.
+  invoiceNumber: string;
   brandName: string;
   brandSlug: string | null;
   brandLogoUrl: string | null;
@@ -408,8 +444,22 @@ export async function getInvoice(orderId: string): Promise<InvoiceData | null> {
     customers: { address: string | null } | null;
   };
 
+  // Date-based invoice number: its position among that Phnom Penh day's paid
+  // orders decides the -N suffix (1st of the day = bare YYYYMMDD).
+  let invoiceNumber = `#${orderFields.id.slice(0, 8)}`;
+  if (orderFields.paid_at) {
+    const { count } = await supabaseAdmin
+      .from("orders")
+      .select("id", { count: "exact", head: true })
+      .eq("status", "paid")
+      .gte("paid_at", invoiceDayStartIso(orderFields.paid_at))
+      .lt("paid_at", orderFields.paid_at);
+    invoiceNumber = formatInvoiceNumber(orderFields.paid_at, (count ?? 0) + 1)!;
+  }
+
   return {
     order: orderFields,
+    invoiceNumber,
     brandName: brands?.name ?? "—",
     brandSlug: brands?.slug ?? null,
     brandLogoUrl: brands?.logo_url ?? null,
