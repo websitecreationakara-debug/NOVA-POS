@@ -2,7 +2,7 @@
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import type { StaffRole } from "@/types/database";
+import { staffRoleLabel, type StaffRole } from "@/types/database";
 import { createStaffAccountAction, deleteStaffAccountAction } from "./actions";
 
 const ROLES: StaffRole[] = ["admin", "sales", "stock", "accountance", "marketing"];
@@ -128,11 +128,11 @@ export default function UsersClient({
             <select
               value={role}
               onChange={(e) => setRole(e.target.value as StaffRole)}
-              className="rounded-lg border border-border bg-card px-3 py-2 text-sm text-foreground capitalize outline-none focus:border-brand"
+              className="rounded-lg border border-border bg-card px-3 py-2 text-sm text-foreground outline-none focus:border-brand"
             >
               {ROLES.map((r) => (
                 <option key={r} value={r}>
-                  {r}
+                  {staffRoleLabel(r)}
                 </option>
               ))}
             </select>
@@ -191,7 +191,7 @@ export default function UsersClient({
               <tr key={s.id} className="border-t border-border">
                 <td className="px-6 py-3">{s.fullName}</td>
                 <td className="px-3 py-3 text-muted-foreground">{s.email ?? "—"}</td>
-                <td className="px-3 py-3 capitalize">{s.role}</td>
+                <td className="px-3 py-3">{staffRoleLabel(s.role)}</td>
                 <td className="px-3 py-3 text-right text-muted-foreground">
                   {new Date(s.createdAt).toLocaleDateString()}
                 </td>

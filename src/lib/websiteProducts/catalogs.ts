@@ -78,17 +78,30 @@ export const CATALOGS: WebsiteCatalog[] = [
     auth: "x-api-key",
     // status=all + drafts require the write key; limit is capped at 500.
     listAllParam: "status=all&limit=500",
+    // Reconstructed from the live catalog: each id is a category actually in
+    // use on a product, named from that group's contents (the storefront still
+    // has no endpoint that returns category names). "Frozen Seafoods" and
+    // "Premium Fish" are best guesses for one-off groups; the rest are certain.
+    // Empty storefront categories (Sashimi Platters, Clam, Meat & Poultry, ...)
+    // aren't listed because there's no product to read their id from.
     categories: [
-      { id: "2bfa6d66-0314-4b31-b106-927f22562edd", label: "Shellfish" },
-      { id: "12688a96-7835-4478-ab2d-413f1b242f3f", label: "Squid & Octopus" },
-      { id: "27aac9d4-0ca6-44f3-a859-3a7cef39379d", label: "Fish" },
-      { id: "ef53f57b-f062-4a97-89f9-56cd97ae060d", label: "Bluefin Tuna" },
-      { id: "ca66bc98-89b8-4f44-af9e-81c90d3cabfb", label: "Roe" },
-      { id: "567a5e28-c64d-443d-a447-548f007188be", label: "Seaweed" },
-      { id: "a703cec2-3643-49e3-8e83-b0775bd9cc89", label: "Sashimi Sets" },
-      { id: "3e002f3d-aeed-4131-b535-a50385d66acc", label: "Wagyu" },
-      { id: "6e283908-db0f-4d15-aed3-bea95f778223", label: "Rice & Noodles" },
-      { id: "747166db-f03c-4e45-b9c1-bb26fbfb458f", label: "Pantry" },
+      { id: "7104b338-dce2-4321-86ef-14a51f2c7eb6", label: "Sea Urchin Uni Set" },
+      { id: "fa63a04e-ae55-4143-a92f-b5019a5bc48f", label: "Yellowtail Hamachi Set" },
+      { id: "e8bdc51d-2414-412f-bdf6-97edd3dae098", label: "Fresh Salmon Set" },
+      { id: "ac9fd32d-b2c6-4975-a38f-9031c206e661", label: "Bluefin Tuna Set" },
+      { id: "d890551c-2bb6-4248-b412-b68f291926e4", label: "Premium Set 3in1" },
+      { id: "6bbef514-6401-4cfb-aed0-24f362faf909", label: "Herring Fish Roe Nishin Set" },
+      { id: "1ef789ee-a526-47e2-ac12-ddfa44fe2f26", label: "Fresh Smart Oyster Set" },
+      { id: "32f16aec-f498-4172-bbc8-8ad6242c0350", label: "Frozen Seafoods" },
+      { id: "12f5604f-cadd-47f9-a823-0a98f198c44c", label: "Premium Fish" },
+      { id: "17e8d552-6523-4c3f-aa41-a91981987c16", label: "Oyster" },
+      { id: "ad921dfe-9dd8-43a6-a0df-5d184e654e6e", label: "Shrimp" },
+      { id: "8e175885-be70-43b0-8cb0-eca5ac6c753c", label: "Octopus" },
+      { id: "4a3db7da-ecbd-44f6-841b-6afefb333bea", label: "Crab" },
+      { id: "6a8245a4-7e2f-49e8-946a-61ab14748fa4", label: "Roe" },
+      { id: "5ece57b0-2437-4f8c-997b-75e856c09a7f", label: "Fish" },
+      { id: "b5c76baa-5747-481e-b2a9-1d67a3ef9c6a", label: "Japanese Wagyu" },
+      { id: "d0d2f10b-cdf1-455c-8572-dcee309ce332", label: "Crossbred Wagyu" },
     ],
   },
 ];
