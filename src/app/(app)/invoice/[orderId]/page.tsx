@@ -81,7 +81,7 @@ export default async function InvoicePage({
   summary.push({
     kh: "ដឹកជញ្ជូន និងវេចខ្ចប់",
     en: "Delivery",
-    value: formatMoney(order.delivery_fee),
+    value: order.delivery_fee > 0 ? formatMoney(order.delivery_fee) : "",
   });
   summary.push({
     kh: "ថ្លៃសរុប",
@@ -171,11 +171,14 @@ export default async function InvoicePage({
             {summary.map((row, i) => (
               <tr key={row.en}>
                 {i === 0 && (
-                  <td rowSpan={summary.length} className="border border-black align-top">
-                    <dl className="flex flex-col gap-1 p-2 text-[11px]">
+                  <td
+                    rowSpan={summary.length}
+                    className="border border-black align-top p-2 text-[11px]"
+                  >
+                    <dl className="flex flex-col gap-1">
                       {subDetails.map((d) => (
-                        <div key={d.en} className="flex gap-1.5">
-                          <dt className="shrink-0 font-bold">
+                        <div key={d.en} className="flex flex-wrap gap-x-1.5">
+                          <dt className="font-bold">
                             {d.kh} / {d.en}:
                           </dt>
                           <dd>{d.value}</dd>
@@ -185,11 +188,12 @@ export default async function InvoicePage({
                   </td>
                 )}
                 <td
-                  className={`border border-black px-2 py-1 ${
-                    row.kind === "total" ? "font-bold" : ""
+                  colSpan={3}
+                  className={`border border-black px-2 py-1 whitespace-nowrap ${
+                    row.kind === "total" ? "text-sm font-bold" : ""
                   } ${row.kind === "subtotal" ? "bg-green-50 font-semibold text-green-700" : ""}`}
                 >
-                  {row.kh} <span className="text-[10px]">/ {row.en}</span>
+                  {row.kh} <span className="text-[10px] font-normal">/ {row.en}</span>
                 </td>
                 <td
                   className={`border border-black px-2 py-1 text-right tabular-nums ${
