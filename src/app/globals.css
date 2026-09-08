@@ -124,5 +124,13 @@ input[type="number"]::-webkit-inner-spin-button {
     width: auto;
     min-height: 0;
     max-width: none;
+    /* keep each copy whole and start every copy after the first on a new
+       page -- the print job is then N A4 pages (duplicate voucher). */
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+  .invoice-sheet + .invoice-sheet {
+    break-before: page;
+    page-break-before: always;
   }
 }

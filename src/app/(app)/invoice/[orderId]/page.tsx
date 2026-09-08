@@ -57,14 +57,20 @@ export default async function InvoicePage({
         <PrintButton />
       </div>
 
-      {/* Two identical copies -- a "duplicate voucher" (customer + shop). Each
-          is a full page, so the print job is 2 pages and Chrome's
+      {/* Two identical copies -- a "duplicate voucher" (customer + shop), each
+          its own page. The print job is 2 A4 pages, so Chrome's
           "Pages per sheet: 2" tiles both onto one sheet. */}
-      <div className="invoice-sheet w-[210mm] max-w-full overflow-hidden rounded-xl border border-zinc-200 bg-white text-black shadow-sm print:w-auto print:max-w-none print:overflow-visible print:rounded-none print:border-0 print:shadow-none">
-        <InvoiceDoc invoice={invoice} brand={brand} logo={logo} />
-        <div className="break-before-page border-t-4 border-dashed border-zinc-300 print:border-0">
-          <InvoiceDoc invoice={invoice} brand={brand} logo={logo} />
-        </div>
+      <div className="space-y-8 print:space-y-0">
+        {[0, 1].map((n) => (
+          <div
+            key={n}
+            className={`invoice-sheet w-[210mm] max-w-full overflow-hidden rounded-xl border border-zinc-200 bg-white text-black shadow-sm print:w-auto print:max-w-none print:overflow-visible print:rounded-none print:border-0 print:shadow-none ${
+              n === 1 ? "break-before-page" : ""
+            }`}
+          >
+            <InvoiceDoc invoice={invoice} brand={brand} logo={logo} />
+          </div>
+        ))}
       </div>
     </div>
   );
