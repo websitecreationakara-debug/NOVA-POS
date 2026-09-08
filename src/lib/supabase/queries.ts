@@ -374,6 +374,7 @@ export async function getOrdersList(status?: FulfillmentStatus): Promise<OrderLi
 export type InvoiceData = {
   order: Order;
   brandName: string;
+  brandSlug: string | null;
   brandLogoUrl: string | null;
   customerAddress: string | null;
   items: { name: string; unit: string; quantity: number; unitPrice: number; lineTotal: number }[];
@@ -382,7 +383,7 @@ export type InvoiceData = {
 export async function getInvoice(orderId: string): Promise<InvoiceData | null> {
   const { data: order, error: orderError } = await supabaseAdmin
     .from("orders")
-    .select("*, brands(name, logo_url), customers(address)")
+    .select("*, brands(name, slug, logo_url), customers(address)")
     .eq("id", orderId)
     .maybeSingle();
 
@@ -403,13 +404,14 @@ export async function getInvoice(orderId: string): Promise<InvoiceData | null> {
     products: { name: string; unit: string } | null;
   };
   const { brands, customers, ...orderFields } = order as Order & {
-    brands: { name: string; logo_url: string | null } | null;
+    brands: { name: string; slug: string; logo_url: string | null } | null;
     customers: { address: string | null } | null;
   };
 
   return {
     order: orderFields,
     brandName: brands?.name ?? "—",
+    brandSlug: brands?.slug ?? null,
     brandLogoUrl: brands?.logo_url ?? null,
     customerAddress: customers?.address ?? null,
     items: ((items ?? []) as ItemRow[]).map((i) => ({
