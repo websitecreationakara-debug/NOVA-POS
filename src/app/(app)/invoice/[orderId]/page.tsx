@@ -120,15 +120,11 @@ export default async function InvoicePage({
 
         {/* 2. Customer & metadata grid */}
         <div className="mt-4 grid grid-cols-2 gap-x-10 gap-y-1.5 text-[12px]">
-          <Meta kh="ឈ្មោះ" en="Name" value={order.customer_name || "—"} />
-          <Meta
-            kh="លេខវិក្កយបត្រ"
-            en="Invoice Number"
-            value={invoiceNumber}
-          />
-          <Meta kh="លេខទូរស័ព្ទ" en="Phone Number" value={order.customer_phone || "—"} />
-          <Meta kh="ថ្ងៃបញ្ជាទិញ" en="Order Date" value={formatDateTime(order.paid_at)} />
-          <Meta kh="អាសយដ្ឋាន" en="Address" value={customerAddress || "—"} />
+          <Meta kh="ឈ្មោះ" value={order.customer_name || "—"} />
+          <Meta kh="លេខវិក្កយបត្រ" value={invoiceNumber} />
+          <Meta kh="លេខទូរស័ព្ទ" value={order.customer_phone || "—"} />
+          <Meta kh="ថ្ងៃបញ្ជាទិញ" value={formatDateTime(order.paid_at)} />
+          <Meta kh="អាសយដ្ឋាន" value={customerAddress || "—"} />
         </div>
 
         {/* 3 + 4. Items table with sub-details / summary footer */}
@@ -249,12 +245,10 @@ export default async function InvoicePage({
   );
 }
 
-function Meta({ kh, en, value }: { kh: string; en: string; value: string }) {
+function Meta({ kh, value }: { kh: string; value: string }) {
   return (
     <div className="flex gap-1.5">
-      <span className="shrink-0">
-        {kh} / {en}:
-      </span>
+      <span className="shrink-0">{kh}:</span>
       <span className="font-bold">{value}</span>
     </div>
   );
