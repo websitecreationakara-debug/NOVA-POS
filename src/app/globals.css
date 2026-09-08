@@ -6,6 +6,11 @@
 @custom-variant dark (&:where(.dark, .dark *));
 
 :root {
+  /* Tell the browser which way the page leans so native controls -- the
+     <select> dropdown popup especially, plus scrollbars and form widgets --
+     paint themselves to match instead of defaulting to the OS light theme
+     (which left dark-mode dropdowns as near-invisible grey-on-white). */
+  color-scheme: light;
   --background: #fafafa;
   --foreground: #171717;
   --card: #ffffff;
@@ -48,6 +53,7 @@
 }
 
 :root.dark {
+  color-scheme: dark;
   --background: #0a0a0a;
   --foreground: #ededed;
   --card: #0d0d0d;

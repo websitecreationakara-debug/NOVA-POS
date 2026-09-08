@@ -3,6 +3,7 @@
 import { LogOut } from "lucide-react";
 import { logoutAction } from "@/app/login/actions";
 import ThemeToggle from "@/components/ThemeToggle";
+import { staffRoleLabel } from "@/types/database";
 
 export default function TopBar({ fullName, role }: { fullName: string; role: string }) {
   return (
@@ -11,7 +12,7 @@ export default function TopBar({ fullName, role }: { fullName: string; role: str
         <ThemeToggle />
         <div className="text-right">
           <div className="text-sm font-medium">{fullName}</div>
-          <div className="text-xs text-muted-foreground capitalize">{role}</div>
+          <div className="text-xs text-muted-foreground">{staffRoleLabel(role)}</div>
         </div>
         <form action={logoutAction}>
           <button

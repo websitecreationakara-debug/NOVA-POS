@@ -323,14 +323,38 @@ export default function SalesWebsiteGrid({
             const remaining = stock == null ? null : stock - inCart;
             const isOut = remaining != null && remaining <= 0;
             const pending = pendingEntryKey === key;
+            // A "variable" product shows up as several near-identical cards
+            // (same photo, same name) -- one per option. `optionLabel` is the
+            // one pill always shown under the name so no card looks
+            // half-finished: the weight if there is one, else the flavour, else
+            // just its position in the set. `photoBadge` is a bonus second cue
+            // used only when a variation carries BOTH a weight and a flavour --
+            // it takes the flavour so the two never show the same text twice.
+            const isVariation = v != null;
+            const siblingIndex = isVariation
+              ? p.variations?.findIndex((x) => x.id === v.id) ?? -1
+              : -1;
+            const weightLabel = v?.weight?.trim() || null;
+            const flavorLabel = v?.flavor?.trim() || null;
+            const optionLabel = isVariation
+              ? weightLabel ??
+                flavorLabel ??
+                (siblingIndex >= 0 ? `Option ${siblingIndex + 1}` : null)
+              : null;
+            const photoBadge =
+              isVariation && weightLabel && flavorLabel ? flavorLabel : null;
             return (
               <button
                 key={key}
                 onClick={() => onSelect(p, v)}
                 disabled={pending}
-                className="flex flex-col items-start rounded-lg border border-black/[.08] p-4 text-left transition-colors hover:bg-black/[.03] disabled:opacity-50 dark:border-white/[.145] dark:hover:bg-white/[.05]"
+                className={`flex flex-col items-start rounded-xl border p-3 text-left transition-colors hover:bg-black/[.03] disabled:opacity-50 dark:hover:bg-white/[.05] ${
+                  isVariation
+                    ? "border-amber-400/60 bg-amber-50/50 dark:border-amber-400/25 dark:bg-amber-400/[.05]"
+                    : "border-black/[.08] dark:border-white/[.145]"
+                }`}
               >
-                <div className="mb-2 aspect-square w-full overflow-hidden rounded bg-zinc-100 dark:bg-zinc-800">
+                <div className="relative mb-2.5 aspect-square w-full overflow-hidden rounded-lg bg-zinc-100 dark:bg-zinc-800">
                   {imageUrl ? (
                     // eslint-disable-next-line @next/next/no-img-element
                     <img src={imageUrl} alt="" className="h-full w-full object-cover" />
@@ -339,23 +363,31 @@ export default function SalesWebsiteGrid({
                       No image
                     </div>
                   )}
+                  {photoBadge && (
+                    <span className="absolute left-2 top-2 rounded-full bg-amber-500 px-2 py-0.5 text-xs font-bold text-white shadow-sm">
+                      {photoBadge}
+                    </span>
+                  )}
                 </div>
-                {/* Plain fixed-height + overflow-hidden, not line-clamp: for a
-                    title long enough to need a real 3rd line, -webkit-line-
-                    clamp's ellipsis machinery was painting that clipped 3rd
-                    line's text past the box anyway, overlapping the line
-                    below instead of hiding it. leading-6 pins the line-height
-                    so h-12 (2x24px) reliably holds exactly 2 lines, and plain
-                    overflow-hidden clips anything past that the ordinary way
-                    (no ellipsis, but no bleed either). The size (if any) gets
-                    its own line rather than being appended to the title -- a
-                    long product name plus "(24 blts)" could run to 3 lines. */}
+                {/* Fixed 2-line title box (h-12 + leading-6), plain
+                    overflow-hidden rather than line-clamp -- see git history:
+                    line-clamp ellipsis was bleeding a clipped 3rd line past
+                    the box. A variation size sits on its own line below the
+                    name, never folded into the title. */}
                 <div className="h-12 overflow-hidden font-medium leading-6">{p.title}</div>
-                <div className="mt-1 truncate text-xs text-zinc-400">{v?.weight || " "}</div>
-                <div className="mt-1 text-sm text-zinc-500">
+                <div className="mt-1 flex min-h-6 items-center">
+                  {optionLabel && (
+                    <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-xs font-semibold text-amber-700 dark:text-amber-300">
+                      {optionLabel}
+                    </span>
+                  )}
+                </div>
+                <div className="text-sm font-semibold text-foreground">
                   {onSale ? (
                     <>
-                      <span className="line-through">{formatMoney(price)}</span>{" "}
+                      <span className="font-normal text-zinc-400 line-through">
+                        {formatMoney(price)}
+                      </span>{" "}
                       <span className="text-green-600 dark:text-green-500">
                         {formatMoney(salePrice as number)}
                       </span>
@@ -377,7 +409,7 @@ export default function SalesWebsiteGrid({
                   ) : p.status !== "published" ? (
                     "Draft"
                   ) : (
-                    " "
+                    " "
                   )}
                 </div>
               </button>
@@ -385,11 +417,11 @@ export default function SalesWebsiteGrid({
           })}
           {/* Keep a short last page the same height as a full one. */}
           {Array.from({ length: Math.max(0, PAGE_SIZE - paged.length) }).map((_, i) => (
-            <div key={`ph-${i}`} aria-hidden className="invisible rounded-lg border p-4">
-              <div className="mb-2 aspect-square w-full" />
+            <div key={`ph-${i}`} aria-hidden className="invisible rounded-xl border p-3">
+              <div className="mb-2.5 aspect-square w-full" />
               <div className="h-12" />
-              <div className="mt-1 h-4" />
-              <div className="mt-1 h-5" />
+              <div className="mt-1 h-6" />
+              <div className="h-5" />
               <div className="mt-1 h-4" />
               <div className="mt-1 h-4" />
             </div>

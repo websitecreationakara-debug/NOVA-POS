@@ -1,6 +1,21 @@
 export type Json = string | number | boolean | null | { [key: string]: Json | undefined } | Json[];
 
 export type StaffRole = "admin" | "sales" | "stock" | "accountance" | "marketing";
+
+// Job-title labels shown in the UI. The stored role values above are unchanged
+// (access checks, middleware, and existing accounts all key off them) -- this
+// is display only.
+export const STAFF_ROLE_LABELS: Record<StaffRole, string> = {
+  admin: "Administration",
+  sales: "Sale Customer Support",
+  stock: "Stock Operation",
+  accountance: "Cooperate Admin",
+  marketing: "Marketing Promotion",
+};
+
+export function staffRoleLabel(role: string): string {
+  return (STAFF_ROLE_LABELS as Record<string, string>)[role] ?? role;
+}
 export type PaymentMethod = "cash" | "bank_qr";
 export type OrderStatus = "open" | "paid" | "voided";
 export type FulfillmentStatus = "new_order" | "processing" | "delivered" | "cancelled" | "complete";
