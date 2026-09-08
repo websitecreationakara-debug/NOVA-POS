@@ -41,7 +41,7 @@ const FALLBACK: InvoiceBrandConfig = {
 // simply skips the QR block while it's null.
 export const INVOICE_BRANDS: Record<string, InvoiceBrandConfig> = {
   "bosba-premium-foods": {
-    contactLine: "ផ្ទះ388 ទួលស្វាយព្រៃ ភ្នំពេញ ☏ 099 361 350",
+    contactLine: "ផ្លូវ388 ទួលស្វាយព្រៃ ភ្នំពេញ: 099 361 350",
     khqrUrl: null, // e.g. "/khqr/bosba-premium-foods.png"
     khqrLabel: "NOVA",
     remarks: DEFAULT_REMARKS,
@@ -49,7 +49,7 @@ export const INVOICE_BRANDS: Record<string, InvoiceBrandConfig> = {
   },
   "bosba-drink-snack": {
     // TODO: confirm the shop address/phone for BOSBA Drink & Snack.
-    contactLine: "ផ្ទះ388 ទួលស្វាយព្រៃ ភ្នំពេញ ☏ 099 361 350",
+    contactLine: "ផ្លូវ388 ទួលស្វាយព្រៃ ភ្នំពេញ: 099 361 350",
     khqrUrl: null, // e.g. "/khqr/bosba-drink-snack.png"
     khqrLabel: "NOVA",
     remarks: DEFAULT_REMARKS,
