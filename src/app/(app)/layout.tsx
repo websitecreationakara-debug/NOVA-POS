@@ -11,11 +11,16 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   const user = await getSessionUser();
 
   return (
-    <div className="flex h-full">
+    // print:* unwinds the app shell when printing -- a scroll container
+    // (overflow-y-auto) makes Chrome drop the forced page break between the
+    // two invoice copies, collapsing the PDF to a single page.
+    <div className="flex h-full print:block print:h-auto">
       <Sidebar role={user?.role ?? ""} />
-      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col print:block print:min-h-0">
         <TopBar fullName={user?.fullName ?? ""} role={user?.role ?? ""} />
-        <div className="min-h-0 flex-1 overflow-y-auto">{children}</div>
+        <div className="min-h-0 flex-1 overflow-y-auto print:overflow-visible print:flex-none">
+          {children}
+        </div>
       </div>
     </div>
   );

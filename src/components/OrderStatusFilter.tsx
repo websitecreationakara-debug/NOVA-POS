@@ -43,10 +43,10 @@ export default function OrderStatusFilter({ active }: { active: FulfillmentStatu
             type="button"
             onClick={() => go(c.value)}
             aria-pressed={isActive}
-            className={`rounded-full px-3 py-1.5 text-sm font-medium transition-[background-color,color,transform] duration-150 active:scale-95 ${
+            className={`rounded-full border px-3 py-1.5 text-sm font-medium transition-[background-color,color,border-color,transform] duration-150 active:scale-95 ${
               isActive
-                ? "bg-brand text-black"
-                : "bg-muted text-muted-foreground hover:bg-black/[.06] hover:text-foreground dark:hover:bg-white/[.08]"
+                ? "border-brand bg-brand text-black"
+                : "border-border bg-muted text-muted-foreground hover:border-foreground/30 hover:bg-black/[.06] hover:text-foreground dark:hover:bg-white/[.08]"
             } ${isPending ? "cursor-progress" : ""}`}
           >
             {c.label}

@@ -103,6 +103,7 @@ export default function PeriodBarChart({
   metric: Metric;
 }) {
   const { barColor, allowDecimalTicks, formatValue, formatTick } = METRIC[metric];
+  const gradientId = `bar-gradient-${metric}`;
   const [range, setRange] = useState<Range>("day");
   const today = useMemo(() => utcMidnight(new Date()), []);
   const [anchor, setAnchor] = useState<Date>(today);
@@ -204,14 +205,18 @@ export default function PeriodBarChart({
     <section className="rounded-2xl border border-border bg-card p-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h2 className="font-display text-lg font-bold">{title}</h2>
-        <div className="flex gap-2">
+        {/* Segmented control -- one bordered pill track, active segment filled. */}
+        <div className="inline-flex rounded-full border border-border bg-muted/60 p-0.5">
           {(["day", "month", "year"] as const).map((r) => (
             <button
               key={r}
               type="button"
               onClick={() => setRange(r)}
-              className={`rounded-full px-3 py-1.5 text-sm font-medium ${
-                range === r ? "bg-brand text-black" : "bg-muted text-muted-foreground"
+              aria-pressed={range === r}
+              className={`rounded-full px-3.5 py-1 text-sm font-medium transition-colors ${
+                range === r
+                  ? "bg-brand text-black shadow-sm"
+                  : "text-muted-foreground hover:text-foreground"
               }`}
             >
               {RANGE_LABEL[r]}
@@ -251,23 +256,17 @@ export default function PeriodBarChart({
       </div>
 
       {(best || worst) && (
-        <div className="mt-3 flex flex-wrap gap-x-5 gap-y-1 text-sm">
+        <div className="mt-3 flex flex-wrap gap-2 text-xs">
           {best && (
-            <span className="flex items-center gap-1.5">
-              <span className="size-2 rounded-full bg-success" />
-              <span className="text-muted-foreground">Best {UNIT[range]}</span>
-              <span className="font-semibold text-foreground">
-                {best.key} · {formatValue(best.total)}
-              </span>
+            <span className="inline-flex items-center gap-1.5 rounded-full bg-success/10 px-2.5 py-1 font-medium text-success">
+              <span className="size-1.5 rounded-full bg-success" />
+              Best {UNIT[range]}: {best.key} · {formatValue(best.total)}
             </span>
           )}
           {worst && (
-            <span className="flex items-center gap-1.5">
-              <span className="size-2 rounded-full bg-warning" />
-              <span className="text-muted-foreground">Slowest {UNIT[range]}</span>
-              <span className="font-semibold text-foreground">
-                {worst.key} · {formatValue(worst.total)}
-              </span>
+            <span className="inline-flex items-center gap-1.5 rounded-full bg-warning/10 px-2.5 py-1 font-medium text-warning">
+              <span className="size-1.5 rounded-full bg-warning" />
+              Slowest {UNIT[range]}: {worst.key} · {formatValue(worst.total)}
             </span>
           )}
         </div>
@@ -276,6 +275,12 @@ export default function PeriodBarChart({
       <div className="mt-6 h-64">
         <ResponsiveContainer width="100%" height="100%">
           <BarChart data={data} margin={{ top: 4, right: 4, left: 4, bottom: 0 }} barCategoryGap="20%">
+            <defs>
+              <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stopColor={barColor} stopOpacity={0.95} />
+                <stop offset="100%" stopColor={barColor} stopOpacity={0.3} />
+              </linearGradient>
+            </defs>
             <CartesianGrid vertical={false} stroke="var(--border)" strokeDasharray="0" />
             <XAxis
               dataKey="key"
@@ -293,7 +298,12 @@ export default function PeriodBarChart({
               allowDecimals={allowDecimalTicks}
             />
             <Tooltip cursor={{ fill: "var(--muted)" }} content={ChartTooltip} />
-            <Bar dataKey="total" fill={barColor} radius={[4, 4, 0, 0]} maxBarSize={24} />
+            <Bar
+              dataKey="total"
+              fill={`url(#${gradientId})`}
+              radius={[4, 4, 0, 0]}
+              maxBarSize={24}
+            />
           </BarChart>
         </ResponsiveContainer>
       </div>
