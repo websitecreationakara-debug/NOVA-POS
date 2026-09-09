@@ -51,7 +51,9 @@ export default async function InvoicePage({
   const logo = brandLogoPath(invoice.brandSlug) ?? invoice.brandLogoUrl;
 
   return (
-    <div className={`${hanuman.className} mx-auto w-fit max-w-full p-6 print:p-0`}>
+    <div
+      className={`${hanuman.className} mx-auto w-fit max-w-full p-6 print:w-full print:max-w-none print:p-0`}
+    >
       <div className="mb-4 flex items-center justify-end gap-3 print:hidden">
         <OrderStatusControl orderId={invoice.order.id} status={invoice.order.fulfillment_status} />
         <PrintButton />
@@ -64,7 +66,7 @@ export default async function InvoicePage({
         {[0, 1].map((n) => (
           <div
             key={n}
-            className={`invoice-sheet w-[210mm] max-w-full overflow-hidden rounded-xl border border-zinc-200 bg-white text-black shadow-sm print:w-auto print:max-w-none print:overflow-visible print:rounded-none print:border-0 print:shadow-none ${
+            className={`invoice-sheet w-[210mm] max-w-full overflow-hidden rounded-xl border border-zinc-200 bg-white text-black shadow-sm print:w-full print:max-w-none print:overflow-visible print:rounded-none print:border-0 print:shadow-none ${
               n === 1 ? "break-before-page" : ""
             }`}
           >
@@ -86,6 +88,14 @@ function InvoiceDoc({
   logo: string | null;
 }) {
   const { order, invoiceNumber, brandName, customerAddress, items } = invoice;
+
+  // Keep each copy on a single A4 page for normal orders (1-6 items always
+  // fit; ~7-12 are shrunk just enough to still fit). A very long list is left
+  // at full size and allowed to flow onto a second page rather than become
+  // unreadably small. The model (~268mm of fixed chrome + ~10mm per row, vs
+  // ~278mm of usable height) is measured from the rendered document.
+  const rawFit = 278 / (268 + 10 * items.length);
+  const pageFit = rawFit >= 0.72 ? Math.min(1, rawFit) : 1;
 
   const paymentLabel = order.payment_method
     ? (PAYMENT_LABELS[order.payment_method] ?? order.payment_method)
@@ -127,8 +137,10 @@ function InvoiceDoc({
 
   return (
     // min-h keeps it looking like a full page without ever spilling past one
-    // (A4 usable height with the 6mm @page margin is ~285mm).
-    <div className="flex min-h-[262mm] flex-col p-[12mm]">
+    // (A4 usable height with the 6mm @page margin is ~285mm). `zoom` shrinks
+    // fuller invoices to keep the copy on one page -- it (unlike `transform`)
+    // reduces the layout footprint, so the print job stays at 2 pages.
+    <div style={{ zoom: pageFit }} className="flex min-h-[262mm] w-full flex-col p-[12mm]">
       {/* 1. Header -- logo left, contact line bottom-aligned to its right */}
       <header className="flex items-end justify-between gap-4">
         {logo ? (
@@ -191,7 +203,10 @@ function InvoiceDoc({
               <Td className="text-right tabular-nums">{formatMoney(item.lineTotal)}</Td>
             </tr>
           ))}
-
+        </tbody>
+        {/* Keep the whole summary block (sub-details rowspan + totals) on one
+            page -- a break through the rowspan cell looks broken. */}
+        <tbody className="invoice-keep">
           {summary.map((row, i) => (
             <tr key={row.en}>
               {i === 0 && (
@@ -237,41 +252,46 @@ function InvoiceDoc({
         </tbody>
       </table>
 
-      {/* 5. Remarks */}
-      <div className="mt-6 text-[13px] leading-relaxed">
-        <p className="font-bold">Remarks: កំណត់ចំណាំ៖</p>
-        {brand.remarks.map((r, i) => (
-          <p key={i}>- {r}</p>
-        ))}
-      </div>
-
-      {/* 6. KHQR -- centered between the Remarks and the closing lines */}
-      {brand.khqrUrl && (
-        <div className="flex flex-1 flex-col items-center justify-center py-6">
-          <span className="rounded bg-red-600 px-2.5 py-0.5 text-[10px] font-bold tracking-wide text-white">
-            KHQR
-          </span>
-          <div className="relative mt-1 p-1.5">
-            <span className="absolute top-0 left-0 h-4 w-4 rounded-tl-md border-t-2 border-l-2 border-zinc-400" />
-            <span className="absolute top-0 right-0 h-4 w-4 rounded-tr-md border-t-2 border-r-2 border-zinc-400" />
-            <span className="absolute bottom-0 left-0 h-4 w-4 rounded-bl-md border-b-2 border-l-2 border-zinc-400" />
-            <span className="absolute right-0 bottom-0 h-4 w-4 rounded-br-md border-r-2 border-b-2 border-zinc-400" />
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src={brand.khqrUrl} alt="KHQR" className="h-48 w-48 object-contain" />
-          </div>
-          <p className="mt-1.5 text-lg font-bold tracking-wide">{brand.khqrLabel}</p>
+      {/* 5-7. Remarks, KHQR and the closing lines -- one block so a page break
+          never splits them and the closing text always sits directly below
+          the KHQR. flex-1 lets it fill the rest of a short page. */}
+      <div className="invoice-keep flex flex-1 flex-col">
+        {/* 5. Remarks */}
+        <div className="mt-6 text-[13px] leading-relaxed">
+          <p className="font-bold">Remarks: កំណត់ចំណាំ៖</p>
+          {brand.remarks.map((r, i) => (
+            <p key={i}>- {r}</p>
+          ))}
         </div>
-      )}
 
-      {/* 7. Closing lines -- bottom of the page */}
-      <div
-        className={`space-y-1.5 text-center text-[13px] ${brand.khqrUrl ? "mt-6" : "mt-auto pt-10"}`}
-      >
-        {brand.closing.map((line, i) => (
-          <p key={i} className={i === 0 ? "font-bold" : ""}>
-            {line}
-          </p>
-        ))}
+        {/* 6. KHQR -- centered between the Remarks and the closing lines */}
+        {brand.khqrUrl && (
+          <div className="flex flex-1 flex-col items-center justify-center py-6">
+            <span className="rounded bg-red-600 px-2.5 py-0.5 text-[10px] font-bold tracking-wide text-white">
+              KHQR
+            </span>
+            <div className="relative mt-1 p-1.5">
+              <span className="absolute top-0 left-0 h-4 w-4 rounded-tl-md border-t-2 border-l-2 border-zinc-400" />
+              <span className="absolute top-0 right-0 h-4 w-4 rounded-tr-md border-t-2 border-r-2 border-zinc-400" />
+              <span className="absolute bottom-0 left-0 h-4 w-4 rounded-bl-md border-b-2 border-l-2 border-zinc-400" />
+              <span className="absolute right-0 bottom-0 h-4 w-4 rounded-br-md border-r-2 border-b-2 border-zinc-400" />
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={brand.khqrUrl} alt="KHQR" className="h-48 w-48 object-contain" />
+            </div>
+            <p className="mt-1.5 text-lg font-bold tracking-wide">{brand.khqrLabel}</p>
+          </div>
+        )}
+
+        {/* 7. Closing lines -- directly below the KHQR */}
+        <div
+          className={`space-y-1.5 text-center text-[13px] ${brand.khqrUrl ? "mt-6" : "mt-auto pt-10"}`}
+        >
+          {brand.closing.map((line, i) => (
+            <p key={i} className={i === 0 ? "font-bold" : ""}>
+              {line}
+            </p>
+          ))}
+        </div>
       </div>
     </div>
   );

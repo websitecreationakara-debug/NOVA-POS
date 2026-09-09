@@ -3,10 +3,19 @@
 import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Plus, User } from "lucide-react";
+import {
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  ChevronUp,
+  Plus,
+  User,
+  UtensilsCrossed,
+} from "lucide-react";
 import type { Brand, Category, PaymentMethod } from "@/types/database";
 import type { ProductWithStock } from "@/lib/supabase/queries";
 import type { WebsiteProduct, WebsiteProductVariation } from "@/lib/websiteProducts/types";
+import { categoryDotColor } from "@/lib/categoryColor";
 import SalesWebsiteGrid from "./SalesWebsiteGrid";
 import type { SalesWebsiteCatalog } from "./page";
 import {
@@ -318,17 +327,24 @@ export default function SalesClient({
         onClick={() => handleProductCardClick(p)}
         className="flex flex-col items-start rounded-lg border border-black/[.08] p-4 text-left transition-colors hover:bg-black/[.03] dark:border-white/[.145] dark:hover:bg-white/[.05]"
       >
-        <div className="mb-2 aspect-square w-full overflow-hidden rounded bg-zinc-100 dark:bg-zinc-800">
+        <div className="relative mb-2 aspect-square w-full overflow-hidden rounded bg-zinc-100 dark:bg-zinc-800">
           {p.image_url ? (
             // eslint-disable-next-line @next/next/no-img-element
             <img src={p.image_url} alt="" className="h-full w-full object-cover" />
           ) : (
-            <div className="flex h-full w-full items-center justify-center text-xs text-zinc-400">
-              No image
+            <div className="flex h-full w-full items-center justify-center text-zinc-300 dark:text-zinc-600">
+              <UtensilsCrossed className="size-8" />
+            </div>
+          )}
+          {isOut && (
+            <div className="absolute inset-0 flex items-center justify-center bg-zinc-900/55">
+              <span className="rounded-full bg-zinc-800/90 px-2.5 py-1 text-xs font-bold text-white">
+                Out of stock
+              </span>
             </div>
           )}
         </div>
-        <div className="font-medium">{p.name}</div>
+        <div className="line-clamp-2 min-h-12 leading-6 font-medium">{p.name}</div>
         <div className="mt-1 text-sm text-zinc-500">
           {formatMoney(p.price)} / {p.unit}
         </div>
@@ -534,10 +550,13 @@ export default function SalesClient({
           />
         ) : (
         <main className="flex-1 overflow-y-auto p-6">
+          {/* Category chips wrap onto a few rows -- no horizontal scrolling.
+              Capped at ~3 rows with a toggle so a long list doesn't push the
+              products down. Each carries a colour dot for recognition. */}
           <div className="mb-4">
             <div
               className="flex flex-wrap gap-2"
-              style={categoriesExpanded ? undefined : { maxHeight: "5rem", overflow: "hidden" }}
+              style={categoriesExpanded ? undefined : { maxHeight: "7.5rem", overflow: "hidden" }}
             >
               <button
                 onClick={() => setActiveCategoryId("all")}
@@ -553,24 +572,28 @@ export default function SalesClient({
                 <button
                   key={c.id}
                   onClick={() => setActiveCategoryId(c.id)}
-                  className={`rounded-full border px-4 py-1.5 text-sm ${
+                  className={`flex items-center gap-1.5 rounded-full border px-4 py-1.5 text-sm ${
                     activeCategoryId === c.id
                       ? "border-black bg-black text-white dark:border-white dark:bg-white dark:text-black"
                       : "border-black/[.15] dark:border-white/[.2]"
                   }`}
                 >
+                  <span
+                    className="size-2 shrink-0 rounded-full"
+                    style={{ backgroundColor: categoryDotColor(c.name) }}
+                  />
                   {c.name}
                 </button>
               ))}
             </div>
-            {categories.length > 10 && (
+            {categories.length > 9 && (
               <button
                 onClick={() => setCategoriesExpanded((v) => !v)}
                 className="mt-2 flex items-center gap-1 text-xs font-medium text-zinc-500 hover:text-black dark:hover:text-white"
               >
                 {categoriesExpanded ? (
                   <>
-                    Show fewer categories <ChevronUp className="size-3.5" />
+                    Show fewer <ChevronUp className="size-3.5" />
                   </>
                 ) : (
                   <>
@@ -651,7 +674,7 @@ export default function SalesClient({
           <div className="border-b border-black/[.08] px-4 py-3 font-medium dark:border-white/[.145]">
             Order
           </div>
-          <div className="flex-1 overflow-y-auto px-4 py-2">
+          <div className="min-h-0 flex-1 overflow-y-auto px-4 py-2">
             {cart.length === 0 && (
               <p className="mt-4 text-sm text-zinc-500">Tap a product to add it.</p>
             )}
@@ -686,168 +709,205 @@ export default function SalesClient({
             ))}
           </div>
 
-          <div className="border-t border-black/[.08] px-4 py-3 dark:border-white/[.145]">
-            <div className="flex justify-between text-sm text-zinc-500">
-              <span>Subtotal</span>
-              <span>{formatMoney(subtotal)}</span>
-            </div>
-            {discountAmount > 0 && (
-              <div className="flex justify-between text-sm text-zinc-500">
-                <span>Discount</span>
-                <span>-{formatMoney(discountAmount)}</span>
-              </div>
-            )}
-            {deliveryFeeValue > 0 && (
-              <div className="flex justify-between text-sm text-zinc-500">
-                <span>Delivery</span>
-                <span>{formatMoney(deliveryFeeValue)}</span>
-              </div>
-            )}
-            <div className="mt-1 flex justify-between text-lg font-semibold">
-              <span>Total</span>
-              <span>{formatMoney(finalTotal)}</span>
-            </div>
-
-            <div className="mt-4 flex gap-2">
-              <div className="relative flex-1">
-                <input
-                  type="tel"
-                  required
-                  autoComplete="off"
-                  className="w-full rounded border border-black/[.15] bg-transparent px-3 py-1.5 text-sm dark:border-white/[.2]"
-                  placeholder="Phone number *"
-                  value={customerPhone}
-                  onChange={(e) => handlePhoneChange(e.target.value)}
-                  onFocus={() => setPhoneDropdownOpen(true)}
-                  onBlur={() => setTimeout(() => setPhoneDropdownOpen(false), 150)}
-                />
-                {phoneDropdownOpen && customerPhone.trim().length > 0 && (
-                  <div className="absolute top-full left-0 z-10 mt-1 max-h-64 w-64 overflow-y-auto rounded border border-black/[.15] bg-white shadow-lg dark:border-white/[.2] dark:bg-zinc-900">
-                    <button
-                      type="button"
-                      onMouseDown={(e) => e.preventDefault()}
-                      onClick={selectNewCustomer}
-                      className="flex w-full items-center gap-2 border-b border-black/[.08] px-3 py-2 text-left text-sm hover:bg-black/[.03] dark:border-white/[.145] dark:hover:bg-white/[.05]"
-                    >
-                      <Plus className="size-4" />
-                      New
-                    </button>
-                    {suggestions.map((c) => (
+          <div className="shrink-0 space-y-3 border-t border-black/[.08] px-4 py-3 dark:border-white/[.145]">
+            {/* Customer */}
+            <div>
+              <p className="mb-1.5 text-[11px] font-semibold tracking-wide text-zinc-400 uppercase">
+                Customer
+              </p>
+              <div className="flex gap-2">
+                <div className="relative flex-1">
+                  <input
+                    type="tel"
+                    required
+                    autoComplete="off"
+                    className="w-full rounded border border-black/[.15] bg-transparent px-3 py-1.5 text-sm dark:border-white/[.2]"
+                    placeholder="Phone number *"
+                    value={customerPhone}
+                    onChange={(e) => handlePhoneChange(e.target.value)}
+                    onFocus={() => setPhoneDropdownOpen(true)}
+                    onBlur={() => setTimeout(() => setPhoneDropdownOpen(false), 150)}
+                  />
+                  {phoneDropdownOpen && customerPhone.trim().length > 0 && (
+                    <div className="absolute bottom-full left-0 z-10 mb-1 max-h-64 w-64 overflow-y-auto rounded border border-black/[.15] bg-white shadow-lg dark:border-white/[.2] dark:bg-zinc-900">
                       <button
                         type="button"
-                        key={c.id}
                         onMouseDown={(e) => e.preventDefault()}
-                        onClick={() => selectCustomer(c)}
-                        className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-black/[.03] dark:hover:bg-white/[.05]"
+                        onClick={selectNewCustomer}
+                        className="flex w-full items-center gap-2 border-b border-black/[.08] px-3 py-2 text-left text-sm hover:bg-black/[.03] dark:border-white/[.145] dark:hover:bg-white/[.05]"
                       >
-                        <span className="flex h-6 w-6 shrink-0 items-center justify-center overflow-hidden rounded-full bg-zinc-200 dark:bg-zinc-700">
-                          {c.photoUrl ? (
-                            // eslint-disable-next-line @next/next/no-img-element
-                            <img src={c.photoUrl} alt="" className="h-full w-full object-cover" />
-                          ) : (
-                            <User className="size-3.5 text-zinc-500" />
-                          )}
-                        </span>
-                        <span className="flex flex-col">
-                          <span>{c.phone}</span>
-                          <span className="text-xs text-zinc-500">{c.name}</span>
-                        </span>
+                        <Plus className="size-4" />
+                        New
                       </button>
-                    ))}
-                    {suggestions.length === 0 && customerPhone.trim().length >= 3 && (
-                      <p className="px-3 py-2 text-xs text-zinc-500">No matches — pick New to add them.</p>
-                    )}
-                  </div>
-                )}
+                      {suggestions.map((c) => (
+                        <button
+                          type="button"
+                          key={c.id}
+                          onMouseDown={(e) => e.preventDefault()}
+                          onClick={() => selectCustomer(c)}
+                          className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-black/[.03] dark:hover:bg-white/[.05]"
+                        >
+                          <span className="flex h-6 w-6 shrink-0 items-center justify-center overflow-hidden rounded-full bg-zinc-200 dark:bg-zinc-700">
+                            {c.photoUrl ? (
+                              // eslint-disable-next-line @next/next/no-img-element
+                              <img src={c.photoUrl} alt="" className="h-full w-full object-cover" />
+                            ) : (
+                              <User className="size-3.5 text-zinc-500" />
+                            )}
+                          </span>
+                          <span className="flex flex-col">
+                            <span>{c.phone}</span>
+                            <span className="text-xs text-zinc-500">{c.name}</span>
+                          </span>
+                        </button>
+                      ))}
+                      {suggestions.length === 0 && customerPhone.trim().length >= 3 && (
+                        <p className="px-3 py-2 text-xs text-zinc-500">
+                          No matches — pick New to add them.
+                        </p>
+                      )}
+                    </div>
+                  )}
+                </div>
+                <input
+                  className="flex-1 rounded border border-black/[.15] bg-transparent px-3 py-1.5 text-sm dark:border-white/[.2]"
+                  placeholder={isExistingCustomer ? "Customer name" : "Customer name *"}
+                  value={customerName}
+                  onChange={(e) => setCustomerName(e.target.value)}
+                />
               </div>
               <input
-                className="flex-1 rounded border border-black/[.15] bg-transparent px-3 py-1.5 text-sm dark:border-white/[.2]"
-                placeholder={isExistingCustomer ? "Customer name" : "Customer name *"}
-                value={customerName}
-                onChange={(e) => setCustomerName(e.target.value)}
-              />
-            </div>
-            <input
-              className="mt-2 w-full rounded border border-black/[.15] bg-transparent px-3 py-1.5 text-sm dark:border-white/[.2]"
-              placeholder="Address (optional)"
-              value={customerAddress}
-              onChange={(e) => setCustomerAddress(e.target.value)}
-            />
-            <div className="mt-2 flex gap-2">
-              <input
-                type="number"
-                min={0}
-                max={100}
-                step="0.01"
-                placeholder="Discount %"
-                value={discountPercent}
-                onChange={(e) => setDiscountPercent(e.target.value)}
-                className="w-1/3 rounded border border-black/[.15] bg-transparent px-3 py-1.5 text-sm dark:border-white/[.2]"
-              />
-              <input
-                type="number"
-                min={0}
-                step="0.01"
-                placeholder="Minus $"
-                value={minusAmount}
-                onChange={(e) => setMinusAmount(e.target.value)}
-                className="w-1/3 rounded border border-black/[.15] bg-transparent px-3 py-1.5 text-sm dark:border-white/[.2]"
-              />
-              <input
-                type="number"
-                min={0}
-                step="0.01"
-                placeholder="Delivery $"
-                value={deliveryFee}
-                onChange={(e) => setDeliveryFee(e.target.value)}
-                className="w-1/3 rounded border border-black/[.15] bg-transparent px-3 py-1.5 text-sm dark:border-white/[.2]"
-              />
-            </div>
-            {isExistingCustomer && (
-              <p className="mt-1 text-xs text-green-600">Existing customer — reusing their record.</p>
-            )}
-            {!isExistingCustomer && customerPhone.trim().length > 0 && (
-              <p className="mt-1 text-xs text-amber-500">New customer — will be added on charge.</p>
-            )}
-
-            <div className="mt-2 flex gap-2">
-              <button
-                className={`flex-1 rounded-full border py-1.5 text-sm ${
-                  paymentMethod === "cash"
-                    ? "border-black bg-black text-white dark:border-white dark:bg-white dark:text-black"
-                    : "border-black/[.15] dark:border-white/[.2]"
-                }`}
-                onClick={() => setPaymentMethod("cash")}
-              >
-                Cash
-              </button>
-              <button
-                className={`flex-1 rounded-full border py-1.5 text-sm ${
-                  paymentMethod === "bank_qr"
-                    ? "border-black bg-black text-white dark:border-white dark:bg-white dark:text-black"
-                    : "border-black/[.15] dark:border-white/[.2]"
-                }`}
-                onClick={() => setPaymentMethod("bank_qr")}
-              >
-                Bank / QR
-              </button>
-            </div>
-
-            {paymentMethod === "bank_qr" && (
-              <input
                 className="mt-2 w-full rounded border border-black/[.15] bg-transparent px-3 py-1.5 text-sm dark:border-white/[.2]"
-                placeholder="Reference number (optional)"
-                value={paymentReference}
-                onChange={(e) => setPaymentReference(e.target.value)}
+                placeholder="Address (optional)"
+                value={customerAddress}
+                onChange={(e) => setCustomerAddress(e.target.value)}
               />
-            )}
+              {isExistingCustomer && (
+                <p className="mt-1 text-xs text-green-600">
+                  Existing customer — reusing their record.
+                </p>
+              )}
+              {!isExistingCustomer && customerPhone.trim().length > 0 && (
+                <p className="mt-1 text-xs text-amber-500">
+                  New customer — will be added on charge.
+                </p>
+              )}
+            </div>
 
-            {error && <p className="mt-2 text-sm text-red-500">{error}</p>}
+            {/* Discounts & delivery */}
+            <div>
+              <p className="mb-1.5 text-[11px] font-semibold tracking-wide text-zinc-400 uppercase">
+                Discounts &amp; delivery
+              </p>
+              <div className="grid grid-cols-3 gap-2">
+                <label className="flex flex-col gap-1 text-[11px] text-zinc-400">
+                  Discount %
+                  <input
+                    type="number"
+                    min={0}
+                    max={100}
+                    step="0.01"
+                    placeholder="0"
+                    value={discountPercent}
+                    onChange={(e) => setDiscountPercent(e.target.value)}
+                    className="rounded border border-black/[.15] bg-transparent px-2 py-1.5 text-sm text-foreground dark:border-white/[.2]"
+                  />
+                </label>
+                <label className="flex flex-col gap-1 text-[11px] text-zinc-400">
+                  Minus $
+                  <input
+                    type="number"
+                    min={0}
+                    step="0.01"
+                    placeholder="0"
+                    value={minusAmount}
+                    onChange={(e) => setMinusAmount(e.target.value)}
+                    className="rounded border border-black/[.15] bg-transparent px-2 py-1.5 text-sm text-foreground dark:border-white/[.2]"
+                  />
+                </label>
+                <label className="flex flex-col gap-1 text-[11px] text-zinc-400">
+                  Delivery $
+                  <input
+                    type="number"
+                    min={0}
+                    step="0.01"
+                    placeholder="0"
+                    value={deliveryFee}
+                    onChange={(e) => setDeliveryFee(e.target.value)}
+                    className="rounded border border-black/[.15] bg-transparent px-2 py-1.5 text-sm text-foreground dark:border-white/[.2]"
+                  />
+                </label>
+              </div>
+            </div>
+
+            {/* Payment */}
+            <div>
+              <p className="mb-1.5 text-[11px] font-semibold tracking-wide text-zinc-400 uppercase">
+                Payment
+              </p>
+              <div className="flex gap-2">
+                <button
+                  className={`flex-1 rounded-full border py-1.5 text-sm ${
+                    paymentMethod === "cash"
+                      ? "border-black bg-black text-white dark:border-white dark:bg-white dark:text-black"
+                      : "border-black/[.15] dark:border-white/[.2]"
+                  }`}
+                  onClick={() => setPaymentMethod("cash")}
+                >
+                  Cash
+                </button>
+                <button
+                  className={`flex-1 rounded-full border py-1.5 text-sm ${
+                    paymentMethod === "bank_qr"
+                      ? "border-black bg-black text-white dark:border-white dark:bg-white dark:text-black"
+                      : "border-black/[.15] dark:border-white/[.2]"
+                  }`}
+                  onClick={() => setPaymentMethod("bank_qr")}
+                >
+                  Bank / QR
+                </button>
+              </div>
+              {paymentMethod === "bank_qr" && (
+                <input
+                  className="mt-2 w-full rounded border border-black/[.15] bg-transparent px-3 py-1.5 text-sm dark:border-white/[.2]"
+                  placeholder="Reference number (optional)"
+                  value={paymentReference}
+                  onChange={(e) => setPaymentReference(e.target.value)}
+                />
+              )}
+            </div>
+
+            {/* Summary + total, right above Charge so the amount due is
+                impossible to miss. */}
+            <div className="rounded-lg bg-black/[.03] px-3 py-2.5 dark:bg-white/[.04]">
+              <div className="flex justify-between text-sm text-zinc-500">
+                <span>Subtotal</span>
+                <span className="tabular-nums">{formatMoney(subtotal)}</span>
+              </div>
+              {discountAmount > 0 && (
+                <div className="flex justify-between text-sm text-zinc-500">
+                  <span>Discount</span>
+                  <span className="tabular-nums">-{formatMoney(discountAmount)}</span>
+                </div>
+              )}
+              {deliveryFeeValue > 0 && (
+                <div className="flex justify-between text-sm text-zinc-500">
+                  <span>Delivery</span>
+                  <span className="tabular-nums">{formatMoney(deliveryFeeValue)}</span>
+                </div>
+              )}
+              <div className="mt-1.5 flex items-baseline justify-between border-t border-black/[.08] pt-1.5 dark:border-white/[.145]">
+                <span className="text-sm font-medium">Total</span>
+                <span className="text-2xl font-bold tabular-nums">{formatMoney(finalTotal)}</span>
+              </div>
+            </div>
+
+            {error && <p className="text-sm text-red-500">{error}</p>}
 
             <button
               disabled={cart.length === 0 || isCharging || !customerPhone.trim()}
               onClick={handleCharge}
-              className="mt-4 w-full rounded-full bg-green-600 py-2.5 font-medium text-white disabled:opacity-40"
+              className="w-full rounded-full bg-green-600 py-3 text-base font-semibold text-white transition-colors hover:bg-green-700 disabled:opacity-40"
             >
               {isCharging ? "Charging…" : `Charge ${formatMoney(finalTotal)}`}
             </button>

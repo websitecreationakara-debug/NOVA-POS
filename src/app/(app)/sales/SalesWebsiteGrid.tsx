@@ -1,12 +1,13 @@
 "use client";
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { ChevronLeft, ChevronRight } from "lucide-react";
+import { ChevronDown, ChevronLeft, ChevronRight, ChevronUp, UtensilsCrossed } from "lucide-react";
 import type {
   WebsiteCatalogId,
   WebsiteProduct,
   WebsiteProductVariation,
 } from "@/lib/websiteProducts/types";
+import { categoryDotColor } from "@/lib/categoryColor";
 import { listWebsiteProductsAction } from "../stock/websiteActions";
 
 // useLayoutEffect on the client, useEffect on the server (avoids the SSR warning).
@@ -93,6 +94,7 @@ export default function SalesWebsiteGrid({
   const [loadError, setLoadError] = useState<string | null>(initialError);
   const [search, setSearch] = useState("");
   const [activeCategoryId, setActiveCategoryId] = useState<string | "all">("all");
+  const [categoriesExpanded, setCategoriesExpanded] = useState(false);
   const [page, setPage] = useState(1);
 
   const signatureRef = useRef<string>(initialProducts ? catalogSignature(initialProducts) : "");
@@ -246,40 +248,68 @@ export default function SalesWebsiteGrid({
   return (
     <main ref={scrollerRef} className="flex-1 overflow-y-auto p-6">
       {showChips && (
-        <div className="mb-4 flex flex-wrap gap-2">
-          <button
-            onClick={() => setActiveCategoryId("all")}
-            className={`rounded-full border px-4 py-1.5 text-sm ${
-              activeCategoryId === "all"
-                ? "border-black bg-black text-white dark:border-white dark:bg-white dark:text-black"
-                : "border-black/[.15] dark:border-white/[.2]"
-            }`}
+        // Wrap onto a few rows -- no horizontal scrolling. Capped at ~3 rows
+        // with a toggle so a long list doesn't push the products down the
+        // page. Each chip carries a colour dot for at-a-glance recognition.
+        <div className="mb-4">
+          <div
+            className="flex flex-wrap gap-2"
+            style={categoriesExpanded ? undefined : { maxHeight: "7.5rem", overflow: "hidden" }}
           >
-            All
-          </button>
-          {chips.map((c) => (
             <button
-              key={c.id}
-              onClick={() => setActiveCategoryId(c.id)}
+              onClick={() => setActiveCategoryId("all")}
               className={`rounded-full border px-4 py-1.5 text-sm ${
-                activeCategoryId === c.id
+                activeCategoryId === "all"
                   ? "border-black bg-black text-white dark:border-white dark:bg-white dark:text-black"
                   : "border-black/[.15] dark:border-white/[.2]"
               }`}
             >
-              {c.label}
+              All
             </button>
-          ))}
-          {uncategorised > 0 && (
+            {chips.map((c) => (
+              <button
+                key={c.id}
+                onClick={() => setActiveCategoryId(c.id)}
+                className={`flex items-center gap-1.5 rounded-full border px-4 py-1.5 text-sm ${
+                  activeCategoryId === c.id
+                    ? "border-black bg-black text-white dark:border-white dark:bg-white dark:text-black"
+                    : "border-black/[.15] dark:border-white/[.2]"
+                }`}
+              >
+                <span
+                  className="size-2 shrink-0 rounded-full"
+                  style={{ backgroundColor: categoryDotColor(c.label) }}
+                />
+                {c.label}
+              </button>
+            ))}
+            {uncategorised > 0 && (
+              <button
+                onClick={() => setActiveCategoryId("__uncategorised")}
+                className={`rounded-full border px-4 py-1.5 text-sm ${
+                  activeCategoryId === "__uncategorised"
+                    ? "border-black bg-black text-white dark:border-white dark:bg-white dark:text-black"
+                    : "border-black/[.15] dark:border-white/[.2]"
+                }`}
+              >
+                Other
+              </button>
+            )}
+          </div>
+          {chips.length + (uncategorised > 0 ? 1 : 0) > 9 && (
             <button
-              onClick={() => setActiveCategoryId("__uncategorised")}
-              className={`rounded-full border px-4 py-1.5 text-sm ${
-                activeCategoryId === "__uncategorised"
-                  ? "border-black bg-black text-white dark:border-white dark:bg-white dark:text-black"
-                  : "border-black/[.15] dark:border-white/[.2]"
-              }`}
+              onClick={() => setCategoriesExpanded((v) => !v)}
+              className="mt-2 flex items-center gap-1 text-xs font-medium text-zinc-500 hover:text-black dark:hover:text-white"
             >
-              Other
+              {categoriesExpanded ? (
+                <>
+                  Show fewer <ChevronUp className="size-3.5" />
+                </>
+              ) : (
+                <>
+                  Show all categories <ChevronDown className="size-3.5" />
+                </>
+              )}
             </button>
           )}
         </div>
@@ -359,22 +389,32 @@ export default function SalesWebsiteGrid({
                     // eslint-disable-next-line @next/next/no-img-element
                     <img src={imageUrl} alt="" className="h-full w-full object-cover" />
                   ) : (
-                    <div className="flex h-full w-full items-center justify-center text-xs text-zinc-400">
-                      No image
+                    <div className="flex h-full w-full items-center justify-center text-zinc-300 dark:text-zinc-600">
+                      <UtensilsCrossed className="size-8" />
                     </div>
                   )}
                   {photoBadge && (
-                    <span className="absolute left-2 top-2 rounded-full bg-amber-500 px-2 py-0.5 text-xs font-bold text-white shadow-sm">
+                    <span className="absolute top-2 left-2 rounded-full bg-amber-500 px-2 py-0.5 text-xs font-bold text-white shadow-sm">
                       {photoBadge}
                     </span>
                   )}
+                  {p.status !== "published" && !pending && (
+                    <span className="absolute top-2 right-2 rounded-full bg-zinc-700/90 px-2 py-0.5 text-[10px] font-bold tracking-wide text-white uppercase">
+                      Draft
+                    </span>
+                  )}
+                  {(isOut || pending) && (
+                    <div className="absolute inset-0 flex items-center justify-center bg-zinc-900/55">
+                      <span className="rounded-full bg-zinc-800/90 px-2.5 py-1 text-xs font-bold text-white">
+                        {pending ? "Adding…" : "Out of stock"}
+                      </span>
+                    </div>
+                  )}
                 </div>
-                {/* Fixed 2-line title box (h-12 + leading-6), plain
-                    overflow-hidden rather than line-clamp -- see git history:
-                    line-clamp ellipsis was bleeding a clipped 3rd line past
-                    the box. A variation size sits on its own line below the
-                    name, never folded into the title. */}
-                <div className="h-12 overflow-hidden font-medium leading-6">{p.title}</div>
+                {/* Fixed 2-line title box (h-12 + leading-6) so every card is
+                    the same height regardless of name length. A variation size
+                    sits on its own line below, never folded into the title. */}
+                <div className="line-clamp-2 h-12 leading-6 font-medium">{p.title}</div>
                 <div className="mt-1 flex min-h-6 items-center">
                   {optionLabel && (
                     <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-xs font-semibold text-amber-700 dark:text-amber-300">
@@ -403,15 +443,6 @@ export default function SalesWebsiteGrid({
                       ? "Out of stock"
                       : `${remaining} in stock`}
                 </div>
-                <div className="mt-1 text-xs text-amber-500">
-                  {pending ? (
-                    <span className="text-zinc-400">Adding…</span>
-                  ) : p.status !== "published" ? (
-                    "Draft"
-                  ) : (
-                    " "
-                  )}
-                </div>
               </button>
             );
           })}
@@ -423,17 +454,13 @@ export default function SalesWebsiteGrid({
               <div className="mt-1 h-6" />
               <div className="h-5" />
               <div className="mt-1 h-4" />
-              <div className="mt-1 h-4" />
             </div>
           ))}
         </div>
       )}
 
       {products && pageCount > 1 && (
-        <div
-          ref={pagerRef}
-          className="mt-5 flex flex-wrap items-center justify-center gap-1.5"
-        >
+        <div ref={pagerRef} className="mt-5 flex items-center justify-center gap-3 text-sm">
           <button
             onClick={() => goToPage(currentPage - 1)}
             disabled={currentPage <= 1}
@@ -442,20 +469,9 @@ export default function SalesWebsiteGrid({
           >
             <ChevronLeft className="size-4" />
           </button>
-          {Array.from({ length: pageCount }, (_, i) => i + 1).map((n) => (
-            <button
-              key={n}
-              onClick={() => goToPage(n)}
-              aria-current={n === currentPage ? "page" : undefined}
-              className={`h-8 w-8 shrink-0 rounded border text-sm tabular-nums ${
-                n === currentPage
-                  ? "border-black bg-black text-white dark:border-white dark:bg-white dark:text-black"
-                  : "border-black/[.15] dark:border-white/[.2]"
-              }`}
-            >
-              {n}
-            </button>
-          ))}
+          <span className="tabular-nums text-zinc-500">
+            Page {currentPage} of {pageCount}
+          </span>
           <button
             onClick={() => goToPage(currentPage + 1)}
             disabled={currentPage >= pageCount}

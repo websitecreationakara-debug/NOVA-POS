@@ -1,13 +1,14 @@
 import Link from "next/link";
 import { getOrdersList } from "@/lib/supabase/queries";
 import { FULFILLMENT_STATUSES } from "@/lib/orderStatus";
-import OrderStatusControl from "@/components/OrderStatusControl";
 import OrderStatusFilter from "@/components/OrderStatusFilter";
-import DeleteOrderButton from "@/components/DeleteOrderButton";
+import OrdersTable from "@/components/OrdersTable";
 import type { FulfillmentStatus } from "@/types/database";
 
-function formatMoney(n: number) {
-  return `$${n.toFixed(2)}`;
+export const dynamic = "force-dynamic";
+
+function todayLocal() {
+  return new Date().toLocaleDateString("en-CA");
 }
 
 export default async function OrdersPage({
@@ -20,63 +21,60 @@ export default async function OrdersPage({
     ? (statusParam as FulfillmentStatus)
     : undefined;
 
-  const orders = await getOrdersList(status);
+  // Always load the full list -- the status filter is applied client-side so
+  // the summary cards and bulk selection see every order.
+  const orders = await getOrdersList();
+
+  const today = todayLocal();
+  const newToday = orders.filter(
+    (o) =>
+      o.fulfillmentStatus === "new_order" &&
+      o.paidAt &&
+      new Date(o.paidAt).toLocaleDateString("en-CA") === today
+  ).length;
+  const inProgress = orders.filter(
+    (o) => o.fulfillmentStatus === "new_order" || o.fulfillmentStatus === "processing"
+  ).length;
+  const delivered = orders.filter(
+    (o) => o.fulfillmentStatus === "delivered" || o.fulfillmentStatus === "complete"
+  ).length;
+
+  const summary: { label: string; value: number; href: string }[] = [
+    { label: "New today", value: newToday, href: "/orders?status=new_order" },
+    { label: "Awaiting delivery", value: inProgress, href: "/orders?status=processing" },
+    { label: "Delivered", value: delivered, href: "/orders?status=delivered" },
+  ];
 
   return (
     <main className="flex h-full flex-col">
-      <header className="flex items-center gap-3 border-b border-black/[.08] px-6 py-3 dark:border-white/[.145]">
-        <h1 className="text-lg font-medium">Orders</h1>
+      <header className="flex items-baseline gap-3 border-b border-black/[.08] px-6 py-3 dark:border-white/[.145]">
+        <h1 className="text-lg font-semibold">Orders</h1>
+        <span className="rounded-full bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground">
+          {orders.length} total
+        </span>
         <span className="text-sm text-muted-foreground">
           Orders staff prepare for pickup/delivery
         </span>
       </header>
 
+      <div className="grid grid-cols-3 gap-3 px-6 pt-4">
+        {summary.map((s) => (
+          <Link
+            key={s.label}
+            href={s.href}
+            className="rounded-xl border border-border bg-card px-4 py-3 transition-colors hover:border-foreground/20"
+          >
+            <p className="text-xs font-medium tracking-wide text-muted-foreground uppercase">
+              {s.label}
+            </p>
+            <p className="font-display mt-0.5 text-2xl font-bold tabular-nums">{s.value}</p>
+          </Link>
+        ))}
+      </div>
+
       <OrderStatusFilter active={status ?? null} />
 
-      <div className="flex-1 overflow-auto px-6 pb-6">
-        {orders.length === 0 ? (
-          <p className="text-sm text-muted-foreground">No orders found.</p>
-        ) : (
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-border text-left text-xs font-semibold text-muted-foreground">
-                <th className="py-2 pr-4">Invoice</th>
-                <th className="py-2 pr-4">Business</th>
-                <th className="py-2 pr-4">Customer</th>
-                <th className="py-2 pr-4">Phone</th>
-                <th className="py-2 pr-4 text-right">Total</th>
-                <th className="py-2 pr-4">Status</th>
-                <th className="py-2 pr-4">Date</th>
-                <th className="py-2"></th>
-              </tr>
-            </thead>
-            <tbody>
-              {orders.map((o) => (
-                <tr key={o.id} className="border-b border-border hover:bg-muted">
-                  <td className="py-2 pr-4">
-                    <Link href={`/orders/${o.id}`} className="font-medium text-brand">
-                      {o.invoiceNumber ?? `#${o.id.slice(0, 8)}`}
-                    </Link>
-                  </td>
-                  <td className="py-2 pr-4">{o.brandName}</td>
-                  <td className="py-2 pr-4">{o.customerName || "—"}</td>
-                  <td className="py-2 pr-4">{o.customerPhone || "—"}</td>
-                  <td className="py-2 pr-4 text-right">{formatMoney(o.total)}</td>
-                  <td className="py-2 pr-4">
-                    <OrderStatusControl orderId={o.id} status={o.fulfillmentStatus} variant="compact" />
-                  </td>
-                  <td className="py-2 pr-4 text-muted-foreground">
-                    {o.paidAt ? new Date(o.paidAt).toLocaleDateString() : "—"}
-                  </td>
-                  <td className="py-2">
-                    <DeleteOrderButton orderId={o.id} />
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-      </div>
+      <OrdersTable orders={orders} activeStatus={status ?? null} />
     </main>
   );
 }

@@ -1,6 +1,7 @@
 import { supabaseAdmin } from "@/lib/supabase/server";
 import { configuredCatalogs } from "@/lib/websiteProducts/catalogs";
 import { listWebsiteProducts } from "@/lib/websiteProducts/client";
+import { countLowStock } from "@/lib/websiteProducts/stock";
 import { formatInvoiceNumber, invoiceDateStamp, invoiceDayStartIso } from "@/lib/invoiceNumber";
 import type {
   Brand,
@@ -214,13 +215,12 @@ async function getLowStockCount(): Promise<number> {
     getBrands(),
   ]);
 
+  // Count per sellable unit (each size of a "variable" product separately),
+  // the same way the Stock page's own "Low stock" filter does -- counting only
+  // parent products here made this stat disagree with what staff see there.
   const websiteLowStock = websiteResults
     .filter((r) => r.status === "fulfilled")
-    .reduce(
-      (sum, r) =>
-        sum + r.value.filter((p) => (p.stock ?? 0) > 0 && (p.stock ?? 0) <= 5).length,
-      0
-    );
+    .reduce((sum, r) => sum + countLowStock(r.value), 0);
 
   const linkedSlugs = new Set(catalogs.map((c) => c.brandSlug));
   const unlinkedBrandIds = brands.filter((b) => !linkedSlugs.has(b.slug)).map((b) => b.id);

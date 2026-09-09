@@ -2,7 +2,15 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, useTransition, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
-import { Check, ChevronLeft, ChevronRight, TriangleAlert } from "lucide-react";
+import {
+  Check,
+  ChevronLeft,
+  ChevronRight,
+  Download,
+  RefreshCw,
+  Trash2,
+  TriangleAlert,
+} from "lucide-react";
 import type { ProductWithStock } from "@/lib/supabase/queries";
 import Dropdown from "@/components/Dropdown";
 import { getCatalog } from "@/lib/websiteProducts/catalogs";
@@ -35,8 +43,8 @@ function posEntryKey(siteProductId: string, variationId: string): string {
 // has no push channel, so this is a poll.
 const POLL_INTERVAL_MS = 15_000;
 
-// Rows shown per page in the table.
-const PAGE_SIZE = 10;
+// Rows-per-page choices for the table footer.
+const PAGE_SIZE_OPTIONS = [10, 25, 50];
 
 const fieldInputClass =
   "rounded border border-black/[.15] bg-transparent px-2.5 py-1.5 text-sm outline-none focus:border-black/40 dark:border-white/[.2] dark:focus:border-white/50";
@@ -141,12 +149,18 @@ export default function WebsiteProductsPanel({
   const [outOfStockOnly, setOutOfStockOnly] = useState(false);
   const [lowStockOnly, setLowStockOnly] = useState(false);
   const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(25);
+  // Product ids ticked for a bulk action.
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const [confirmBulkDelete, setConfirmBulkDelete] = useState(false);
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState<WebsiteProductWrite>(emptyForm);
   const [formError, setFormError] = useState<string | null>(null);
   const [uploadingImage, setUploadingImage] = useState(false);
   const [imageError, setImageError] = useState<string | null>(null);
   const [pendingId, setPendingId] = useState<string | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
   const [, startTransition] = useTransition();
 
   // A brief bottom-right toast confirming a save (price/stock/status/delete) or
@@ -182,7 +196,9 @@ export default function WebsiteProductsPanel({
   // Per-product unsaved edits to the inline price/stock fields. While a product
   // has a draft, polling leaves that field alone so it can't wipe what the user
   // is typing.
-  const [drafts, setDrafts] = useState<Record<string, { price?: string; stock?: string }>>({});
+  const [drafts, setDrafts] = useState<
+    Record<string, { price?: string; stock?: string; title?: string }>
+  >({});
 
   const posByEntryKey = useMemo(() => {
     const map = new Map<string, ProductWithStock>();
@@ -294,15 +310,19 @@ export default function WebsiteProductsPanel({
     };
   }, [refresh]);
 
+  // Manual pull (Refresh button, and after a create/delete). `refreshing`
+  // drives the button's spinner + disabled state so the click has visible
+  // feedback -- background polls never set it.
   function load() {
-    void refresh(false);
+    setRefreshing(true);
+    void refresh(false).finally(() => setRefreshing(false));
   }
 
-  function setDraft(id: string, field: "price" | "stock", value: string) {
+  function setDraft(id: string, field: "price" | "stock" | "title", value: string) {
     setDrafts((prev) => ({ ...prev, [id]: { ...prev[id], [field]: value } }));
   }
 
-  function clearDraft(id: string, field: "price" | "stock") {
+  function clearDraft(id: string, field: "price" | "stock" | "title") {
     setDrafts((prev) => {
       const next = { ...prev };
       const entry = { ...next[id] };
@@ -513,7 +533,17 @@ export default function WebsiteProductsPanel({
   // price/stock are meaningless at the parent level (always 0/null) -- then
   // search/filter over the resulting rows.
   const q = search.trim().toLowerCase();
-  const filtered = toEntries(products ?? []).filter(({ product: p, variation: v }) => {
+  const allEntries = toEntries(products ?? []);
+  const lowStockCount = allEntries.filter(({ product: p, variation: v }) => {
+    const s = (v ? v.stock : p.stock) ?? 0;
+    return s > 0 && s <= 5;
+  }).length;
+  const outOfStockCount = allEntries.filter(({ product: p, variation: v }) => {
+    const s = (v ? v.stock : p.stock) ?? 0;
+    return s <= 0;
+  }).length;
+
+  const filtered = allEntries.filter(({ product: p, variation: v }) => {
     const weight = v?.weight ?? p.weight;
     const stock = v ? v.stock : p.stock;
     return (
@@ -525,16 +555,119 @@ export default function WebsiteProductsPanel({
       (!lowStockOnly || ((stock ?? 0) > 0 && (stock ?? 0) <= 5))
     );
   });
-  const pageCount = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize));
   // Snap back to page 1 whenever the result set changes under the current page.
-  const filterKey = `${q}|${outOfStockOnly}|${lowStockOnly}|${pageCount}`;
+  const filterKey = `${q}|${outOfStockOnly}|${lowStockOnly}|${pageSize}|${pageCount}`;
   const [prevFilterKey, setPrevFilterKey] = useState(filterKey);
   if (filterKey !== prevFilterKey) {
     setPrevFilterKey(filterKey);
     setPage(1);
   }
   const currentPage = Math.min(page, pageCount);
-  const paged = filtered.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
+  const paged = filtered.slice((currentPage - 1) * pageSize, currentPage * pageSize);
+
+  // --- Bulk selection --------------------------------------------------------
+  const pageProductIds = useMemo(
+    () => Array.from(new Set(paged.map((e) => e.product.id))),
+    [paged]
+  );
+  const allOnPageSelected =
+    pageProductIds.length > 0 && pageProductIds.every((id) => selected.has(id));
+
+  function toggleSelected(id: string) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function toggleSelectPage() {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (allOnPageSelected) pageProductIds.forEach((id) => next.delete(id));
+      else pageProductIds.forEach((id) => next.add(id));
+      return next;
+    });
+  }
+
+  async function bulkSetStatus(status: WebsiteProductWrite["status"]) {
+    const ids = Array.from(selected);
+    if (ids.length === 0) return;
+    setBulkBusy(true);
+    let ok = 0;
+    for (const id of ids) {
+      try {
+        await updateWebsiteProductAction(catalogId, id, { status });
+        ok++;
+      } catch {
+        /* keep going; report the tally at the end */
+      }
+    }
+    setBulkBusy(false);
+    setSelected(new Set());
+    notify(
+      ok === ids.length
+        ? `${ok} product${ok === 1 ? "" : "s"} set to ${status === "published" ? "Published" : "Draft"}`
+        : `${ok} of ${ids.length} updated — ${ids.length - ok} failed`,
+      ok === ids.length ? "ok" : "err"
+    );
+    load();
+  }
+
+  async function bulkDelete() {
+    const ids = Array.from(selected);
+    if (ids.length === 0) return;
+    setBulkBusy(true);
+    let ok = 0;
+    for (const id of ids) {
+      try {
+        await deleteWebsiteProductAction(catalogId, id);
+        ok++;
+      } catch {
+        /* keep going */
+      }
+    }
+    setBulkBusy(false);
+    setSelected(new Set());
+    setConfirmBulkDelete(false);
+    notify(
+      ok === ids.length
+        ? `Deleted ${ok} product${ok === 1 ? "" : "s"}`
+        : `Deleted ${ok} of ${ids.length} — ${ids.length - ok} failed`,
+      ok === ids.length ? "ok" : "err"
+    );
+    load();
+  }
+
+  function exportCsv() {
+    const rows = allEntries.map(({ product: p, variation: v }) => ({
+      title: v?.weight ? `${p.title} (${v.weight})` : p.title,
+      price: v ? v.price : p.price,
+      stock: (v ? v.stock : p.stock) ?? "",
+      status: p.status,
+      category_id: p.category_id ?? "",
+    }));
+    const headers = ["title", "price", "stock", "status", "category_id"];
+    const esc = (val: unknown) => {
+      const s = String(val ?? "");
+      return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+    };
+    const csv = [
+      headers.join(","),
+      ...rows.map((r) => headers.map((h) => esc(r[h as keyof typeof r])).join(",")),
+    ].join("\n");
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${getCatalog(catalogId).label.replace(/\s+/g, "-").toLowerCase()}-stock.csv`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  }
 
   return (
     <div className="flex h-full flex-col">
@@ -548,43 +681,104 @@ export default function WebsiteProductsPanel({
         />
         <button
           onClick={() => setShowForm((v) => !v)}
-          className="shrink-0 rounded border border-black/[.15] px-3 py-1.5 text-sm dark:border-white/[.2]"
+          className={`shrink-0 rounded px-3 py-1.5 text-sm font-medium ${
+            showForm
+              ? "border border-black/[.15] dark:border-white/[.2]"
+              : "bg-brand text-black hover:brightness-95"
+          }`}
         >
-          {showForm ? "Cancel" : "Add product"}
+          {showForm ? "Cancel" : "+ Add product"}
+        </button>
+        <button
+          onClick={exportCsv}
+          className="flex shrink-0 items-center gap-1.5 rounded border border-black/[.15] px-3 py-1.5 text-sm dark:border-white/[.2]"
+        >
+          <Download className="size-3.5" />
+          Export CSV
         </button>
         <button
           onClick={load}
-          className="shrink-0 rounded border border-black/[.15] px-3 py-1.5 text-sm dark:border-white/[.2]"
+          disabled={refreshing}
+          className="flex shrink-0 items-center gap-1.5 rounded border border-black/[.15] px-3 py-1.5 text-sm disabled:opacity-60 dark:border-white/[.2]"
         >
-          Refresh
+          <RefreshCw className={`size-3.5 ${refreshing ? "animate-spin" : ""}`} />
+          {refreshing ? "Refreshing…" : "Refresh"}
         </button>
         <button
           onClick={() => {
             setLowStockOnly((v) => !v);
             setOutOfStockOnly(false);
           }}
-          className={`shrink-0 rounded border px-3 py-1.5 text-sm ${
+          className={`flex shrink-0 items-center gap-1.5 rounded-full border px-3 py-1.5 text-sm ${
             lowStockOnly
               ? "border-amber-500 bg-amber-500 text-white"
               : "border-black/[.15] dark:border-white/[.2]"
           }`}
         >
           Low stock
+          <span
+            className={`rounded-full px-1.5 text-xs font-semibold ${
+              lowStockOnly ? "bg-white/25" : "bg-amber-500/15 text-amber-600 dark:text-amber-400"
+            }`}
+          >
+            {lowStockCount}
+          </span>
         </button>
         <button
           onClick={() => {
             setOutOfStockOnly((v) => !v);
             setLowStockOnly(false);
           }}
-          className={`shrink-0 rounded border px-3 py-1.5 text-sm ${
+          className={`flex shrink-0 items-center gap-1.5 rounded-full border px-3 py-1.5 text-sm ${
             outOfStockOnly
               ? "border-red-500 bg-red-500 text-white"
               : "border-black/[.15] dark:border-white/[.2]"
           }`}
         >
           Out of stock
+          <span
+            className={`rounded-full px-1.5 text-xs font-semibold ${
+              outOfStockOnly ? "bg-white/25" : "bg-red-500/15 text-red-600 dark:text-red-400"
+            }`}
+          >
+            {outOfStockCount}
+          </span>
         </button>
       </div>
+
+      {selected.size > 0 && (
+        <div className="flex flex-wrap items-center gap-2 border-b border-black/[.08] bg-brand/10 px-6 py-2.5 text-sm dark:border-white/[.145]">
+          <span className="font-semibold">{selected.size} selected</span>
+          <button
+            onClick={() => bulkSetStatus("published")}
+            disabled={bulkBusy}
+            className="rounded-full border border-black/[.15] px-3 py-1 text-xs font-medium disabled:opacity-50 dark:border-white/[.2]"
+          >
+            Publish
+          </button>
+          <button
+            onClick={() => bulkSetStatus("draft")}
+            disabled={bulkBusy}
+            className="rounded-full border border-black/[.15] px-3 py-1 text-xs font-medium disabled:opacity-50 dark:border-white/[.2]"
+          >
+            Set to Draft
+          </button>
+          <button
+            onClick={() => setConfirmBulkDelete(true)}
+            disabled={bulkBusy}
+            className="rounded-full border border-red-300 px-3 py-1 text-xs font-medium text-red-600 disabled:opacity-50 dark:border-red-900 dark:text-red-400"
+          >
+            Delete
+          </button>
+          {bulkBusy && <span className="text-xs text-zinc-500">Working…</span>}
+          <button
+            onClick={() => setSelected(new Set())}
+            className="ml-auto text-xs font-medium text-zinc-500 hover:text-foreground"
+          >
+            Clear
+          </button>
+        </div>
+      )}
 
       {showForm && (
         <div className="border-b border-black/[.08] bg-black/[.02] px-6 py-5 dark:border-white/[.145] dark:bg-white/[.02]">
@@ -741,12 +935,21 @@ export default function WebsiteProductsPanel({
           <table className="w-full border-collapse text-sm">
             <thead className="sticky top-0 bg-zinc-50 dark:bg-zinc-900">
               <tr className="border-b border-black/[.08] text-left text-xs text-zinc-500 dark:border-white/[.145]">
-                <th className="px-6 py-2 font-medium">Image</th>
+                <th className="w-10 py-2 pl-6">
+                  <input
+                    type="checkbox"
+                    aria-label="Select all on this page"
+                    checked={allOnPageSelected}
+                    onChange={toggleSelectPage}
+                    className="align-middle accent-[var(--brand)]"
+                  />
+                </th>
+                <th className="w-14 px-3 py-2 font-medium">Image</th>
                 <th className="px-3 py-2 font-medium">Product</th>
-                <th className="px-3 py-2 font-medium">Price</th>
-                <th className="px-3 py-2 font-medium">Stock</th>
-                <th className="px-3 py-2 font-medium">Status</th>
-                <th className="px-3 py-2 font-medium">Actions</th>
+                <th className="w-28 px-3 py-2 text-right font-medium">Price</th>
+                <th className="w-20 px-3 py-2 text-right font-medium">Stock</th>
+                <th className="w-32 px-3 py-2 font-medium">Status</th>
+                <th className="w-16 px-3 py-2 text-right font-medium">Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -769,9 +972,20 @@ export default function WebsiteProductsPanel({
                 return (
                   <tr
                     key={key}
-                    className="border-b border-black/[.06] align-top dark:border-white/[.08]"
+                    className={`border-b border-black/[.06] align-top dark:border-white/[.08] ${
+                      selected.has(p.id) ? "bg-brand/5" : ""
+                    }`}
                   >
-                    <td className="px-6 py-2">
+                    <td className="py-2 pl-6">
+                      <input
+                        type="checkbox"
+                        aria-label={`Select ${p.title}`}
+                        checked={selected.has(p.id)}
+                        onChange={() => toggleSelected(p.id)}
+                        className="align-middle accent-[var(--brand)]"
+                      />
+                    </td>
+                    <td className="px-3 py-2">
                       <div className="h-10 w-10 shrink-0 overflow-hidden rounded border border-black/[.1] bg-zinc-100 dark:border-white/[.15] dark:bg-zinc-800">
                         {imageUrl ? (
                           // eslint-disable-next-line @next/next/no-img-element
@@ -783,22 +997,33 @@ export default function WebsiteProductsPanel({
                         )}
                       </div>
                     </td>
-                    <td className="max-w-xs px-6 py-2">
-                      {/* break-words: some titles run long comma-separated
-                          lists with no spaces (e.g. "...-Sakura,Strawberry,
-                          Chocolate,Matcha)"), which the browser can't wrap on
-                          its own -- left alone it overflows straight into the
-                          Price column instead of onto a second line. */}
-                      <div className="break-words font-medium">{p.title}</div>
+                    <td className="px-3 py-2">
+                      {/* Editable name. Keyed by p.id (not editId) so the sibling
+                          size-rows of a "variable" product share one draft and
+                          rename the parent together. */}
+                      <input
+                        type="text"
+                        value={drafts[p.id]?.title ?? p.title}
+                        disabled={pendingId === p.id}
+                        onChange={(e) => setDraft(p.id, "title", e.target.value)}
+                        onBlur={(e) => {
+                          const title = e.target.value.trim();
+                          if (title && title !== p.title) {
+                            patch(p.id, { title }, "Name updated");
+                          }
+                          clearDraft(p.id, "title");
+                        }}
+                        className="w-full min-w-0 rounded border border-transparent bg-transparent px-1 py-0.5 font-medium hover:border-black/[.15] focus:border-black/40 focus:outline-none disabled:opacity-50 dark:hover:border-white/[.2] dark:focus:border-white/50"
+                      />
                       {weight && <div className="text-xs text-zinc-400">{weight}</div>}
                       {p.taste_notes && (
                         <div className="break-words text-xs text-zinc-400">{p.taste_notes}</div>
                       )}
                     </td>
-                    <td className="px-3 py-2">
+                    <td className="px-3 py-2 text-right">
                       <label
                         title={editTitle}
-                        className="flex w-24 items-center gap-1 rounded border border-black/[.15] px-2 py-1 text-sm focus-within:border-black/40 dark:border-white/[.2] dark:focus-within:border-white/50"
+                        className="inline-flex w-24 items-center gap-1 rounded border border-black/[.15] px-2 py-1 text-sm focus-within:border-black/40 dark:border-white/[.2] dark:focus-within:border-white/50"
                       >
                         <span className="select-none text-zinc-400">$</span>
                         <input
@@ -820,7 +1045,7 @@ export default function WebsiteProductsPanel({
                         />
                       </label>
                     </td>
-                    <td className="px-3 py-2">
+                    <td className="px-3 py-2 text-right">
                       <input
                         type="number"
                         min={0}
@@ -840,30 +1065,48 @@ export default function WebsiteProductsPanel({
                       />
                     </td>
                     <td className="px-3 py-2">
-                      <select
-                        value={p.status}
+                      {/* Colored pill; click toggles Published <-> Draft. */}
+                      <button
+                        type="button"
                         disabled={pendingId === p.id}
-                        onChange={(e) => {
-                          const status = e.target.value as WebsiteProductWrite["status"];
+                        onClick={() => {
+                          const status: WebsiteProductWrite["status"] =
+                            p.status === "published" ? "draft" : "published";
                           patch(
                             p.id,
                             { status },
                             `Status set to ${status === "published" ? "Published" : "Draft"}`
                           );
                         }}
-                        className="rounded border border-black/[.15] bg-card px-2 py-1 text-sm dark:border-white/[.2]"
+                        title="Click to toggle Published / Draft"
+                        className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold transition-colors disabled:opacity-50 ${
+                          p.status === "published"
+                            ? "bg-emerald-500/10 text-emerald-600 hover:bg-emerald-500/20 dark:text-emerald-400"
+                            : "bg-zinc-500/10 text-zinc-500 hover:bg-zinc-500/20 dark:text-zinc-400"
+                        }`}
                       >
-                        <option value="draft">Draft</option>
-                        <option value="published">Published</option>
-                      </select>
+                        <span
+                          className={`size-1.5 rounded-full ${
+                            p.status === "published" ? "bg-emerald-500" : "bg-zinc-400"
+                          }`}
+                        />
+                        {p.status === "published" ? "Published" : "Draft"}
+                      </button>
                     </td>
-                    <td className="px-3 py-2">
+                    <td className="px-3 py-2 text-right">
                       <button
+                        type="button"
                         disabled={pendingId === editId || pendingId === p.id}
                         onClick={() => remove(p, v)}
-                        className="rounded border border-red-300 px-2 py-1 text-xs text-red-500 disabled:opacity-40 dark:border-red-900"
+                        title="Delete product"
+                        aria-label="Delete product"
+                        className="inline-flex size-8 items-center justify-center rounded-md text-zinc-400 transition-colors hover:bg-red-50 hover:text-red-600 disabled:opacity-40 dark:hover:bg-red-950 dark:hover:text-red-400"
                       >
-                        {pendingId === editId || pendingId === p.id ? "…" : "Delete"}
+                        {pendingId === editId || pendingId === p.id ? (
+                          "…"
+                        ) : (
+                          <Trash2 className="size-4" />
+                        )}
                       </button>
                     </td>
                   </tr>
@@ -871,7 +1114,7 @@ export default function WebsiteProductsPanel({
               })}
               {filtered.length === 0 && (
                 <tr>
-                  <td colSpan={6} className="px-6 py-8 text-center text-sm text-zinc-500">
+                  <td colSpan={7} className="px-6 py-8 text-center text-sm text-zinc-500">
                     {q ? "No products match your search." : "No website products yet."}
                   </td>
                 </tr>
@@ -881,38 +1124,43 @@ export default function WebsiteProductsPanel({
         )}
       </div>
 
-      {products && pageCount > 1 && (
-        <div className="flex flex-wrap items-center justify-center gap-1.5 border-t border-black/[.08] px-6 py-3 dark:border-white/[.145]">
-          <button
-            onClick={() => setPage(currentPage - 1)}
-            disabled={currentPage <= 1}
-            aria-label="Previous page"
-            className="flex h-8 w-8 shrink-0 items-center justify-center rounded border border-black/[.15] disabled:opacity-30 dark:border-white/[.2]"
-          >
-            <ChevronLeft className="size-4" />
-          </button>
-          {Array.from({ length: pageCount }, (_, i) => i + 1).map((n) => (
-            <button
-              key={n}
-              onClick={() => setPage(n)}
-              aria-current={n === currentPage ? "page" : undefined}
-              className={`h-8 w-8 shrink-0 rounded border text-sm tabular-nums ${
-                n === currentPage
-                  ? "border-black bg-black text-white dark:border-white dark:bg-white dark:text-black"
-                  : "border-black/[.15] dark:border-white/[.2]"
-              }`}
+      {products && filtered.length > 0 && (
+        <div className="flex flex-wrap items-center justify-between gap-3 border-t border-black/[.08] px-6 py-3 text-sm dark:border-white/[.145]">
+          <label className="flex items-center gap-2 text-xs text-zinc-500">
+            Items per page
+            <select
+              value={pageSize}
+              onChange={(e) => setPageSize(Number(e.target.value))}
+              className="rounded border border-black/[.15] bg-card px-2 py-1 text-xs text-foreground dark:border-white/[.2]"
             >
-              {n}
+              {PAGE_SIZE_OPTIONS.map((n) => (
+                <option key={n} value={n}>
+                  {n}
+                </option>
+              ))}
+            </select>
+          </label>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setPage(currentPage - 1)}
+              disabled={currentPage <= 1}
+              className="flex items-center gap-1 rounded border border-black/[.15] px-2.5 py-1 text-xs disabled:opacity-30 dark:border-white/[.2]"
+            >
+              <ChevronLeft className="size-3.5" />
+              Prev
             </button>
-          ))}
-          <button
-            onClick={() => setPage(currentPage + 1)}
-            disabled={currentPage >= pageCount}
-            aria-label="Next page"
-            className="flex h-8 w-8 shrink-0 items-center justify-center rounded border border-black/[.15] disabled:opacity-30 dark:border-white/[.2]"
-          >
-            <ChevronRight className="size-4" />
-          </button>
+            <span className="tabular-nums text-zinc-500">
+              Page {currentPage} of {pageCount}
+            </span>
+            <button
+              onClick={() => setPage(currentPage + 1)}
+              disabled={currentPage >= pageCount}
+              className="flex items-center gap-1 rounded border border-black/[.15] px-2.5 py-1 text-xs disabled:opacity-30 dark:border-white/[.2]"
+            >
+              Next
+              <ChevronRight className="size-3.5" />
+            </button>
+          </div>
         </div>
       )}
 
@@ -988,6 +1236,51 @@ export default function WebsiteProductsPanel({
             </div>
           );
         })()}
+
+      {confirmBulkDelete && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+          onClick={() => {
+            if (!bulkBusy) setConfirmBulkDelete(false);
+          }}
+        >
+          <div
+            role="alertdialog"
+            aria-modal="true"
+            aria-label="Delete selected products"
+            className="w-full max-w-sm rounded-2xl border border-border bg-card p-6 text-center shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-red-100 text-red-600 dark:bg-red-950 dark:text-red-400">
+              <TriangleAlert className="h-6 w-6" />
+            </div>
+            <h2 className="mt-4 text-base font-semibold text-foreground">
+              Delete {selected.size} product{selected.size === 1 ? "" : "s"}?
+            </h2>
+            <p className="mt-1.5 text-sm text-muted-foreground">
+              This removes them from the website for good. This can&apos;t be undone.
+            </p>
+            <div className="mt-6 flex justify-center gap-2">
+              <button
+                type="button"
+                disabled={bulkBusy}
+                onClick={() => setConfirmBulkDelete(false)}
+                className="flex-1 rounded-full border border-border px-4 py-2 text-sm font-medium transition-colors hover:bg-muted disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={bulkBusy}
+                onClick={bulkDelete}
+                className="flex-1 rounded-full bg-red-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-red-700 disabled:opacity-50"
+              >
+                {bulkBusy ? "Deleting…" : "Delete all"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
