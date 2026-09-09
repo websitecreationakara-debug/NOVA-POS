@@ -332,12 +332,16 @@ export type OrderListRow = {
   total: number;
   fulfillmentStatus: FulfillmentStatus;
   paidAt: string | null;
+  deliveryAt: string | null;
 };
 
 export async function getOrdersList(status?: FulfillmentStatus): Promise<OrderListRow[]> {
+  // `*` rather than an explicit column list so the page still loads if the
+  // 0020 delivery_at migration hasn't been applied yet (o.delivery_at is
+  // just undefined until then).
   let query = supabaseAdmin
     .from("orders")
-    .select("id, customer_name, customer_phone, total, fulfillment_status, paid_at, brands(name)")
+    .select("*, brands(name)")
     .eq("status", "paid")
     .order("paid_at", { ascending: false })
     .limit(200);
@@ -356,6 +360,7 @@ export async function getOrdersList(status?: FulfillmentStatus): Promise<OrderLi
     total: number;
     fulfillment_status: FulfillmentStatus;
     paid_at: string | null;
+    delivery_at: string | null;
     brands: { name: string } | null;
   };
 
@@ -368,6 +373,7 @@ export async function getOrdersList(status?: FulfillmentStatus): Promise<OrderLi
     total: o.total,
     fulfillmentStatus: o.fulfillment_status,
     paidAt: o.paid_at,
+    deliveryAt: o.delivery_at ?? null,
   }));
 
   // Date-based invoice numbers (YYYYMMDD[-N]). Group by Phnom Penh day,

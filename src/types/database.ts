@@ -18,7 +18,13 @@ export function staffRoleLabel(role: string): string {
 }
 export type PaymentMethod = "cash" | "bank_qr";
 export type OrderStatus = "open" | "paid" | "voided";
-export type FulfillmentStatus = "new_order" | "processing" | "delivered" | "cancelled" | "complete";
+export type FulfillmentStatus =
+  | "pre_order"
+  | "new_order"
+  | "processing"
+  | "delivered"
+  | "cancelled"
+  | "complete";
 export type DiscountType = "percent" | "fixed";
 
 export type Brand = {
@@ -141,6 +147,8 @@ export type Order = {
   created_by: string | null;
   created_at: string;
   paid_at: string | null;
+  // Customer-requested delivery date & time (ISO); null = ASAP / same day.
+  delivery_at: string | null;
   invoice_number: string | null;
   customer_name: string | null;
   customer_phone: string | null;

@@ -30,6 +30,20 @@ function formatDateTime(iso: string | null) {
   });
 }
 
+// The requested delivery date & time (ISO) -- weekday + date + time, no seconds.
+function formatDeliveryAt(iso: string | null) {
+  if (!iso) return "—";
+  return new Date(iso).toLocaleString("en-US", {
+    weekday: "long",
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true,
+  });
+}
+
 const PAYMENT_LABELS: Record<string, string> = {
   bank_qr: "BANK TRS",
   cash: "CASH",
@@ -165,6 +179,9 @@ function InvoiceDoc({
         <Meta kh="លេខទូរស័ព្ទ" value={order.customer_phone || "—"} />
         <Meta kh="ថ្ងៃបញ្ជាទិញ" value={formatDateTime(order.paid_at)} />
         <Meta kh="អាសយដ្ឋាន" value={customerAddress || "—"} />
+        {order.delivery_at && (
+          <Meta kh="ថ្ងៃម៉ោងដឹកជញ្ជូន" value={formatDeliveryAt(order.delivery_at)} />
+        )}
       </div>
 
       {/* 3 + 4. Items table with sub-details / summary footer */}

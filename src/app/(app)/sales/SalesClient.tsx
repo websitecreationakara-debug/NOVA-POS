@@ -9,13 +9,13 @@ import {
   ChevronRight,
   ChevronUp,
   Plus,
+  ShoppingCart,
   User,
   UtensilsCrossed,
 } from "lucide-react";
 import type { Brand, Category, PaymentMethod } from "@/types/database";
 import type { ProductWithStock } from "@/lib/supabase/queries";
 import type { WebsiteProduct, WebsiteProductVariation } from "@/lib/websiteProducts/types";
-import { categoryDotColor } from "@/lib/categoryColor";
 import SalesWebsiteGrid from "./SalesWebsiteGrid";
 import type { SalesWebsiteCatalog } from "./page";
 import {
@@ -29,6 +29,20 @@ import { ensurePosProductForSiteProduct } from "./websiteActions";
 
 function formatMoney(n: number) {
   return `$${n.toFixed(2)}`;
+}
+
+// Local calendar date, `n` days from today, as YYYY-MM-DD.
+function dateOffset(n: number): string {
+  const d = new Date();
+  d.setDate(d.getDate() + n);
+  return d.toLocaleDateString("en-CA");
+}
+
+// `now` as the "YYYY-MM-DDTHH:MM" value <input type="datetime-local"> uses.
+function nowLocalMinute(): string {
+  const d = new Date();
+  d.setSeconds(0, 0);
+  return `${d.toLocaleDateString("en-CA")}T${d.toTimeString().slice(0, 5)}`;
 }
 
 function levenshtein(a: string, b: string): number {
@@ -107,6 +121,9 @@ export default function SalesClient({
   const [customerAddress, setCustomerAddress] = useState("");
   const [discountPercent, setDiscountPercent] = useState("");
   const [minusAmount, setMinusAmount] = useState("");
+  // Customer-requested delivery date & time as "YYYY-MM-DDTHH:MM"
+  // (datetime-local). Blank = ASAP / same day.
+  const [deliveryAt, setDeliveryAt] = useState("");
   const [deliveryFee, setDeliveryFee] = useState("");
   const [selectedCustomer, setSelectedCustomer] = useState<{ id: string; phone: string } | null>(
     null
@@ -435,6 +452,7 @@ export default function SalesClient({
           customerAddress: customerAddress.trim() || undefined,
           discount: discountAmount || undefined,
           deliveryFee: deliveryFeeValue || undefined,
+          deliveryAt: deliveryAt ? new Date(deliveryAt).toISOString() : undefined,
         });
         setReceipt(result);
         setCart([]);
@@ -445,6 +463,7 @@ export default function SalesClient({
         setDiscountPercent("");
         setMinusAmount("");
         setDeliveryFee("");
+        setDeliveryAt("");
         setSelectedCustomer(null);
         setSuggestions([]);
         router.refresh(); // pick up decremented stock counts for the next sale
@@ -552,7 +571,7 @@ export default function SalesClient({
         <main className="flex-1 overflow-y-auto p-6">
           {/* Category chips wrap onto a few rows -- no horizontal scrolling.
               Capped at ~3 rows with a toggle so a long list doesn't push the
-              products down. Each carries a colour dot for recognition. */}
+              products down. */}
           <div className="mb-4">
             <div
               className="flex flex-wrap gap-2"
@@ -572,16 +591,12 @@ export default function SalesClient({
                 <button
                   key={c.id}
                   onClick={() => setActiveCategoryId(c.id)}
-                  className={`flex items-center gap-1.5 rounded-full border px-4 py-1.5 text-sm ${
+                  className={`rounded-full border px-4 py-1.5 text-sm ${
                     activeCategoryId === c.id
                       ? "border-black bg-black text-white dark:border-white dark:bg-white dark:text-black"
                       : "border-black/[.15] dark:border-white/[.2]"
                   }`}
                 >
-                  <span
-                    className="size-2 shrink-0 rounded-full"
-                    style={{ backgroundColor: categoryDotColor(c.name) }}
-                  />
                   {c.name}
                 </button>
               ))}
@@ -674,9 +689,21 @@ export default function SalesClient({
           <div className="border-b border-black/[.08] px-4 py-3 font-medium dark:border-white/[.145]">
             Order
           </div>
-          <div className="min-h-0 flex-1 overflow-y-auto px-4 py-2">
+          <div
+            className={`min-h-[8rem] flex-1 overflow-y-auto px-4 py-3 ${
+              cart.length === 0 ? "flex items-center justify-center" : ""
+            }`}
+          >
             {cart.length === 0 && (
-              <p className="mt-4 text-sm text-zinc-500">Tap a product to add it.</p>
+              <div className="flex flex-col items-center gap-3 px-4 text-center">
+                <div className="grid size-16 place-items-center rounded-full bg-muted text-muted-foreground">
+                  <ShoppingCart className="size-7" />
+                </div>
+                <p className="text-sm font-medium text-foreground">Your order is empty</p>
+                <p className="text-xs text-muted-foreground">
+                  Tap a product on the left to add it here.
+                </p>
+              </div>
             )}
             {cart.map((line) => (
               <div key={line.productId} className="flex items-center justify-between py-2 text-sm">
@@ -709,7 +736,8 @@ export default function SalesClient({
             ))}
           </div>
 
-          <div className="shrink-0 space-y-3 border-t border-black/[.08] px-4 py-3 dark:border-white/[.145]">
+          <div className="flex max-h-[62%] shrink-0 flex-col border-t border-black/[.08] dark:border-white/[.145]">
+            <div className="min-h-0 flex-1 space-y-3 overflow-y-auto px-4 py-3">
             {/* Customer */}
             <div>
               <p className="mb-1.5 text-[11px] font-semibold tracking-wide text-zinc-400 uppercase">
@@ -838,6 +866,59 @@ export default function SalesClient({
                   />
                 </label>
               </div>
+
+              {/* When the customer wants it, date + time -- blank = same day / ASAP. */}
+              <div className="mt-2">
+                <div className="mb-1 flex items-center justify-between text-[11px] text-zinc-400">
+                  <span>Deliver by</span>
+                  <span className="text-zinc-500">blank = same day</span>
+                </div>
+                <div className="flex gap-1.5">
+                  <input
+                    type="datetime-local"
+                    min={nowLocalMinute()}
+                    value={deliveryAt}
+                    onChange={(e) => setDeliveryAt(e.target.value)}
+                    className="min-w-0 flex-1 rounded border border-black/[.15] bg-transparent px-2 py-1.5 text-sm text-foreground [color-scheme:light] dark:border-white/[.2] dark:[color-scheme:dark]"
+                  />
+                  {deliveryAt && (
+                    <button
+                      type="button"
+                      onClick={() => setDeliveryAt("")}
+                      className="rounded border border-black/[.15] px-2 text-xs text-zinc-500 dark:border-white/[.2]"
+                    >
+                      Clear
+                    </button>
+                  )}
+                </div>
+                <div className="mt-1.5 flex flex-wrap gap-1.5">
+                  {(
+                    [
+                      ["Today", 0],
+                      ["Tomorrow", 1],
+                      ["In 2 days", 2],
+                    ] as const
+                  ).map(([label, n]) => {
+                    // Keep whatever time is already picked; default to 12:00.
+                    const time = deliveryAt.includes("T") ? deliveryAt.slice(11, 16) : "12:00";
+                    const target = `${dateOffset(n)}T${time}`;
+                    return (
+                      <button
+                        key={label}
+                        type="button"
+                        onClick={() => setDeliveryAt(target)}
+                        className={`rounded-full border px-2 py-0.5 text-[11px] ${
+                          deliveryAt.slice(0, 10) === dateOffset(n)
+                            ? "border-brand bg-brand text-black"
+                            : "border-black/[.15] dark:border-white/[.2]"
+                        }`}
+                      >
+                        {label}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
             </div>
 
             {/* Payment */}
@@ -876,9 +957,11 @@ export default function SalesClient({
                 />
               )}
             </div>
+            </div>
 
-            {/* Summary + total, right above Charge so the amount due is
-                impossible to miss. */}
+            {/* Summary + total + Charge -- always pinned at the bottom of the
+                panel so the amount due and the button never scroll away. */}
+            <div className="shrink-0 space-y-2.5 border-t border-black/[.08] px-4 py-3 dark:border-white/[.145]">
             <div className="rounded-lg bg-black/[.03] px-3 py-2.5 dark:bg-white/[.04]">
               <div className="flex justify-between text-sm text-zinc-500">
                 <span>Subtotal</span>
@@ -911,6 +994,7 @@ export default function SalesClient({
             >
               {isCharging ? "Charging…" : `Charge ${formatMoney(finalTotal)}`}
             </button>
+            </div>
           </div>
         </aside>
       </div>

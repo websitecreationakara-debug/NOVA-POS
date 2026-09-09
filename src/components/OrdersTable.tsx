@@ -3,10 +3,11 @@
 import { useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Search, X } from "lucide-react";
+import { Search, Truck, X } from "lucide-react";
 import type { OrderListRow } from "@/lib/supabase/queries";
 import type { FulfillmentStatus } from "@/types/database";
 import { updateFulfillmentStatusAction } from "@/app/(app)/orders/actions";
+import { notifyOrdersChanged } from "@/lib/ordersChanged";
 import { FULFILLMENT_STATUSES, STATUS_LABELS } from "@/lib/orderStatus";
 import OrderStatusControl from "@/components/OrderStatusControl";
 import OrderRowMenu from "@/components/OrderRowMenu";
@@ -19,6 +20,17 @@ function formatMoney(n: number) {
 // inputs compare like-for-like.
 function localDay(iso: string) {
   return new Date(iso).toLocaleDateString("en-CA");
+}
+
+// "Wed, Sep 11, 2:00 PM" from an ISO timestamp.
+function formatDeliveryAt(iso: string) {
+  return new Date(iso).toLocaleString(undefined, {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
 }
 
 export default function OrdersTable({
@@ -90,6 +102,7 @@ export default function OrdersTable({
     await Promise.allSettled(ids.map((id) => updateFulfillmentStatusAction(id, status)));
     setBulkBusy(false);
     setSelected(new Set());
+    notifyOrdersChanged();
     router.refresh();
   }
 
@@ -244,7 +257,27 @@ export default function OrdersTable({
                     />
                   </td>
                   <td className="py-2 pr-4 text-muted-foreground">
-                    {o.paidAt ? new Date(o.paidAt).toLocaleDateString() : "—"}
+                    <div>{o.paidAt ? new Date(o.paidAt).toLocaleDateString() : "—"}</div>
+                    {o.deliveryAt &&
+                      (() => {
+                        const due = new Date(o.deliveryAt).getTime() <= Date.now();
+                        const settled =
+                          o.fulfillmentStatus === "delivered" ||
+                          o.fulfillmentStatus === "complete" ||
+                          o.fulfillmentStatus === "cancelled";
+                        return (
+                          <div
+                            className={`mt-0.5 flex items-center gap-1 text-xs font-medium ${
+                              due && !settled
+                                ? "text-amber-600 dark:text-amber-400"
+                                : "text-muted-foreground"
+                            }`}
+                          >
+                            <Truck className="size-3" />
+                            {formatDeliveryAt(o.deliveryAt)}
+                          </div>
+                        );
+                      })()}
                   </td>
                   <td className="py-2">
                     <OrderRowMenu orderId={o.id} />

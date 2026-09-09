@@ -60,6 +60,20 @@ export default async function OrderDetailPage({
             <p className="text-muted-foreground">Business</p>
             <p className="font-medium">{brandName}</p>
           </div>
+          {order.delivery_at && (
+            <div>
+              <p className="text-muted-foreground">Requested delivery</p>
+              <p className="font-medium">
+                {new Date(order.delivery_at).toLocaleString(undefined, {
+                  weekday: "short",
+                  month: "short",
+                  day: "numeric",
+                  hour: "numeric",
+                  minute: "2-digit",
+                })}
+              </p>
+            </div>
+          )}
         </div>
 
         <div className="mt-6">
