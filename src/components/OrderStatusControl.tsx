@@ -1,15 +1,26 @@
 "use client";
 
 import { useEffect, useRef, useState, useTransition } from "react";
-import { Ban, Check, ChevronDown, CircleCheck, Hourglass, Inbox, Truck } from "lucide-react";
+import {
+  Ban,
+  CalendarClock,
+  Check,
+  ChevronDown,
+  CircleCheck,
+  Hourglass,
+  Inbox,
+  Truck,
+} from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { updateFulfillmentStatusAction } from "@/app/(app)/orders/actions";
+import { notifyOrdersChanged } from "@/lib/ordersChanged";
 import { FULFILLMENT_STATUSES, STATUS_LABELS, STATUS_STYLES } from "@/lib/orderStatus";
 import type { FulfillmentStatus } from "@/types/database";
 
 // An icon that matches each order state -- a delivery truck for "Delivered",
 // an hourglass while it's being prepared, etc.
 const STATUS_ICON: Record<FulfillmentStatus, LucideIcon> = {
+  pre_order: CalendarClock,
   new_order: Inbox,
   processing: Hourglass,
   delivered: Truck,
@@ -18,10 +29,11 @@ const STATUS_ICON: Record<FulfillmentStatus, LucideIcon> = {
 };
 
 const STATUS_ICON_COLOR: Record<FulfillmentStatus, string> = {
+  pre_order: "text-violet-500",
   new_order: "text-blue-500",
   processing: "text-amber-500",
   delivered: "text-teal-500",
-  cancelled: "text-zinc-400",
+  cancelled: "text-red-500",
   complete: "text-green-500",
 };
 
@@ -46,6 +58,7 @@ export default function OrderStatusControl({
     startTransition(async () => {
       try {
         await updateFulfillmentStatusAction(orderId, next);
+        notifyOrdersChanged();
       } catch {
         setCurrent(previous);
         setError("Failed to update status");

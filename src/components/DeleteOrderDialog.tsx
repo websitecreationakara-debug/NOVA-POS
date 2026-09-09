@@ -4,6 +4,7 @@ import { useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { TriangleAlert } from "lucide-react";
 import { deleteOrderAction } from "@/app/(app)/orders/actions";
+import { notifyOrdersChanged } from "@/lib/ordersChanged";
 
 // The delete-confirmation modal on its own, so it can be mounted by whatever
 // owns the open state -- a per-row button, or the row's "…" menu (which
@@ -44,6 +45,7 @@ export default function DeleteOrderDialog({
     startTransition(async () => {
       try {
         await deleteOrderAction(orderId);
+        notifyOrdersChanged();
         if (redirectTo) {
           router.push(redirectTo);
         } else {

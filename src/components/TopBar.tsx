@@ -3,6 +3,7 @@
 import { LogOut } from "lucide-react";
 import { logoutAction } from "@/app/login/actions";
 import ThemeToggle from "@/components/ThemeToggle";
+import DeliveryAlertBell from "@/components/DeliveryAlertBell";
 import { staffRoleLabel } from "@/types/database";
 
 export default function TopBar({ fullName, role }: { fullName: string; role: string }) {
@@ -17,6 +18,7 @@ export default function TopBar({ fullName, role }: { fullName: string; role: str
   return (
     <header className="print:hidden flex shrink-0 items-center gap-3 border-b border-border bg-card px-6 py-3">
       <div className="ml-auto flex items-center gap-3">
+        <DeliveryAlertBell />
         <ThemeToggle />
         <div className="flex items-center gap-2.5 rounded-full border border-border bg-muted/60 py-1 pr-3 pl-1">
           <span className="grid size-7 shrink-0 place-items-center rounded-full bg-brand/20 text-xs font-bold text-brand">

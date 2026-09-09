@@ -7,7 +7,6 @@ import type {
   WebsiteProduct,
   WebsiteProductVariation,
 } from "@/lib/websiteProducts/types";
-import { categoryDotColor } from "@/lib/categoryColor";
 import { listWebsiteProductsAction } from "../stock/websiteActions";
 
 // useLayoutEffect on the client, useEffect on the server (avoids the SSR warning).
@@ -249,8 +248,7 @@ export default function SalesWebsiteGrid({
     <main ref={scrollerRef} className="flex-1 overflow-y-auto p-6">
       {showChips && (
         // Wrap onto a few rows -- no horizontal scrolling. Capped at ~3 rows
-        // with a toggle so a long list doesn't push the products down the
-        // page. Each chip carries a colour dot for at-a-glance recognition.
+        // with a toggle so a long list doesn't push the products down the page.
         <div className="mb-4">
           <div
             className="flex flex-wrap gap-2"
@@ -270,16 +268,12 @@ export default function SalesWebsiteGrid({
               <button
                 key={c.id}
                 onClick={() => setActiveCategoryId(c.id)}
-                className={`flex items-center gap-1.5 rounded-full border px-4 py-1.5 text-sm ${
+                className={`rounded-full border px-4 py-1.5 text-sm ${
                   activeCategoryId === c.id
                     ? "border-black bg-black text-white dark:border-white dark:bg-white dark:text-black"
                     : "border-black/[.15] dark:border-white/[.2]"
                 }`}
               >
-                <span
-                  className="size-2 shrink-0 rounded-full"
-                  style={{ backgroundColor: categoryDotColor(c.label) }}
-                />
                 {c.label}
               </button>
             ))}

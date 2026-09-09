@@ -101,6 +101,9 @@ export async function chargeOrder(input: {
   customerAddress?: string;
   discount?: number;
   deliveryFee?: number;
+  // Customer-requested delivery date & time as an ISO string. Omit for
+  // ASAP / same day.
+  deliveryAt?: string;
 }): Promise<ChargeResult> {
   const {
     brandId,
@@ -112,6 +115,7 @@ export async function chargeOrder(input: {
     customerAddress,
     discount,
     deliveryFee,
+    deliveryAt,
   } = input;
 
   if (lines.length === 0) {
@@ -151,6 +155,32 @@ export async function chargeOrder(input: {
     throw error ?? new Error("Failed to create order");
   }
 
+  // The order + stock decrement are already committed by charge_order() above,
+  // so from here on nothing may throw -- a failure past this point loses the
+  // whole sale for the cashier and risks a re-charge. Surface it as a warning
+  // instead.
+  const warnings: string[] = [];
+
+  // charge_order() doesn't take a delivery time -- stamp it on afterwards so
+  // the RPC signature stays put. Parse it here so a malformed value can't
+  // reach the column.
+  if (deliveryAt) {
+    const parsed = new Date(deliveryAt);
+    if (Number.isNaN(parsed.getTime())) {
+      warnings.push("Delivery date/time was invalid and wasn't saved.");
+    } else {
+      const { error: dateError } = await supabaseAdmin
+        .from("orders")
+        .update({ delivery_at: parsed.toISOString() })
+        .eq("id", orderId);
+      if (dateError) {
+        warnings.push(
+          `Order saved, but the delivery time didn't. Run the delivery_at migration, then set it on the order. (${dateError.message})`
+        );
+      }
+    }
+  }
+
   const { data: order } = await supabaseAdmin
     .from("orders")
     .select("invoice_number, total")
@@ -158,16 +188,17 @@ export async function chargeOrder(input: {
     .single();
 
   const syncFailures = await pushStockToSites(lines.map((l) => l.productId));
-  const stockSyncWarning =
-    syncFailures.length > 0
-      ? `Stock wasn't synced to ${[...new Set(syncFailures.map((f) => f.label))].join(", ")} -- update it there manually.`
-      : null;
+  if (syncFailures.length > 0) {
+    warnings.push(
+      `Stock wasn't synced to ${[...new Set(syncFailures.map((f) => f.label))].join(", ")} -- update it there manually.`
+    );
+  }
 
   return {
     orderId,
     invoiceNumber: order?.invoice_number ?? null,
     total: order?.total ?? 0,
     lines,
-    stockSyncWarning,
+    stockSyncWarning: warnings.length > 0 ? warnings.join(" ") : null,
   };
 }
