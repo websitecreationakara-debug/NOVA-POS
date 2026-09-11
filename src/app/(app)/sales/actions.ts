@@ -104,6 +104,8 @@ export async function chargeOrder(input: {
   // Customer-requested delivery date & time as an ISO string. Omit for
   // ASAP / same day.
   deliveryAt?: string;
+  // Free-text note / description for the order.
+  note?: string;
 }): Promise<ChargeResult> {
   const {
     brandId,
@@ -116,6 +118,7 @@ export async function chargeOrder(input: {
     discount,
     deliveryFee,
     deliveryAt,
+    note,
   } = input;
 
   if (lines.length === 0) {
@@ -178,6 +181,20 @@ export async function chargeOrder(input: {
           `Order saved, but the delivery time didn't. Run the delivery_at migration, then set it on the order. (${dateError.message})`
         );
       }
+    }
+  }
+
+  // Same deal for the note (migration 0021) -- stamp it on, warn if the
+  // column isn't there yet rather than losing the sale.
+  if (note?.trim()) {
+    const { error: noteError } = await supabaseAdmin
+      .from("orders")
+      .update({ note: note.trim() })
+      .eq("id", orderId);
+    if (noteError) {
+      warnings.push(
+        `Order saved, but the note didn't. Run the order note migration (0021), then add it on the order. (${noteError.message})`
+      );
     }
   }
 

@@ -146,6 +146,7 @@ export default function WebsiteProductsPanel({
   const [products, setProducts] = useState<WebsiteProduct[] | null>(initialProducts);
   const [loadError, setLoadError] = useState<string | null>(initialError);
   const [search, setSearch] = useState("");
+  const [categoryFilter, setCategoryFilter] = useState<string>("");
   const [outOfStockOnly, setOutOfStockOnly] = useState(false);
   const [lowStockOnly, setLowStockOnly] = useState(false);
   const [page, setPage] = useState(1);
@@ -551,13 +552,15 @@ export default function WebsiteProductsPanel({
         p.title.toLowerCase().includes(q) ||
         (weight ?? "").toLowerCase().includes(q) ||
         (p.taste_notes ?? "").toLowerCase().includes(q)) &&
+      (!categoryFilter ||
+        (categoryFilter === "__none__" ? !p.category_id : p.category_id === categoryFilter)) &&
       (!outOfStockOnly || (stock ?? 0) <= 0) &&
       (!lowStockOnly || ((stock ?? 0) > 0 && (stock ?? 0) <= 5))
     );
   });
   const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize));
   // Snap back to page 1 whenever the result set changes under the current page.
-  const filterKey = `${q}|${outOfStockOnly}|${lowStockOnly}|${pageSize}|${pageCount}`;
+  const filterKey = `${q}|${categoryFilter}|${outOfStockOnly}|${lowStockOnly}|${pageSize}|${pageCount}`;
   const [prevFilterKey, setPrevFilterKey] = useState(filterKey);
   if (filterKey !== prevFilterKey) {
     setPrevFilterKey(filterKey);
@@ -743,6 +746,45 @@ export default function WebsiteProductsPanel({
           >
             {outOfStockCount}
           </span>
+        </button>
+      </div>
+
+      <div className="flex flex-wrap gap-2 border-b border-black/[.08] px-6 py-3 dark:border-white/[.145]">
+        <button
+          type="button"
+          onClick={() => setCategoryFilter("")}
+          className={`rounded-full border px-3 py-1 text-xs ${
+            categoryFilter === ""
+              ? "border-black bg-black text-white dark:border-white dark:bg-white dark:text-black"
+              : "border-black/[.15] dark:border-white/[.2]"
+          }`}
+        >
+          All
+        </button>
+        {categoryOptions.map((c) => (
+          <button
+            key={c.id}
+            type="button"
+            onClick={() => setCategoryFilter(c.id)}
+            className={`rounded-full border px-3 py-1 text-xs ${
+              categoryFilter === c.id
+                ? "border-black bg-black text-white dark:border-white dark:bg-white dark:text-black"
+                : "border-black/[.15] dark:border-white/[.2]"
+            }`}
+          >
+            {c.label}
+          </button>
+        ))}
+        <button
+          type="button"
+          onClick={() => setCategoryFilter("__none__")}
+          className={`rounded-full border px-3 py-1 text-xs ${
+            categoryFilter === "__none__"
+              ? "border-black bg-black text-white dark:border-white dark:bg-white dark:text-black"
+              : "border-black/[.15] dark:border-white/[.2]"
+          }`}
+        >
+          Uncategorized
         </button>
       </div>
 

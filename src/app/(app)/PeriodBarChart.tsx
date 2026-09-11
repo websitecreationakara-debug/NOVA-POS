@@ -6,6 +6,7 @@ import {
   Bar,
   BarChart,
   CartesianGrid,
+  Cell,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -14,6 +15,8 @@ import {
 
 type Range = "day" | "month" | "year";
 type Metric = "money" | "count";
+
+type ChartPoint = { key: string; label: string; total: number };
 
 const RANGE_LABEL: Record<Range, string> = { day: "Day", month: "Month", year: "Year" };
 const UNIT: Record<Range, string> = { day: "day", month: "week", year: "month" };
@@ -71,7 +74,11 @@ function fmtShort(d: Date): string {
   return d.toLocaleDateString("en", { month: "short", day: "numeric", timeZone: "UTC" });
 }
 
-function makeTooltip(formatValue: (n: number) => string) {
+// Deliberately dark regardless of the site's own light/dark toggle -- a
+// tooltip floating over a chart reads as its own small surface, and a fixed
+// near-black card with a gold-lit top edge is the "premium dashboard" look
+// this was asked for, not just the theme's card color with a border.
+function makeTooltip(formatValue: (n: number) => string, accentColor: string) {
   return function ChartTooltip({
     active,
     payload,
@@ -82,12 +89,44 @@ function makeTooltip(formatValue: (n: number) => string) {
     if (!active || !payload?.length) return null;
     const point = payload[0];
     return (
-      <div className="rounded-lg border border-border bg-card px-3 py-2 text-sm shadow-lg">
-        <p className="text-muted-foreground">{String(point.payload?.label)}</p>
-        <p className="font-semibold text-foreground">{formatValue(Number(point.value))}</p>
+      <div
+        className="min-w-[9rem] rounded-xl border border-white/10 bg-[#161616] px-4 py-3 shadow-xl shadow-black/50"
+        style={{ borderTop: `2px solid ${accentColor}` }}
+      >
+        <p className="text-[11px] font-medium tracking-wide text-white/45 uppercase">
+          {String(point.payload?.label)}
+        </p>
+        <p className="mt-1 text-base font-semibold text-white">{formatValue(Number(point.value))}</p>
       </div>
     );
   };
+}
+
+// A start/end range can cover a lot of years, so instead of a small
+// hand-picked palette (fine for 3-4 years, cramped past that), every
+// non-anchor year gets a color stepped around the hue wheel by the golden
+// angle (~137.5deg) -- a standard trick for generating N maximally-distinct
+// hues without picking each one by hand. `startHue` walks it away from the
+// anchor year's own hue (gold for Revenue, blue for Orders) so the first
+// couple of comparison years don't land near-identical to it.
+const OTHER_YEAR_START_HUE: Record<Metric, number> = { money: 300, count: 20 };
+const GOLDEN_ANGLE = 137.508;
+
+function colorForOtherYear(i: number, metric: Metric): string {
+  const hue = (OTHER_YEAR_START_HUE[metric] + i * GOLDEN_ANGLE) % 360;
+  return `hsl(${hue.toFixed(1)}deg 62% 54%)`;
+}
+
+// Compare this many years at once, tops -- purely a sanity cap (a "start
+// year - end year" range could otherwise ask for decades of bars).
+const MAX_COMPARE_YEARS = 12;
+
+// Every bar color the chart can ever use, keyed by year, gets its own
+// <linearGradient> (see the <defs> below) so every bar has the glowing
+// gradient fill, not just the primary metric color. "primary" covers the
+// single-series (non-comparing) chart.
+function gradientIdFor(key: string | number): string {
+  return `bar-gradient-${key}`;
 }
 
 // Shared by every "value per day, browsable by day/week-of-month/year" chart
@@ -103,20 +142,56 @@ export default function PeriodBarChart({
   metric: Metric;
 }) {
   const { barColor, allowDecimalTicks, formatValue, formatTick } = METRIC[metric];
-  const gradientId = `bar-gradient-${metric}`;
   const [range, setRange] = useState<Range>("day");
   const today = useMemo(() => utcMidnight(new Date()), []);
   const [anchor, setAnchor] = useState<Date>(today);
+  // Extra years to total up next to the anchor year -- year range only. e.g.
+  // anchor 2026 + compareYears [2027, 2028] shows one bar per year, each
+  // year's full total, instead of the anchor year's 12 months.
+  const [compareYears, setCompareYears] = useState<number[]>([]);
+  const comparingYears = range === "year" && compareYears.length > 0;
 
   const dailyMap = useMemo(() => new Map(dailyData.map((d) => [d.date, d.total])), [dailyData]);
 
-  const ChartTooltip = useMemo(() => makeTooltip(formatValue), [formatValue]);
+  // Every year currently selectable/selected -> the bar color it'll use once
+  // picked, anchor year first so it keeps this chart's own metric color.
+  const yearColors = useMemo(() => {
+    const anchorYear = startOfYear(anchor).getUTCFullYear();
+    const others = compareYears.filter((y) => y !== anchorYear).sort((a, b) => a - b);
+    const colors: Record<number, string> = { [anchorYear]: barColor };
+    others.forEach((y, i) => {
+      colors[y] = colorForOtherYear(i, metric);
+    });
+    return colors;
+  }, [anchor, compareYears, barColor, metric]);
 
-  const { data, periodLabel, isCurrent } = useMemo(() => {
+  // Fill in every year between two endpoints in one go, instead of clicking
+  // each chip -- replaces whatever was already selected for comparison.
+  const [rangeStart, setRangeStart] = useState("");
+  const [rangeEnd, setRangeEnd] = useState("");
+  function applyRange() {
+    const start = Number(rangeStart);
+    const end = Number(rangeEnd);
+    if (!start || !end || start > end) return;
+    const anchorYear = startOfYear(anchor).getUTCFullYear();
+    const years: number[] = [];
+    for (let y = start; y <= end && years.length < MAX_COMPARE_YEARS - 1; y++) {
+      if (y !== anchorYear) years.push(y);
+    }
+    setCompareYears(years);
+  }
+
+  const ChartTooltip = useMemo(() => makeTooltip(formatValue, barColor), [formatValue, barColor]);
+
+  const { data, periodLabel, isCurrent } = useMemo((): {
+    data: ChartPoint[];
+    periodLabel: string;
+    isCurrent: boolean;
+  } => {
     if (range === "day") {
       const monday = mondayOf(anchor);
       const days = Array.from({ length: 7 }, (_, i) => addDays(monday, i));
-      const points = days.map((d, i) => ({
+      const points: ChartPoint[] = days.map((d, i) => ({
         key: DAY_LABELS[i],
         total: dailyMap.get(toKey(d)) ?? 0,
         label: d.toLocaleDateString("en", {
@@ -145,7 +220,7 @@ export default function PeriodBarChart({
         [15, 21],
         [22, daysInMonth],
       ];
-      const points = bands.map(([from, to], i) => {
+      const points: ChartPoint[] = bands.map(([from, to], i) => {
         let total = 0;
         for (let day = from; day <= to; day++) {
           const key = toKey(new Date(Date.UTC(monthStart.getUTCFullYear(), monthStart.getUTCMonth(), day)));
@@ -166,24 +241,41 @@ export default function PeriodBarChart({
     }
 
     const yearStart = startOfYear(anchor);
-    const year = yearStart.getUTCFullYear();
-    const points = MONTH_LABELS.map((m, i) => {
-      const prefix = `${year}-${String(i + 1).padStart(2, "0")}`;
+    const anchorYear = yearStart.getUTCFullYear();
+    const isCurrent = yearStart.getTime() >= startOfYear(today).getTime();
+
+    if (compareYears.length === 0) {
+      // The usual view: the anchor year's 12 months.
+      const points: ChartPoint[] = MONTH_LABELS.map((m, i) => {
+        const prefix = `${anchorYear}-${String(i + 1).padStart(2, "0")}`;
+        let total = 0;
+        for (const [key, value] of dailyMap) {
+          if (key.startsWith(prefix)) total += value;
+        }
+        return { key: m, total, label: `${m} ${anchorYear}` };
+      });
+      return { data: points, periodLabel: `${anchorYear}`, isCurrent };
+    }
+
+    // Comparing years: one bar per selected year, each year's full-year
+    // total -- "how much did we earn in 2026, in 2027, ..." side by side.
+    const years = Array.from(new Set([anchorYear, ...compareYears]))
+      .sort((a, b) => a - b)
+      .slice(0, MAX_COMPARE_YEARS);
+    const points: ChartPoint[] = years.map((y) => {
+      const prefix = `${y}-`;
       let total = 0;
       for (const [key, value] of dailyMap) {
         if (key.startsWith(prefix)) total += value;
       }
-      return { key: m, total, label: `${m} ${year}` };
+      return { key: String(y), total, label: `${y}` };
     });
-    return {
-      data: points,
-      periodLabel: `${year}`,
-      isCurrent: yearStart.getTime() >= startOfYear(today).getTime(),
-    };
-  }, [range, anchor, dailyMap, today]);
+    return { data: points, periodLabel: years.join(" vs "), isCurrent };
+  }, [range, anchor, dailyMap, today, compareYears]);
 
   // Only call out a best/worst when there's an actual spread to report --
-  // an all-zero period (nothing happened yet) has no "best day" worth labeling.
+  // an all-zero period (nothing happened yet) has no "best day" worth
+  // labeling. In year-compare mode this becomes "best/slowest year".
   const { best, worst } = useMemo(() => {
     const nonZero = data.filter((d) => d.total > 0);
     if (nonZero.length < 2) return { best: null, worst: null };
@@ -234,7 +326,7 @@ export default function PeriodBarChart({
         >
           <ChevronLeft className="size-4" />
         </button>
-        <span className="min-w-[11rem] text-center text-sm font-medium">{periodLabel}</span>
+        <span className="min-w-44 text-center text-sm font-medium">{periodLabel}</span>
         <button
           type="button"
           onClick={() => step(1)}
@@ -255,7 +347,69 @@ export default function PeriodBarChart({
         )}
       </div>
 
-      {(best || worst) && (
+      {/* Faster than clicking each chip for a wide span -- fills in every
+          year between the two endpoints (minus the anchor year) in one go. */}
+      {range === "year" && (
+        <div className="mt-2 flex flex-wrap items-center gap-1.5">
+          <span className="text-xs font-medium text-muted-foreground">Compare a range:</span>
+          <input
+            type="number"
+            inputMode="numeric"
+            placeholder="Start"
+            value={rangeStart}
+            onChange={(e) => setRangeStart(e.target.value)}
+            className="w-20 rounded-full border border-border bg-transparent px-2.5 py-0.5 text-xs text-foreground outline-none focus:border-brand"
+          />
+          <span className="text-xs text-muted-foreground">–</span>
+          <input
+            type="number"
+            inputMode="numeric"
+            placeholder="End"
+            value={rangeEnd}
+            onChange={(e) => setRangeEnd(e.target.value)}
+            className="w-20 rounded-full border border-border bg-transparent px-2.5 py-0.5 text-xs text-foreground outline-none focus:border-brand"
+          />
+          <button
+            type="button"
+            onClick={applyRange}
+            disabled={!rangeStart || !rangeEnd || Number(rangeStart) > Number(rangeEnd)}
+            className="rounded-full bg-brand px-3 py-0.5 text-xs font-semibold text-black disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            Compare
+          </button>
+          {compareYears.length > 0 && (
+            <button
+              type="button"
+              onClick={() => setCompareYears([])}
+              className="text-xs font-medium text-muted-foreground hover:text-foreground"
+            >
+              Clear
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* Explicit "how much did we earn" readout, one pill per year, when
+          comparing years -- the chart makes the shape obvious, this makes
+          the exact numbers easy to read off without hovering each bar. */}
+      {comparingYears && (
+        <div className="mt-3 flex flex-wrap gap-2 text-xs">
+          {data.map((d) => (
+            <span
+              key={d.key}
+              className="inline-flex items-center gap-1.5 rounded-full bg-muted px-2.5 py-1 font-medium text-foreground"
+            >
+              <span
+                className="size-1.5 rounded-full"
+                style={{ background: yearColors[Number(d.key)] ?? barColor }}
+              />
+              {d.key}: <span className="font-semibold">{formatValue(d.total)}</span>
+            </span>
+          ))}
+        </div>
+      )}
+
+      {!comparingYears && (best || worst) && (
         <div className="mt-3 flex flex-wrap gap-2 text-xs">
           {best && (
             <span className="inline-flex items-center gap-1.5 rounded-full bg-success/10 px-2.5 py-1 font-medium text-success">
@@ -276,12 +430,25 @@ export default function PeriodBarChart({
         <ResponsiveContainer width="100%" height="100%">
           <BarChart data={data} margin={{ top: 4, right: 4, left: 4, bottom: 0 }} barCategoryGap="20%">
             <defs>
-              <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stopColor={barColor} stopOpacity={0.95} />
-                <stop offset="100%" stopColor={barColor} stopOpacity={0.3} />
+              {/* A glowing gradient per bar color actually in use this
+                  render -- the metric color always, plus one per comparison
+                  year while comparing. */}
+              <linearGradient id={gradientIdFor("primary")} x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stopColor={barColor} stopOpacity={1} />
+                <stop offset="100%" stopColor={barColor} stopOpacity={0.35} />
               </linearGradient>
+              {comparingYears &&
+                data.map((d) => {
+                  const c = yearColors[Number(d.key)] ?? barColor;
+                  return (
+                    <linearGradient key={d.key} id={gradientIdFor(d.key)} x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor={c} stopOpacity={1} />
+                      <stop offset="100%" stopColor={c} stopOpacity={0.35} />
+                    </linearGradient>
+                  );
+                })}
             </defs>
-            <CartesianGrid vertical={false} stroke="var(--border)" strokeDasharray="0" />
+            <CartesianGrid vertical={false} stroke="var(--chart-grid)" strokeDasharray="0" />
             <XAxis
               dataKey="key"
               tickLine={false}
@@ -300,10 +467,17 @@ export default function PeriodBarChart({
             <Tooltip cursor={{ fill: "var(--muted)" }} content={ChartTooltip} />
             <Bar
               dataKey="total"
-              fill={`url(#${gradientId})`}
-              radius={[4, 4, 0, 0]}
-              maxBarSize={24}
-            />
+              fill={`url(#${gradientIdFor("primary")})`}
+              radius={[6, 6, 0, 0]}
+              maxBarSize={40}
+              // Subtle lift on the hovered bar -- a soft white outline over the
+              // same gradient, rather than swapping to a flat highlight color.
+              activeBar={{ stroke: "rgba(255,255,255,0.5)", strokeWidth: 1.5 }}
+            >
+              {/* One gradient per year when comparing years -- otherwise the
+                  single metric gradient above covers every bar as before. */}
+              {comparingYears && data.map((d) => <Cell key={d.key} fill={`url(#${gradientIdFor(d.key)})`} />)}
+            </Bar>
           </BarChart>
         </ResponsiveContainer>
       </div>

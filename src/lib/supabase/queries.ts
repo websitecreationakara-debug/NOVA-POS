@@ -2,7 +2,7 @@ import { supabaseAdmin } from "@/lib/supabase/server";
 import { configuredCatalogs } from "@/lib/websiteProducts/catalogs";
 import { listWebsiteProducts } from "@/lib/websiteProducts/client";
 import { countLowStock } from "@/lib/websiteProducts/stock";
-import { formatInvoiceNumber, invoiceDateStamp, invoiceDayStartIso } from "@/lib/invoiceNumber";
+import { formatInvoiceNumber, invoiceMonthStamp, invoiceMonthStartIso } from "@/lib/invoiceNumber";
 import type {
   Brand,
   CashReconciliation,
@@ -270,7 +270,13 @@ export async function getDashboardStats(): Promise<DashboardStats> {
   if (recentError) throw recentError;
 
   const orders = paidOrders ?? [];
-  const totalRevenue = orders.reduce((sum, o) => sum + o.total, 0);
+  // Scoped to the current calendar year, not all-time -- so the dashboard's
+  // headline number resets to $0 each January instead of only ever growing,
+  // matching how the Revenue chart's year view treats "this year".
+  const currentYear = today.slice(0, 4);
+  const totalRevenue = orders
+    .filter((o) => (o.paid_at ?? "").slice(0, 4) === currentYear)
+    .reduce((sum, o) => sum + o.total, 0);
   const ordersToday = orders.filter((o) => (o.paid_at ?? "").slice(0, 10) === today).length;
 
   // One row per calendar day that had any revenue -- the client buckets this
@@ -376,20 +382,20 @@ export async function getOrdersList(status?: FulfillmentStatus): Promise<OrderLi
     deliveryAt: o.delivery_at ?? null,
   }));
 
-  // Date-based invoice numbers (YYYYMMDD[-N]). Group by Phnom Penh day,
-  // number oldest-first. Every day in this window is fully present except
+  // Date-based invoice numbers (YYYYMM[-N]). Group by Phnom Penh month,
+  // number oldest-first. Every month in this window is fully present except
   // possibly the oldest one -- if the 200-row cap truncated it, one count
-  // query recovers how many earlier same-day orders were left out.
-  const byDay = new Map<string, OrderListRow[]>();
+  // query recovers how many earlier same-month orders were left out.
+  const byMonth = new Map<string, OrderListRow[]>();
   for (const r of rows) {
     if (!r.paidAt) continue;
-    const key = invoiceDateStamp(r.paidAt);
-    const group = byDay.get(key);
+    const key = invoiceMonthStamp(r.paidAt);
+    const group = byMonth.get(key);
     if (group) group.push(r);
-    else byDay.set(key, [r]);
+    else byMonth.set(key, [r]);
   }
-  const oldestKey = [...byDay.keys()].at(-1);
-  for (const [key, group] of byDay) {
+  const oldestKey = [...byMonth.keys()].at(-1);
+  for (const [key, group] of byMonth) {
     group.sort((a, b) => (a.paidAt! < b.paidAt! ? -1 : 1));
     let base = 0;
     if (key === oldestKey && rows.length >= 200) {
@@ -397,7 +403,7 @@ export async function getOrdersList(status?: FulfillmentStatus): Promise<OrderLi
         .from("orders")
         .select("id", { count: "exact", head: true })
         .eq("status", "paid")
-        .gte("paid_at", invoiceDayStartIso(group[0].paidAt!))
+        .gte("paid_at", invoiceMonthStartIso(group[0].paidAt!))
         .lt("paid_at", group[0].paidAt!);
       base = count ?? 0;
     }
@@ -411,7 +417,7 @@ export async function getOrdersList(status?: FulfillmentStatus): Promise<OrderLi
 
 export type InvoiceData = {
   order: Order;
-  // Date-based number (YYYYMMDD[-N]) computed from paid_at -- see
+  // Date-based number (YYYYMM[-N]) computed from paid_at -- see
   // src/lib/invoiceNumber.ts. Falls back to a short order-id tag if the order
   // has no paid_at yet.
   invoiceNumber: string;
@@ -419,7 +425,14 @@ export type InvoiceData = {
   brandSlug: string | null;
   brandLogoUrl: string | null;
   customerAddress: string | null;
-  items: { name: string; unit: string; quantity: number; unitPrice: number; lineTotal: number }[];
+  items: {
+    productId: string;
+    name: string;
+    unit: string;
+    quantity: number;
+    unitPrice: number;
+    lineTotal: number;
+  }[];
 };
 
 export async function getInvoice(orderId: string): Promise<InvoiceData | null> {
@@ -434,12 +447,13 @@ export async function getInvoice(orderId: string): Promise<InvoiceData | null> {
 
   const { data: items, error: itemsError } = await supabaseAdmin
     .from("order_items")
-    .select("quantity, unit_price, line_total, products(name, unit)")
+    .select("product_id, quantity, unit_price, line_total, products(name, unit)")
     .eq("order_id", orderId);
 
   if (itemsError) throw itemsError;
 
   type ItemRow = {
+    product_id: string;
     quantity: number;
     unit_price: number;
     line_total: number;
@@ -450,15 +464,15 @@ export async function getInvoice(orderId: string): Promise<InvoiceData | null> {
     customers: { address: string | null } | null;
   };
 
-  // Date-based invoice number: its position among that Phnom Penh day's paid
-  // orders decides the -N suffix (1st of the day = bare YYYYMMDD).
+  // Date-based invoice number: its position among that Phnom Penh month's
+  // paid orders decides the -N suffix (1st of the month = bare YYYYMM).
   let invoiceNumber = `#${orderFields.id.slice(0, 8)}`;
   if (orderFields.paid_at) {
     const { count } = await supabaseAdmin
       .from("orders")
       .select("id", { count: "exact", head: true })
       .eq("status", "paid")
-      .gte("paid_at", invoiceDayStartIso(orderFields.paid_at))
+      .gte("paid_at", invoiceMonthStartIso(orderFields.paid_at))
       .lt("paid_at", orderFields.paid_at);
     invoiceNumber = formatInvoiceNumber(orderFields.paid_at, (count ?? 0) + 1)!;
   }
@@ -471,6 +485,7 @@ export async function getInvoice(orderId: string): Promise<InvoiceData | null> {
     brandLogoUrl: brands?.logo_url ?? null,
     customerAddress: customers?.address ?? null,
     items: ((items ?? []) as ItemRow[]).map((i) => ({
+      productId: i.product_id,
       name: i.products?.name ?? "—",
       unit: i.products?.unit ?? "",
       quantity: i.quantity,

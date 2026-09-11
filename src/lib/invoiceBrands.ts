@@ -24,8 +24,8 @@ const DEFAULT_REMARKS = [
 ];
 
 const DEFAULT_CLOSING = [
-  "អរគុណសម្រាប់ការកម្ម៉ង់ម្ហូបអាហារ សូមជូនពរមានសុខភាពបរិបូណ៍ និងសំណាងល្អ",
-  "យើងខ្ញុំសន្យាថានឹងផ្ដល់ជូនអតិថិជននូវផលិតផលដ៏ល្អ និងសេវាកម្មដ៏ឆាប់រហ័ស",
+  "អរគុណសម្រាប់ការកម្មង់អាហារ សូមជូនពរមានសុខភាពល្អ និងសំណាងល្អ",
+  "យើងព្យាយាមឲ្យអស់ពីលទ្ធភាព ដើម្បីផ្តល់ជូនផលិតផល សេវាកម្មដែលល្អបំផុតជូនលោកអ្នក",
 ];
 
 const FALLBACK: InvoiceBrandConfig = {
@@ -80,4 +80,20 @@ const BRAND_LOGO_FILE: Record<string, string> = {
 export function brandLogoPath(slug: string | null): string | null {
   const file = slug ? BRAND_LOGO_FILE[slug] : undefined;
   return file ? `/logos/${file}` : null;
+}
+
+// Fixed render height (Tailwind class) for the letterhead logo. Most source
+// files are cropped tight to their artwork so one height reads consistently,
+// but bosba-drink-snack.webp and sora-sake.png both sit well inside their
+// frame (a wide canvas with padding around the badge+text/bottle), so the
+// default height renders them visibly smaller than bosba-premium-foods'
+// tightly-cropped logo -- bumped up here to match its on-page weight.
+const BRAND_LOGO_HEIGHT: Record<string, string> = {
+  "bosba-drink-snack": "h-24",
+  "sora-sake": "h-24",
+};
+const DEFAULT_LOGO_HEIGHT = "h-16";
+
+export function brandLogoHeightClass(slug: string | null): string {
+  return (slug && BRAND_LOGO_HEIGHT[slug]) || DEFAULT_LOGO_HEIGHT;
 }

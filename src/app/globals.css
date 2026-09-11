@@ -27,6 +27,17 @@
      same card -- clears 3:1 on both a white and dark card at this one value,
      so it doesn't need a dark-mode override. */
   --chart-orders: #2a78d6;
+  /* Extra bar hues for the year-over-year compare mode (3rd/4th year picked)
+     -- distinct from revenue/orders and from the success/warning tokens,
+     chosen at a saturation/lightness that (like orders) clears 3:1 on both a
+     white and dark card without needing a dark-mode override. */
+  --chart-3: #7c5cbf;
+  --chart-4: #c2478d;
+  /* Horizontal gridlines behind the dashboard bar charts -- kept faint so
+     the bars stay the focus; light mode reuses the border color, dark mode
+     gets its own near-black step since the translucent --border reads too
+     bright against the chart's dark tooltip/gradient look. */
+  --chart-grid: var(--border);
   --warning: #b45309;
   --warning-bg: #fef3c7;
   --success: #15803d;
@@ -63,6 +74,7 @@
   /* The base brand gold already clears 8.5:1 on the dark card, so dark mode
      doesn't need the darkened light-mode step. */
   --chart-revenue: var(--brand);
+  --chart-grid: #262626;
   --warning-bg: rgba(180, 83, 9, 0.2);
   --success-bg: rgba(21, 128, 61, 0.2);
   --accent-bg: rgba(201, 168, 76, 0.15);

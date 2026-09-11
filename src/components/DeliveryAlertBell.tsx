@@ -2,9 +2,10 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { Bell, Volume2, VolumeX } from "lucide-react";
+import { Bell, Receipt, Volume2, VolumeX } from "lucide-react";
 import { getDueDeliveries, type DueDelivery } from "@/app/(app)/orders/actions";
 import { ORDERS_CHANGED } from "@/lib/ordersChanged";
+import { SALE_CHARGED, type SaleChargedDetail } from "@/lib/saleCharged";
 
 const POLL_MS = 60_000;
 // While an order is overdue and still not marked done, nag again this often.
@@ -38,6 +39,21 @@ function whenLabel(iso: string): string {
     minute: "2-digit",
   });
 }
+
+function formatMoney(n: number): string {
+  return `$${n.toFixed(2)}`;
+}
+
+// "just now" / "5m ago" for a charge timestamp (epoch ms).
+function agoLabel(at: number): string {
+  const mins = Math.floor((Date.now() - at) / 60_000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins}m ago`;
+  return `${Math.floor(mins / 60)}h ago`;
+}
+
+type RecentSale = SaleChargedDetail & { id: string; at: number };
+const MAX_RECENT_SALES = 5;
 
 // One reused context so the browser's autoplay unlock (from the user's first
 // click anywhere) carries over to later programmatic chimes.
@@ -90,6 +106,11 @@ function chime() {
 // sound + browser notification when a new one enters the window.
 export default function DeliveryAlertBell() {
   const [items, setItems] = useState<DueDelivery[]>([]);
+  // Sales charged in this tab -- newest first, capped. Fired synchronously by
+  // the charge action itself (see notifySaleCharged), so this updates the
+  // instant the cashier clicks Charge rather than on the next poll.
+  const [recentSales, setRecentSales] = useState<RecentSale[]>([]);
+  const [unseenSales, setUnseenSales] = useState(0);
   const [open, setOpen] = useState(false);
   // Read the saved preference once. SSR renders it off; the client picks up
   // the real value on first render (a one-frame icon flip at most).
@@ -191,6 +212,33 @@ export default function DeliveryAlertBell() {
     };
   }, [load]);
 
+  // A sale charged in this tab -- shows up in the list and chimes/notifies
+  // immediately, same as a delivery crossing into its alert window.
+  useEffect(() => {
+    function onSaleCharged(e: Event) {
+      const detail = (e as CustomEvent<SaleChargedDetail>).detail;
+      if (!detail) return;
+      setRecentSales((prev) =>
+        [{ ...detail, id: `${detail.orderId}-${Date.now()}`, at: Date.now() }, ...prev].slice(
+          0,
+          MAX_RECENT_SALES
+        )
+      );
+      setUnseenSales((n) => n + 1);
+      if (soundRef.current) {
+        chime();
+        if (typeof Notification !== "undefined" && Notification.permission === "granted") {
+          new Notification(`Sale charged — ${formatMoney(detail.amount)}`, {
+            body: [detail.customerName, detail.invoiceNumber].filter(Boolean).join(" · ") || undefined,
+            tag: `nova-sale-${detail.orderId}`,
+          });
+        }
+      }
+    }
+    window.addEventListener(SALE_CHARGED, onSaleCharged);
+    return () => window.removeEventListener(SALE_CHARGED, onSaleCharged);
+  }, []);
+
   useEffect(() => {
     if (!open) return;
     function onDoc(e: MouseEvent) {
@@ -225,15 +273,25 @@ export default function DeliveryAlertBell() {
     }
   }
 
-  const count = items.length;
+  const count = items.length + unseenSales;
   const anyUrgent = items.some((i) => alertStep(i.deliveryAt) >= 2);
+
+  function toggleOpen() {
+    setOpen((v) => {
+      const next = !v;
+      // Opening the bell counts as having seen the recent sales -- the badge
+      // settles back down to just the delivery count until the next charge.
+      if (next) setUnseenSales(0);
+      return next;
+    });
+  }
 
   return (
     <div ref={rootRef} className="relative">
       <button
         type="button"
-        onClick={() => setOpen((v) => !v)}
-        aria-label={`Delivery alerts${count ? ` (${count})` : ""}`}
+        onClick={toggleOpen}
+        aria-label={`Alerts${count ? ` (${count})` : ""}`}
         className="relative grid size-9 place-items-center rounded-full bg-muted text-muted-foreground hover:text-foreground"
       >
         <Bell className="size-4" />
@@ -251,7 +309,7 @@ export default function DeliveryAlertBell() {
       {open && (
         <div className="absolute right-0 top-full z-50 mt-2 w-80 overflow-hidden rounded-xl border border-border bg-card shadow-lg">
           <div className="flex items-center justify-between border-b border-border px-4 py-2.5">
-            <span className="text-sm font-semibold">Deliveries due soon</span>
+            <span className="text-sm font-semibold">Alerts</span>
             <button
               type="button"
               onClick={toggleSound}
@@ -261,8 +319,39 @@ export default function DeliveryAlertBell() {
               {sound ? <Volume2 className="size-4" /> : <VolumeX className="size-4" />}
             </button>
           </div>
-          <div className="max-h-80 overflow-y-auto">
-            {count === 0 ? (
+          <div className="max-h-96 overflow-y-auto">
+            {recentSales.length > 0 && (
+              <>
+                <p className="bg-muted/50 px-4 py-1.5 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">
+                  Recent sales
+                </p>
+                {recentSales.map((s) => (
+                  <Link
+                    key={s.id}
+                    href={`/invoice/${s.orderId}`}
+                    onClick={() => setOpen(false)}
+                    className="flex items-start gap-3 border-b border-border px-4 py-2.5 last:border-b-0 hover:bg-muted"
+                  >
+                    <Receipt className="mt-0.5 size-3.5 shrink-0 text-emerald-600 dark:text-emerald-400" />
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-sm font-medium">
+                        {s.customerName || s.invoiceNumber || "Sale"}
+                      </span>
+                      <span className="block text-xs text-muted-foreground">{agoLabel(s.at)}</span>
+                    </span>
+                    <span className="shrink-0 text-sm font-semibold text-emerald-600 dark:text-emerald-400">
+                      {formatMoney(s.amount)}
+                    </span>
+                  </Link>
+                ))}
+              </>
+            )}
+            {recentSales.length > 0 && items.length > 0 && (
+              <p className="bg-muted/50 px-4 py-1.5 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">
+                Deliveries due soon
+              </p>
+            )}
+            {items.length === 0 && recentSales.length === 0 ? (
               <p className="px-4 py-6 text-center text-sm text-muted-foreground">
                 Nothing due in the next 2 hours.
               </p>

@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 import { getDashboardStats, getWebsiteProductTotal } from "@/lib/supabase/queries";
 import PeriodBarChart from "./PeriodBarChart";
+import RecentOrdersRows from "./RecentOrdersRows";
 
 export const dynamic = "force-dynamic";
 
@@ -68,9 +69,11 @@ async function WebsiteProductCount() {
 export default async function Home() {
   const stats = await getDashboardStats();
 
+  const currentYear = new Date().getUTCFullYear();
+
   const statCards = [
     {
-      label: "Total Revenue",
+      label: `Total Revenue (${currentYear})`,
       value: formatMoney(stats.totalRevenue),
       icon: DollarSign,
       tint: "bg-amber-400/15 text-amber-600 dark:text-amber-400",
@@ -192,40 +195,7 @@ export default async function Home() {
             </tr>
           </thead>
           <tbody>
-            {stats.recentOrders.map((o) => (
-              <tr key={o.id} className="group border-t border-border transition-colors hover:bg-muted/60">
-                <td className="px-6 py-3">
-                  <Link
-                    href={`/orders/${o.id}`}
-                    className="font-mono text-xs font-semibold text-foreground hover:text-brand"
-                  >
-                    {o.id.slice(0, 8)}
-                  </Link>
-                </td>
-                <td className="px-3 py-3 text-muted-foreground">{o.brandName}</td>
-                <td className="px-3 py-3">
-                  <span className="rounded-full bg-emerald-500/10 px-2 py-0.5 text-xs font-semibold text-emerald-600 uppercase dark:text-emerald-400">
-                    {o.status}
-                  </span>
-                </td>
-                <td className="px-6 py-3 text-right font-bold tabular-nums">
-                  <Link
-                    href={`/orders/${o.id}`}
-                    className="inline-flex items-center gap-1.5 hover:text-brand"
-                  >
-                    {formatMoney(o.total)}
-                    <ArrowRight className="size-3.5 opacity-0 transition-opacity group-hover:opacity-60" />
-                  </Link>
-                </td>
-              </tr>
-            ))}
-            {stats.recentOrders.length === 0 && (
-              <tr>
-                <td colSpan={4} className="px-6 py-8 text-center text-muted-foreground">
-                  No orders yet.
-                </td>
-              </tr>
-            )}
+            <RecentOrdersRows orders={stats.recentOrders} />
           </tbody>
         </table>
       </section>
