@@ -9,6 +9,8 @@ import {
 } from "@/lib/invoiceBrands";
 import PrintButton from "@/components/PrintButton";
 import OrderStatusControl from "@/components/OrderStatusControl";
+import { SITE_LABEL } from "@/lib/site-sync";
+import type { ProductSiteLink } from "@/types/database";
 
 // Khmer + Latin webfont for the printed document so the bilingual labels
 // render consistently on screen and in the PDF.
@@ -114,13 +116,17 @@ function InvoiceDoc({
   const paymentLabel = order.payment_method
     ? (PAYMENT_LABELS[order.payment_method] ?? order.payment_method)
     : "—";
+  const channelLabel =
+    order.channel === "online" && order.site
+      ? `Online — ${SITE_LABEL[order.site as ProductSiteLink["site"]] ?? order.site}`
+      : "In-Store (POS)";
   const subDetails: { kh: string; en: string; value: string }[] = [
     { kh: "ពិពណ៌នា", en: "Description", value: order.note?.trim() || "—" },
     // This used to show paid_at (when the order was placed/charged) under a
     // label that already said "delivery time," which is why it never
     // matched the real delivery field.
     { kh: "ម៉ោងដឹក", en: "Delivery Time", value: formatDateTime(order.delivery_at) },
-    { kh: "កម្មង់តាម", en: "Order Channel", value: "—" },
+    { kh: "កម្មង់តាម", en: "Order Channel", value: channelLabel },
     { kh: "បង់ប្រាក់តាម", en: "Payment Method", value: paymentLabel },
   ];
 

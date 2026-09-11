@@ -20,7 +20,7 @@ export type SiteProductCandidate = {
   type: string;
 };
 
-const SITE_LABEL: Record<ProductSiteLink["site"], string> = {
+export const SITE_LABEL: Record<ProductSiteLink["site"], string> = {
   "bosba-premium-foods": "BOSBA Premium Foods",
   "bosba-drink-snack": "BOSBA Drink & Snack",
   "sora-sake": "sorasake.wine",
