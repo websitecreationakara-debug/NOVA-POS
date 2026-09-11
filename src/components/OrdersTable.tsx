@@ -78,6 +78,18 @@ export default function OrdersTable({
     setBrandId("");
   }
 
+  // Filename for the bulk PDF export -- business + the active date range, so
+  // staff can tell one saved report from another without opening it. Falls
+  // back to a generic name when nothing's filtered (e.g. mixed businesses).
+  const bulkPdfUrl = useMemo(() => {
+    const params = new URLSearchParams({ ids: Array.from(selected).join(",") });
+    const businessName = brands.find((b) => b.id === brandId)?.name;
+    if (businessName) params.set("business", businessName);
+    if (from) params.set("from", from);
+    if (to) params.set("to", to);
+    return `/invoice/bulk?${params.toString()}`;
+  }, [selected, brands, brandId, from, to]);
+
   const visibleIds = useMemo(() => filtered.map((o) => o.id), [filtered]);
   const allVisibleSelected =
     visibleIds.length > 0 && visibleIds.every((id) => selected.has(id));
@@ -196,7 +208,7 @@ export default function OrdersTable({
           ))}
           {bulkBusy && <span className="text-xs text-muted-foreground">Updating…</span>}
           <a
-            href={`/invoice/bulk?ids=${Array.from(selected).join(",")}`}
+            href={bulkPdfUrl}
             target="_blank"
             rel="noopener noreferrer"
             className="ml-auto inline-flex items-center gap-1.5 rounded-full border border-border px-2.5 py-1 text-xs font-medium transition-colors hover:bg-muted"

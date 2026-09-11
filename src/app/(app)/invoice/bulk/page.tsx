@@ -10,9 +10,9 @@ import { InvoiceDoc, hanuman } from "@/components/InvoiceDoc";
 export default async function BulkInvoicePage({
   searchParams,
 }: {
-  searchParams: Promise<{ ids?: string }>;
+  searchParams: Promise<{ ids?: string; business?: string; from?: string; to?: string }>;
 }) {
-  const { ids: idsParam } = await searchParams;
+  const { ids: idsParam, business, from, to } = await searchParams;
   const ids = (idsParam ?? "")
     .split(",")
     .map((id) => id.trim())
@@ -22,12 +22,19 @@ export default async function BulkInvoicePage({
     (invoice): invoice is InvoiceData => invoice !== null
   );
 
+  // Business + the active date range from the Orders list filters, so a
+  // saved report is identifiable without opening it. Falls back to a
+  // generic name when nothing was filtered (e.g. a mixed-business export).
+  const dateRange = from && to ? `${from} to ${to}` : from ? `from ${from}` : to ? `until ${to}` : "";
+  const filename =
+    [business, dateRange].filter(Boolean).join(" ") || `Invoices-${invoices.length}-orders`;
+
   return (
     <div
       className={`${hanuman.className} mx-auto w-fit max-w-full p-6 print:w-full print:max-w-none print:p-0`}
     >
       <div className="mb-4 flex items-center justify-end gap-3 print:hidden">
-        <PrintButton filename={`Invoices-${invoices.length}-orders`} />
+        <PrintButton filename={filename} />
       </div>
 
       {invoices.length === 0 ? (
