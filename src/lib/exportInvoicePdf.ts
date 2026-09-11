@@ -14,10 +14,15 @@ export async function exportInvoicePdf(filename: string): Promise<void> {
 
   // Only the first duplicate-voucher copy of each order -- a saved PDF
   // doesn't need the second "shop copy" a printed voucher does (see
-  // data-copy on the invoice pages).
+  // data-copy on the invoice pages). offsetParent excludes Next.js's
+  // display:none streaming-fallback duplicates of this same content (id
+  // "S:0" etc, left in the DOM after the real content hydrates in) --
+  // without this filter they get captured too: double the pages, since
+  // html2canvas force-renders a clone regardless of the original's
+  // display:none, and roughly double the file size per page besides.
   const sheets = Array.from(
     document.querySelectorAll<HTMLElement>('.invoice-sheet[data-copy="1"]')
-  );
+  ).filter((el) => el.offsetParent !== null);
   if (sheets.length === 0) return;
 
   const PAGE_W_MM = 210;
