@@ -152,8 +152,20 @@ export type Order = {
   invoice_number: string | null;
   customer_name: string | null;
   customer_phone: string | null;
+  customer_email: string | null;
+  // Customer-requested delivery date (no time); null = ASAP / same day.
+  delivery_date: string | null;
   // Free-text note / description for the order (migration 0021).
   note: string | null;
+  // "pos" (default, staff-charged) | "online" (created by a storefront via
+  // create_online_order() -- see the "online_order_sync" migration, which
+  // added this and the two columns below). site/site_order_id are only set
+  // for "online" orders -- together they're how /api/order-sync,
+  // /api/order-status-sync, and create_online_order() itself find/dedupe a
+  // given storefront order.
+  channel: string;
+  site: string | null;
+  site_order_id: string | null;
 };
 
 export type OrderItem = {
