@@ -27,7 +27,7 @@ export default async function InvoicePage({
     >
       <div className="mb-4 flex items-center justify-end gap-3 print:hidden">
         <OrderStatusControl orderId={invoice.order.id} status={invoice.order.fulfillment_status} />
-        <PrintButton />
+        <PrintButton filename={`Invoice-${invoice.invoiceNumber.replace(/^#/, "")}`} />
       </div>
 
       {/* Two identical copies -- a "duplicate voucher" (customer + shop), each

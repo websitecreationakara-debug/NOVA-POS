@@ -27,7 +27,7 @@ export default async function BulkInvoicePage({
       className={`${hanuman.className} mx-auto w-fit max-w-full p-6 print:w-full print:max-w-none print:p-0`}
     >
       <div className="mb-4 flex items-center justify-end gap-3 print:hidden">
-        <PrintButton />
+        <PrintButton filename={`Invoices-${invoices.length}-orders`} />
       </div>
 
       {invoices.length === 0 ? (
