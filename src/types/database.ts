@@ -152,6 +152,8 @@ export type Order = {
   invoice_number: string | null;
   customer_name: string | null;
   customer_phone: string | null;
+  // Free-text note / description for the order (migration 0021).
+  note: string | null;
 };
 
 export type OrderItem = {
@@ -338,6 +340,23 @@ export type Database = {
           p_order_id: string;
         };
         Returns: string[];
+      };
+      create_online_order: {
+        Args: {
+          p_brand_id: string;
+          p_site: string;
+          p_site_order_id: string;
+          p_items: Json;
+          p_customer_name?: string | null;
+          p_customer_phone?: string | null;
+          p_customer_email?: string | null;
+          p_subtotal?: number | null;
+          p_discount?: number;
+          p_delivery_fee?: number;
+          p_total?: number | null;
+          p_payment_method?: PaymentMethod | null;
+        };
+        Returns: string;
       };
     };
     Enums: Record<string, never>;
