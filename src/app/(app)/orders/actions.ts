@@ -14,6 +14,28 @@ export type DueDelivery = {
   overdue: boolean;
 };
 
+// A cheap "has anything changed" fingerprint for the live-update watcher
+// (see LiveOrdersWatcher): id + fulfillment_status for the most recent
+// orders. Polled every few seconds and diffed against the previous poll --
+// any difference (a new order, or a status flip) triggers a router.refresh()
+// so a website order (created by /api/order-sync, or status-updated by
+// /api/order-status-sync -- neither of which goes through this browser, so
+// nothing here would otherwise know to refresh) shows up without anyone
+// having to reload the page. Capped at the most recent 100 -- an older order
+// changing status while nobody's watching it live isn't worth the extra
+// payload on every poll.
+export async function getRecentOrderActivityAction(): Promise<
+  { id: string; fulfillmentStatus: FulfillmentStatus }[]
+> {
+  const { data, error } = await supabaseAdmin
+    .from("orders")
+    .select("id, fulfillment_status")
+    .order("created_at", { ascending: false })
+    .limit(100);
+  if (error) throw error;
+  return (data ?? []).map((o) => ({ id: o.id, fulfillmentStatus: o.fulfillment_status }));
+}
+
 // Orders whose customer-requested delivery time is within the next 2 hours
 // (or already past) and that aren't finished yet -- what the alert bell polls.
 // Returns [] if the delivery_at column isn't there yet (migration 0020), so a

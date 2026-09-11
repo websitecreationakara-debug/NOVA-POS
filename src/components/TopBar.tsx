@@ -4,6 +4,7 @@ import { LogOut } from "lucide-react";
 import { logoutAction } from "@/app/login/actions";
 import ThemeToggle from "@/components/ThemeToggle";
 import DeliveryAlertBell from "@/components/DeliveryAlertBell";
+import LiveOrdersWatcher from "@/components/LiveOrdersWatcher";
 import { staffRoleLabel } from "@/types/database";
 
 export default function TopBar({ fullName, role }: { fullName: string; role: string }) {
@@ -17,6 +18,7 @@ export default function TopBar({ fullName, role }: { fullName: string; role: str
 
   return (
     <header className="print:hidden flex shrink-0 items-center gap-3 border-b border-border bg-card px-6 py-3">
+      <LiveOrdersWatcher />
       <div className="ml-auto flex items-center gap-3">
         <DeliveryAlertBell />
         <ThemeToggle />
