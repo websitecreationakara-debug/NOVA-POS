@@ -38,6 +38,12 @@ export async function POST(request: NextRequest) {
     deliveryFee?: number;
     total?: number | null;
     paymentMethod?: string | null;
+    // The customer's requested delivery/pickup time, as a proper ISO string
+    // with an explicit offset (e.g. "...+07:00") or "Z" -- the caller is
+    // responsible for that conversion, since a bare "YYYY-MM-DDTHH:mm" with
+    // no offset would be parsed as UTC here, silently shifting it off by
+    // whatever the storefront's local UTC offset actually is.
+    deliveryAt?: string | null;
   };
   try {
     body = await request.json();
@@ -77,6 +83,15 @@ export async function POST(request: NextRequest) {
       ? (body.paymentMethod as PaymentMethod)
       : null;
 
+  let deliveryAt: string | null = null;
+  if (typeof body.deliveryAt === "string" && body.deliveryAt.trim()) {
+    const parsed = new Date(body.deliveryAt);
+    if (Number.isNaN(parsed.getTime())) {
+      return NextResponse.json({ error: "Invalid deliveryAt" }, { status: 400 });
+    }
+    deliveryAt = parsed.toISOString();
+  }
+
   const { data: brand, error: brandError } = await supabaseAdmin
     .from("brands")
     .select("id")
@@ -99,6 +114,7 @@ export async function POST(request: NextRequest) {
     p_delivery_fee: body.deliveryFee ?? 0,
     p_total: body.total ?? null,
     p_payment_method: paymentMethod,
+    p_delivery_at: deliveryAt,
   });
   if (rpcError) {
     return NextResponse.json({ error: rpcError.message }, { status: 500 });

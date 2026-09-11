@@ -367,6 +367,7 @@ export type Database = {
           p_delivery_fee?: number;
           p_total?: number | null;
           p_payment_method?: PaymentMethod | null;
+          p_delivery_at?: string | null;
         };
         Returns: string;
       };
