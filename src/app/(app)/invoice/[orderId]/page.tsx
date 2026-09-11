@@ -35,20 +35,6 @@ function formatDateTime(iso: string | null) {
   });
 }
 
-// The requested delivery date & time (ISO) -- weekday + date + time, no seconds.
-function formatDeliveryAt(iso: string | null) {
-  if (!iso) return "—";
-  return new Date(iso).toLocaleString("en-US", {
-    weekday: "long",
-    year: "numeric",
-    month: "long",
-    day: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-    hour12: true,
-  });
-}
-
 const PAYMENT_LABELS: Record<string, string> = {
   bank_qr: "BANK TRS",
   cash: "CASH",
@@ -130,12 +116,10 @@ function InvoiceDoc({
     : "—";
   const subDetails: { kh: string; en: string; value: string }[] = [
     { kh: "ពិពណ៌នា", en: "Description", value: order.note?.trim() || "—" },
-    // Same value (and same formatting) as ថ្ងៃម៉ោងដឹកជញ្ជូន above -- both are
-    // "when this order is due to go out," so they should never disagree.
     // This used to show paid_at (when the order was placed/charged) under a
     // label that already said "delivery time," which is why it never
-    // matched the real delivery field next to it.
-    { kh: "ម៉ោងដឹក", en: "Delivery Time", value: formatDeliveryAt(order.delivery_at) },
+    // matched the real delivery field.
+    { kh: "ម៉ោងដឹក", en: "Delivery Time", value: formatDateTime(order.delivery_at) },
     { kh: "កម្មង់តាម", en: "Order Channel", value: "—" },
     { kh: "បង់ប្រាក់តាម", en: "Payment Method", value: paymentLabel },
   ];
@@ -200,9 +184,6 @@ function InvoiceDoc({
         <Meta kh="លេខទូរស័ព្ទ" value={order.customer_phone || "—"} />
         <Meta kh="ថ្ងៃបញ្ជាទិញ" value={formatDateTime(order.paid_at)} />
         <Meta kh="អាសយដ្ឋាន" value={customerAddress || "—"} />
-        {order.delivery_at && (
-          <Meta kh="ថ្ងៃម៉ោងដឹកជញ្ជូន" value={formatDeliveryAt(order.delivery_at)} />
-        )}
       </div>
 
       {/* 3 + 4. Items table with sub-details / summary footer */}
