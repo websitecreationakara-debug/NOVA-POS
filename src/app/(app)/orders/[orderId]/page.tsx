@@ -18,12 +18,14 @@ export default async function OrderDetailPage({
   const { order, invoiceNumber, customerAddress, items } = invoice;
 
   const deliveryLabel = order.delivery_at
-    ? new Date(order.delivery_at).toLocaleString(undefined, {
-        weekday: "short",
-        month: "short",
+    ? new Date(order.delivery_at).toLocaleString("en-US", {
+        year: "numeric",
+        month: "numeric",
         day: "numeric",
         hour: "numeric",
         minute: "2-digit",
+        second: "2-digit",
+        hour12: true,
       })
     : null;
 
