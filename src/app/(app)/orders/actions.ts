@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { supabaseAdmin } from "@/lib/supabase/server";
 import { pushOrderStatusToSite, pushStockToSites } from "@/lib/site-sync";
-import type { FulfillmentStatus, ProductSiteLink } from "@/types/database";
+import type { FulfillmentStatus, PaymentMethod, ProductSiteLink } from "@/types/database";
 
 export type DueDelivery = {
   id: string;
@@ -93,6 +93,8 @@ export type OrderEditInput = {
   // Customer-requested delivery date & time as an ISO string. "" / undefined
   // clears it (ASAP / same day).
   deliveryAt?: string;
+  // "" clears it (unpaid/unknown); undefined leaves it be.
+  paymentMethod?: PaymentMethod | "";
   // Free-text note / description. "" clears it; undefined leaves it be.
   note?: string;
 };
@@ -179,6 +181,9 @@ export async function updateOrderAction(
     if (!Number.isNaN(parsed.getTime())) deliveryAt = parsed.toISOString();
   }
 
+  const paymentMethod: PaymentMethod | null | undefined =
+    input.paymentMethod === "" ? null : input.paymentMethod;
+
   const { error: updErr } = await supabaseAdmin
     .from("orders")
     .update({
@@ -190,6 +195,7 @@ export async function updateOrderAction(
       delivery_fee: deliveryFee,
       total,
       ...(deliveryAt !== undefined ? { delivery_at: deliveryAt } : {}),
+      ...(paymentMethod !== undefined ? { payment_method: paymentMethod } : {}),
     })
     .eq("id", orderId);
   if (updErr) throw updErr;

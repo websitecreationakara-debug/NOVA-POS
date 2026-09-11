@@ -64,6 +64,8 @@ export default async function OrderDetailPage({
           customerPhone={order.customer_phone ?? ""}
           customerAddress={customerAddress ?? ""}
           deliveryLabel={deliveryLabel}
+          deliveryAt={order.delivery_at}
+          paymentMethod={order.payment_method}
           discount={order.discount}
           deliveryFee={order.delivery_fee}
           note={order.note ?? ""}

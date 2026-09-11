@@ -6,9 +6,24 @@ import { useRouter } from "next/navigation";
 import { Check, Pencil, Plus, RefreshCw, Trash2, X } from "lucide-react";
 import { updateOrderAction } from "@/app/(app)/orders/actions";
 import { notifyOrdersChanged } from "@/lib/ordersChanged";
+import type { PaymentMethod } from "@/types/database";
 
 function formatMoney(n: number) {
   return `$${n.toFixed(2)}`;
+}
+
+const PAYMENT_METHOD_LABELS: Record<PaymentMethod, string> = {
+  cash: "Cash",
+  bank_qr: "Bank QR",
+};
+
+// "YYYY-MM-DDTHH:MM" local value for <input type="datetime-local">, from an
+// ISO timestamp -- same approach as the Sales page's own delivery picker.
+function isoToLocalMinute(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  d.setSeconds(0, 0);
+  return `${d.toLocaleDateString("en-CA")}T${d.toTimeString().slice(0, 5)}`;
 }
 
 type Row = {
@@ -41,6 +56,8 @@ export default function OrderEditor({
   customerPhone,
   customerAddress,
   deliveryLabel,
+  deliveryAt,
+  paymentMethod,
   discount,
   deliveryFee,
   note,
@@ -53,6 +70,8 @@ export default function OrderEditor({
   customerPhone: string;
   customerAddress: string;
   deliveryLabel: string | null;
+  deliveryAt: string | null;
+  paymentMethod: PaymentMethod | null;
   discount: number;
   deliveryFee: number;
   note: string;
@@ -72,6 +91,8 @@ export default function OrderEditor({
   const [dPercent, setDPercent] = useState("");
   const [dMinus, setDMinus] = useState("");
   const [dDelivery, setDDelivery] = useState("");
+  const [dDeliveryAt, setDDeliveryAt] = useState("");
+  const [dPaymentMethod, setDPaymentMethod] = useState<PaymentMethod | "">("");
   const [dNote, setDNote] = useState("");
 
   const viewRows = useMemo(() => toRows(items), [items]);
@@ -98,6 +119,8 @@ export default function OrderEditor({
     setDPercent("");
     setDMinus(discount ? String(discount) : "");
     setDDelivery(deliveryFee ? String(deliveryFee) : "");
+    setDDeliveryAt(deliveryAt ? isoToLocalMinute(deliveryAt) : "");
+    setDPaymentMethod(paymentMethod ?? "");
     setDNote(note);
     setError(null);
     setEditing(true);
@@ -136,6 +159,8 @@ export default function OrderEditor({
         discountPercent: Number(dPercent) || 0,
         minusAmount: Number(dMinus) || 0,
         deliveryFee: Number(dDelivery) || 0,
+        deliveryAt: dDeliveryAt ? new Date(dDeliveryAt).toISOString() : "",
+        paymentMethod: dPaymentMethod,
         note: dNote,
       });
       notifyOrdersChanged();
@@ -247,10 +272,42 @@ export default function OrderEditor({
             />
           </div>
         )}
-        {deliveryLabel && (
+        {(editing || deliveryLabel) && (
           <div>
             <p className="mb-1 text-muted-foreground">Requested delivery</p>
-            <p className="font-medium">{deliveryLabel}</p>
+            {editing ? (
+              <input
+                type="datetime-local"
+                value={dDeliveryAt}
+                onChange={(e) => setDDeliveryAt(e.target.value)}
+                className={fieldCls}
+              />
+            ) : (
+              <p className="font-medium">{deliveryLabel}</p>
+            )}
+          </div>
+        )}
+        {(editing || paymentMethod) && (
+          <div>
+            <p className="mb-1 text-muted-foreground">Payment method</p>
+            {editing ? (
+              <select
+                value={dPaymentMethod}
+                onChange={(e) => setDPaymentMethod(e.target.value as PaymentMethod | "")}
+                className={fieldCls}
+              >
+                <option value="">—</option>
+                {(Object.keys(PAYMENT_METHOD_LABELS) as PaymentMethod[]).map((pm) => (
+                  <option key={pm} value={pm}>
+                    {PAYMENT_METHOD_LABELS[pm]}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <p className="font-medium">
+                {paymentMethod ? PAYMENT_METHOD_LABELS[paymentMethod] : "—"}
+              </p>
+            )}
           </div>
         )}
         {(editing || note) && (
