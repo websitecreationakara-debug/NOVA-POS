@@ -130,7 +130,12 @@ function InvoiceDoc({
     : "—";
   const subDetails: { kh: string; en: string; value: string }[] = [
     { kh: "ពិពណ៌នា", en: "Description", value: order.note?.trim() || "—" },
-    { kh: "ម៉ោងដឹក", en: "Order Time", value: formatDateTime(order.paid_at) },
+    // Same value (and same formatting) as ថ្ងៃម៉ោងដឹកជញ្ជូន above -- both are
+    // "when this order is due to go out," so they should never disagree.
+    // This used to show paid_at (when the order was placed/charged) under a
+    // label that already said "delivery time," which is why it never
+    // matched the real delivery field next to it.
+    { kh: "ម៉ោងដឹក", en: "Delivery Time", value: formatDeliveryAt(order.delivery_at) },
     { kh: "កម្មង់តាម", en: "Order Channel", value: "—" },
     { kh: "បង់ប្រាក់តាម", en: "Payment Method", value: paymentLabel },
   ];
