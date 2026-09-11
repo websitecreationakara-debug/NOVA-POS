@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Search, Truck, X } from "lucide-react";
+import { FileDown, Search, Truck, X } from "lucide-react";
 import type { OrderListRow } from "@/lib/supabase/queries";
 import type { FulfillmentStatus } from "@/types/database";
 import { updateFulfillmentStatusAction } from "@/app/(app)/orders/actions";
@@ -178,10 +178,19 @@ export default function OrdersTable({
             </button>
           ))}
           {bulkBusy && <span className="text-xs text-muted-foreground">Updating…</span>}
+          <a
+            href={`/invoice/bulk?ids=${Array.from(selected).join(",")}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="ml-auto inline-flex items-center gap-1.5 rounded-full border border-border px-2.5 py-1 text-xs font-medium transition-colors hover:bg-muted"
+          >
+            <FileDown className="size-3.5" />
+            Save as PDF
+          </a>
           <button
             type="button"
             onClick={() => setSelected(new Set())}
-            className="ml-auto text-xs font-medium text-muted-foreground hover:text-foreground"
+            className="text-xs font-medium text-muted-foreground hover:text-foreground"
           >
             Clear
           </button>
