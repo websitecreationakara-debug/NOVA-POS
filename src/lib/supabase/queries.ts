@@ -332,6 +332,7 @@ export async function getDashboardStats(): Promise<DashboardStats> {
 export type OrderListRow = {
   id: string;
   invoiceNumber: string | null;
+  brandId: string;
   brandName: string;
   customerName: string | null;
   customerPhone: string | null;
@@ -361,6 +362,7 @@ export async function getOrdersList(status?: FulfillmentStatus): Promise<OrderLi
 
   type Row = {
     id: string;
+    brand_id: string;
     customer_name: string | null;
     customer_phone: string | null;
     total: number;
@@ -373,6 +375,7 @@ export async function getOrdersList(status?: FulfillmentStatus): Promise<OrderLi
   const rows: OrderListRow[] = ((data ?? []) as Row[]).map((o) => ({
     id: o.id,
     invoiceNumber: null,
+    brandId: o.brand_id,
     brandName: o.brands?.name ?? "—",
     customerName: o.customer_name,
     customerPhone: o.customer_phone,

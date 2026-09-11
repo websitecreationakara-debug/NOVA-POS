@@ -36,14 +36,17 @@ function formatDeliveryAt(iso: string) {
 export default function OrdersTable({
   orders,
   activeStatus,
+  brands,
 }: {
   orders: OrderListRow[];
   activeStatus: FulfillmentStatus | null;
+  brands: { id: string; name: string }[];
 }) {
   const router = useRouter();
   const [search, setSearch] = useState("");
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
+  const [brandId, setBrandId] = useState("");
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [bulkBusy, setBulkBusy] = useState(false);
 
@@ -51,6 +54,7 @@ export default function OrdersTable({
     const q = search.trim().toLowerCase();
     return orders.filter((o) => {
       if (activeStatus && o.fulfillmentStatus !== activeStatus) return false;
+      if (brandId && o.brandId !== brandId) return false;
       if (q) {
         const hay = `${o.invoiceNumber ?? ""} ${o.customerName ?? ""} ${o.customerPhone ?? ""}`.toLowerCase();
         if (!hay.includes(q)) return false;
@@ -63,14 +67,15 @@ export default function OrdersTable({
       }
       return true;
     });
-  }, [orders, activeStatus, search, from, to]);
+  }, [orders, activeStatus, brandId, search, from, to]);
 
-  const hasFilter = search.trim() !== "" || from !== "" || to !== "";
+  const hasFilter = search.trim() !== "" || from !== "" || to !== "" || brandId !== "";
 
   function clearFilters() {
     setSearch("");
     setFrom("");
     setTo("");
+    setBrandId("");
   }
 
   const visibleIds = useMemo(() => filtered.map((o) => o.id), [filtered]);
@@ -122,6 +127,18 @@ export default function OrdersTable({
             className="w-full rounded-lg border border-border bg-transparent py-1.5 pr-3 pl-8 text-sm"
           />
         </div>
+        <select
+          value={brandId}
+          onChange={(e) => setBrandId(e.target.value)}
+          className="rounded-lg border border-border bg-transparent px-2.5 py-1.5 text-sm text-foreground"
+        >
+          <option value="">All businesses</option>
+          {brands.map((b) => (
+            <option key={b.id} value={b.id}>
+              {b.name}
+            </option>
+          ))}
+        </select>
         <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
           From
           <input

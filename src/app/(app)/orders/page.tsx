@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { getOrdersList } from "@/lib/supabase/queries";
+import { getBrands, getOrdersList } from "@/lib/supabase/queries";
 import { FULFILLMENT_STATUSES } from "@/lib/orderStatus";
 import OrderStatusFilter from "@/components/OrderStatusFilter";
 import OrdersTable from "@/components/OrdersTable";
@@ -23,7 +23,7 @@ export default async function OrdersPage({
 
   // Always load the full list -- the status filter is applied client-side so
   // the summary cards and bulk selection see every order.
-  const orders = await getOrdersList();
+  const [orders, brands] = await Promise.all([getOrdersList(), getBrands()]);
 
   const today = todayLocal();
   const newToday = orders.filter(
@@ -74,7 +74,11 @@ export default async function OrdersPage({
 
       <OrderStatusFilter active={status ?? null} />
 
-      <OrdersTable orders={orders} activeStatus={status ?? null} />
+      <OrdersTable
+        orders={orders}
+        activeStatus={status ?? null}
+        brands={brands.map((b) => ({ id: b.id, name: b.name }))}
+      />
     </main>
   );
 }
