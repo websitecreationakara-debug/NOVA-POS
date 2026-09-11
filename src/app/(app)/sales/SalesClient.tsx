@@ -25,7 +25,28 @@ import {
   type ChargeResult,
   type CustomerSuggestion,
 } from "./actions";
+import { updateOrderAction } from "@/app/(app)/orders/actions";
 import { ensurePosProductForSiteProduct } from "./websiteActions";
+import { notifySaleCharged } from "@/lib/saleCharged";
+
+// An existing order opened for editing via /sales?editOrder=<id> -- the
+// checkout loads with this cart, customer and totals, and "Update order"
+// charges the change back instead of creating a new sale.
+export type EditOrderSeed = {
+  orderId: string;
+  invoiceNumber: string;
+  customerId: string | null;
+  customerName: string;
+  customerPhone: string;
+  customerAddress: string;
+  // Stored discount dollar amount and delivery fee from the order.
+  discount: number;
+  deliveryFee: number;
+  // Requested delivery as an ISO timestamp, or "" for none.
+  deliveryAt: string;
+  note: string;
+  lines: CartLine[];
+};
 
 function formatMoney(n: number) {
   return `$${n.toFixed(2)}`;
@@ -41,6 +62,14 @@ function dateOffset(n: number): string {
 // `now` as the "YYYY-MM-DDTHH:MM" value <input type="datetime-local"> uses.
 function nowLocalMinute(): string {
   const d = new Date();
+  d.setSeconds(0, 0);
+  return `${d.toLocaleDateString("en-CA")}T${d.toTimeString().slice(0, 5)}`;
+}
+
+// Same "YYYY-MM-DDTHH:MM" local value, but from an ISO timestamp.
+function isoToLocalMinute(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
   d.setSeconds(0, 0);
   return `${d.toLocaleDateString("en-CA")}T${d.toTimeString().slice(0, 5)}`;
 }
@@ -86,6 +115,7 @@ export default function SalesClient({
   products,
   websiteCatalog,
   initialSearch,
+  editOrder = null,
 }: {
   brands: Brand[];
   currentBrand: Brand;
@@ -93,6 +123,7 @@ export default function SalesClient({
   products: ProductWithStock[];
   websiteCatalog: SalesWebsiteCatalog | null;
   initialSearch: string;
+  editOrder?: EditOrderSeed | null;
 }) {
   const router = useRouter();
   // Sales runs off the storefront catalog. The POS-catalog grid only shows as a
@@ -113,23 +144,43 @@ export default function SalesClient({
   const [pageSize, setPageSize] = useState(20);
   const [page, setPage] = useState(1);
   const [categoriesExpanded, setCategoriesExpanded] = useState(false);
-  const [cart, setCart] = useState<CartLine[]>([]);
+  const [cart, setCart] = useState<CartLine[]>(() => editOrder?.lines ?? []);
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("cash");
   const [paymentReference, setPaymentReference] = useState("");
-  const [customerName, setCustomerName] = useState("");
-  const [customerPhone, setCustomerPhone] = useState("");
-  const [customerAddress, setCustomerAddress] = useState("");
+  const [note, setNote] = useState(() => editOrder?.note ?? "");
+  const [customerName, setCustomerName] = useState(() => editOrder?.customerName ?? "");
+  const [customerPhone, setCustomerPhone] = useState(() => editOrder?.customerPhone ?? "");
+  const [customerAddress, setCustomerAddress] = useState(() => editOrder?.customerAddress ?? "");
   const [discountPercent, setDiscountPercent] = useState("");
-  const [minusAmount, setMinusAmount] = useState("");
+  // The order stores one folded discount amount, so it seeds the flat "minus"
+  // field (the % split can't be recovered) -- same limitation as the order
+  // detail editor.
+  const [minusAmount, setMinusAmount] = useState(() =>
+    editOrder && editOrder.discount ? String(editOrder.discount) : ""
+  );
   // Customer-requested delivery date & time as "YYYY-MM-DDTHH:MM"
   // (datetime-local). Blank = ASAP / same day.
-  const [deliveryAt, setDeliveryAt] = useState("");
-  const [deliveryFee, setDeliveryFee] = useState("");
+  const [deliveryAt, setDeliveryAt] = useState(() =>
+    editOrder?.deliveryAt ? isoToLocalMinute(editOrder.deliveryAt) : ""
+  );
+  const [deliveryFee, setDeliveryFee] = useState(() =>
+    editOrder && editOrder.deliveryFee ? String(editOrder.deliveryFee) : ""
+  );
   const [selectedCustomer, setSelectedCustomer] = useState<{ id: string; phone: string } | null>(
-    null
+    () =>
+      editOrder?.customerId
+        ? { id: editOrder.customerId, phone: editOrder.customerPhone }
+        : null
   );
   const [suggestions, setSuggestions] = useState<CustomerSuggestion[]>([]);
   const [phoneDropdownOpen, setPhoneDropdownOpen] = useState(false);
+  // The phone-suggestion list is position:fixed and anchored just above the
+  // phone input, so the checkout panel's own `overflow-y-auto` scroll
+  // container can't clip it.
+  const phoneInputRef = useRef<HTMLInputElement>(null);
+  const [phonePos, setPhonePos] = useState<{ bottom: number; left: number; width: number } | null>(
+    null
+  );
   const [receipt, setReceipt] = useState<ChargeResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   // A brief, self-dismissing toast for "you tapped an out-of-stock product" --
@@ -152,6 +203,27 @@ export default function SalesClient({
     const t = setTimeout(() => setStockNotice(null), 3000);
     return () => clearTimeout(t);
   }, [stockNotice]);
+
+  useEffect(() => {
+    if (!phoneDropdownOpen) return;
+    function place() {
+      const r = phoneInputRef.current?.getBoundingClientRect();
+      if (r) {
+        setPhonePos({
+          bottom: window.innerHeight - r.top + 6,
+          left: r.left,
+          width: Math.max(r.width, 240),
+        });
+      }
+    }
+    place();
+    window.addEventListener("resize", place);
+    window.addEventListener("scroll", place, true);
+    return () => {
+      window.removeEventListener("resize", place);
+      window.removeEventListener("scroll", place, true);
+    };
+  }, [phoneDropdownOpen]);
 
   const isExistingCustomer = selectedCustomer?.phone === customerPhone.trim() && !!selectedCustomer;
 
@@ -440,6 +512,38 @@ export default function SalesClient({
       setError("Customer name is required to add a new customer");
       return;
     }
+    if (cart.length === 0) {
+      setError("Add at least one product");
+      return;
+    }
+
+    if (editOrder) {
+      startCharging(async () => {
+        try {
+          await updateOrderAction(editOrder.orderId, {
+            customerName,
+            customerPhone: phone,
+            customerAddress: customerAddress.trim(),
+            brandId: currentBrand.id,
+            items: cart.map((l) => ({
+              productId: l.productId,
+              quantity: l.quantity,
+              unitPrice: l.unitPrice,
+            })),
+            discountPercent: discountPercentValue,
+            minusAmount: minusValue,
+            deliveryFee: deliveryFeeValue,
+            deliveryAt: deliveryAt ? new Date(deliveryAt).toISOString() : "",
+            note: note.trim(),
+          });
+          router.push(`/orders/${editOrder.orderId}`);
+        } catch (e) {
+          setError(e instanceof Error ? e.message : "Couldn't update the order");
+        }
+      });
+      return;
+    }
+
     startCharging(async () => {
       try {
         const result = await chargeOrder({
@@ -453,10 +557,18 @@ export default function SalesClient({
           discount: discountAmount || undefined,
           deliveryFee: deliveryFeeValue || undefined,
           deliveryAt: deliveryAt ? new Date(deliveryAt).toISOString() : undefined,
+          note: note.trim() || undefined,
         });
         setReceipt(result);
+        notifySaleCharged({
+          orderId: result.orderId,
+          amount: result.total,
+          customerName: customerName.trim() || null,
+          invoiceNumber: result.invoiceNumber,
+        });
         setCart([]);
         setPaymentReference("");
+        setNote("");
         setCustomerName("");
         setCustomerPhone("");
         setCustomerAddress("");
@@ -533,9 +645,10 @@ export default function SalesClient({
       )}
       <header className="flex items-center gap-3 border-b border-black/[.08] px-6 py-3 dark:border-white/[.145]">
         <select
-          className="rounded border border-black/[.15] bg-card px-3 py-1.5 text-sm text-foreground dark:border-white/[.2]"
+          className="rounded border border-black/[.15] bg-card px-3 py-1.5 text-sm text-foreground disabled:opacity-50 dark:border-white/[.2]"
           value={currentBrand.id}
           onChange={(e) => switchBrand(e.target.value)}
+          disabled={!!editOrder}
         >
           {brands.map((b) => (
             <option key={b.id} value={b.id}>
@@ -554,6 +667,21 @@ export default function SalesClient({
           />
         )}
       </header>
+
+      {editOrder && (
+        <div className="flex items-center justify-between gap-3 border-b border-amber-300 bg-amber-50 px-6 py-2 text-sm text-amber-800 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-200">
+          <span>
+            Editing order <span className="font-semibold">{editOrder.invoiceNumber}</span> — add
+            products, then hit <span className="font-semibold">Update order</span>.
+          </span>
+          <Link
+            href={`/orders/${editOrder.orderId}`}
+            className="shrink-0 font-medium underline hover:no-underline"
+          >
+            Cancel
+          </Link>
+        </div>
+      )}
 
       <div className="flex flex-1 overflow-hidden">
         {showWebsite && websiteCatalog ? (
@@ -744,8 +872,9 @@ export default function SalesClient({
                 Customer
               </p>
               <div className="flex gap-2">
-                <div className="relative flex-1">
+                <div className="flex-1">
                   <input
+                    ref={phoneInputRef}
                     type="tel"
                     required
                     autoComplete="off"
@@ -756,8 +885,17 @@ export default function SalesClient({
                     onFocus={() => setPhoneDropdownOpen(true)}
                     onBlur={() => setTimeout(() => setPhoneDropdownOpen(false), 150)}
                   />
-                  {phoneDropdownOpen && customerPhone.trim().length > 0 && (
-                    <div className="absolute bottom-full left-0 z-10 mb-1 max-h-64 w-64 overflow-y-auto rounded border border-black/[.15] bg-white shadow-lg dark:border-white/[.2] dark:bg-zinc-900">
+                  {phoneDropdownOpen && customerPhone.trim().length > 0 && phonePos && (
+                    <div
+                      style={{
+                        position: "fixed",
+                        bottom: phonePos.bottom,
+                        left: phonePos.left,
+                        width: phonePos.width,
+                        zIndex: 50,
+                      }}
+                      className="max-h-64 overflow-y-auto rounded-lg border border-black/[.15] bg-white shadow-xl dark:border-white/[.2] dark:bg-zinc-900"
+                    >
                       <button
                         type="button"
                         onMouseDown={(e) => e.preventDefault()}
@@ -957,6 +1095,21 @@ export default function SalesClient({
                 />
               )}
             </div>
+
+            {/* Note / description -- free text, printed under Remarks on the
+                invoice. */}
+            <div>
+              <p className="mb-1.5 text-[11px] font-semibold tracking-wide text-zinc-400 uppercase">
+                Description
+              </p>
+              <textarea
+                rows={2}
+                placeholder="Note for this order (optional)"
+                value={note}
+                onChange={(e) => setNote(e.target.value)}
+                className="w-full resize-y rounded border border-black/[.15] bg-transparent px-3 py-1.5 text-sm dark:border-white/[.2]"
+              />
+            </div>
             </div>
 
             {/* Summary + total + Charge -- always pinned at the bottom of the
@@ -992,7 +1145,13 @@ export default function SalesClient({
               onClick={handleCharge}
               className="w-full rounded-full bg-green-600 py-3 text-base font-semibold text-white transition-colors hover:bg-green-700 disabled:opacity-40"
             >
-              {isCharging ? "Charging…" : `Charge ${formatMoney(finalTotal)}`}
+              {editOrder
+                ? isCharging
+                  ? "Updating…"
+                  : `Update order · ${formatMoney(finalTotal)}`
+                : isCharging
+                  ? "Charging…"
+                  : `Charge ${formatMoney(finalTotal)}`}
             </button>
             </div>
           </div>

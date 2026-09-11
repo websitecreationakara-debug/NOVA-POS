@@ -1,12 +1,9 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { getInvoice } from "@/lib/supabase/queries";
+import { getBrands, getInvoice } from "@/lib/supabase/queries";
 import OrderStatusControl from "@/components/OrderStatusControl";
+import OrderEditor from "@/components/OrderEditor";
 import DeleteOrderButton from "@/components/DeleteOrderButton";
-
-function formatMoney(n: number) {
-  return `$${n.toFixed(2)}`;
-}
 
 export default async function OrderDetailPage({
   params,
@@ -14,11 +11,21 @@ export default async function OrderDetailPage({
   params: Promise<{ orderId: string }>;
 }) {
   const { orderId } = await params;
-  const invoice = await getInvoice(orderId);
+  const [invoice, brands] = await Promise.all([getInvoice(orderId), getBrands()]);
 
   if (!invoice) notFound();
 
-  const { order, invoiceNumber, brandName, customerAddress, items } = invoice;
+  const { order, invoiceNumber, customerAddress, items } = invoice;
+
+  const deliveryLabel = order.delivery_at
+    ? new Date(order.delivery_at).toLocaleString(undefined, {
+        weekday: "short",
+        month: "short",
+        day: "numeric",
+        hour: "numeric",
+        minute: "2-digit",
+      })
+    : null;
 
   return (
     <main className="mx-auto max-w-3xl p-6">
@@ -47,92 +54,25 @@ export default async function OrderDetailPage({
           <OrderStatusControl orderId={order.id} status={order.fulfillment_status} />
         </div>
 
-        <div className="mt-4 grid grid-cols-2 gap-x-4 gap-y-2 text-sm sm:grid-cols-3">
-          <div>
-            <p className="text-muted-foreground">Phone Number</p>
-            <p className="font-medium">{order.customer_phone || "—"}</p>
-          </div>
-          <div>
-            <p className="text-muted-foreground">Address</p>
-            <p className="font-medium">{customerAddress || "—"}</p>
-          </div>
-          <div>
-            <p className="text-muted-foreground">Business</p>
-            <p className="font-medium">{brandName}</p>
-          </div>
-          {order.delivery_at && (
-            <div>
-              <p className="text-muted-foreground">Requested delivery</p>
-              <p className="font-medium">
-                {new Date(order.delivery_at).toLocaleString(undefined, {
-                  weekday: "short",
-                  month: "short",
-                  day: "numeric",
-                  hour: "numeric",
-                  minute: "2-digit",
-                })}
-              </p>
-            </div>
-          )}
-        </div>
-
-        <div className="mt-6">
-          <h2 className="mb-2 flex items-center gap-2 text-base font-semibold">
-            Products
-            <span className="rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">
-              {items.length}
-            </span>
-          </h2>
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-border text-left text-xs font-semibold text-muted-foreground">
-                  <th className="py-2">Product Name</th>
-                  <th className="py-2 text-right">Amount</th>
-                  <th className="py-2">Unit</th>
-                  <th className="py-2 text-right">Unit Price</th>
-                  <th className="py-2 text-right">Total</th>
-                </tr>
-              </thead>
-              <tbody>
-                {items.map((item, i) => (
-                  <tr key={i} className="border-b border-border">
-                    <td className="py-2">{item.name}</td>
-                    <td className="py-2 text-right">{item.quantity}</td>
-                    <td className="py-2">{item.unit}</td>
-                    <td className="py-2 text-right">{formatMoney(item.unitPrice)}</td>
-                    <td className="py-2 text-right font-medium text-success">
-                      {formatMoney(item.lineTotal)}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-
-        <div className="mt-6 ml-auto flex max-w-xs flex-col gap-1 text-sm">
-          {order.discount > 0 && (
-            <div className="flex justify-between text-muted-foreground">
-              <span>Discount</span>
-              <span>-{formatMoney(order.discount)}</span>
-            </div>
-          )}
-          <div className="flex justify-between text-muted-foreground">
-            <span>Subtotal</span>
-            <span>{formatMoney(order.subtotal)}</span>
-          </div>
-          {order.delivery_fee > 0 && (
-            <div className="flex justify-between text-muted-foreground">
-              <span>Delivery</span>
-              <span>{formatMoney(order.delivery_fee)}</span>
-            </div>
-          )}
-          <div className="mt-2 flex justify-between border-t border-border pt-2 text-base font-bold text-success">
-            <span>Grand Total</span>
-            <span>{formatMoney(order.total)}</span>
-          </div>
-        </div>
+        <OrderEditor
+          orderId={order.id}
+          brands={brands.map((b) => ({ id: b.id, name: b.name }))}
+          brandId={order.brand_id}
+          customerName={order.customer_name ?? ""}
+          customerPhone={order.customer_phone ?? ""}
+          customerAddress={customerAddress ?? ""}
+          deliveryLabel={deliveryLabel}
+          discount={order.discount}
+          deliveryFee={order.delivery_fee}
+          note={order.note ?? ""}
+          items={items.map((i) => ({
+            productId: i.productId,
+            name: i.name,
+            unit: i.unit,
+            quantity: i.quantity,
+            unitPrice: i.unitPrice,
+          }))}
+        />
       </div>
     </main>
   );
