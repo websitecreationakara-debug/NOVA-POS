@@ -5,24 +5,24 @@ import { Download, Printer } from "lucide-react";
 export default function PrintButton({ filename }: { filename?: string }) {
   // Same window.print() dialog either way -- a webpage can't skip straight
   // to a saved file, the user still has to pick "Save as PDF" as the
-  // destination there. The only real thing we control is the filename that
-  // dialog suggests, via document.title -- set it only for the "Save as
-  // PDF" click so a plain "Print" doesn't retitle the tab for a physical
-  // printer that ignores it anyway. Restored on "afterprint" (fires once the
-  // dialog closes, print or cancel), with a timeout fallback for browsers
-  // that don't fire it for a print-to-file destination.
-  function printAs(newTitle?: string) {
-    if (!newTitle) {
-      window.print();
-      return;
-    }
-    const original = document.title;
-    document.title = newTitle;
+  // destination there. What we do control: the suggested filename (via
+  // document.title) and, for "Save as PDF" only, dropping the second
+  // duplicate-voucher copy (via a body class -- see globals.css) since a
+  // saved PDF doesn't need a "shop copy" the way a printed voucher does.
+  // Both are set right before printing and restored on "afterprint" (fires
+  // once the dialog closes, print or cancel), with a timeout fallback for
+  // browsers that don't fire it for a print-to-file destination.
+  function printAs({ title, singleCopy }: { title?: string; singleCopy?: boolean } = {}) {
+    const originalTitle = document.title;
+    if (title) document.title = title;
+    if (singleCopy) document.body.classList.add("pdf-single-copy");
+
     let restored = false;
     const restore = () => {
       if (restored) return;
       restored = true;
-      document.title = original;
+      if (title) document.title = originalTitle;
+      if (singleCopy) document.body.classList.remove("pdf-single-copy");
     };
     window.addEventListener("afterprint", restore, { once: true });
     setTimeout(restore, 2000);
@@ -39,7 +39,7 @@ export default function PrintButton({ filename }: { filename?: string }) {
         Print
       </button>
       <button
-        onClick={() => printAs(filename || "Invoice")}
+        onClick={() => printAs({ title: filename || "Invoice", singleCopy: true })}
         className="inline-flex items-center gap-1.5 rounded-full bg-brand px-4 py-2 text-sm font-medium text-black"
       >
         <Download className="size-4" />

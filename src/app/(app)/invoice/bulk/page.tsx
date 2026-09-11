@@ -42,6 +42,7 @@ export default async function BulkInvoicePage({
             return [0, 1].map((copyIndex) => (
               <div
                 key={`${invoice.order.id}-${copyIndex}`}
+                data-copy={copyIndex === 1 ? "2" : "1"}
                 className={`invoice-sheet w-[210mm] max-w-full overflow-hidden rounded-xl border border-zinc-200 bg-white text-black shadow-sm print:w-full print:max-w-none print:overflow-visible print:rounded-none print:border-0 print:shadow-none ${
                   orderIndex > 0 || copyIndex > 0 ? "break-before-page" : ""
                 }`}

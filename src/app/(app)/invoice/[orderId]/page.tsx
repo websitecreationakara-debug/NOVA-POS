@@ -37,6 +37,7 @@ export default async function InvoicePage({
         {[0, 1].map((n) => (
           <div
             key={n}
+            data-copy={n === 1 ? "2" : "1"}
             className={`invoice-sheet w-[210mm] max-w-full overflow-hidden rounded-xl border border-zinc-200 bg-white text-black shadow-sm print:w-full print:max-w-none print:overflow-visible print:rounded-none print:border-0 print:shadow-none ${
               n === 1 ? "break-before-page" : ""
             }`}

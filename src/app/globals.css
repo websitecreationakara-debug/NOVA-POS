@@ -162,4 +162,10 @@ input[type="number"]::-webkit-inner-spin-button {
     break-inside: avoid;
     page-break-inside: avoid;
   }
+  /* "Save as PDF" (see PrintButton) sets this on <body> for the print job
+     only -- Print keeps both duplicate-voucher copies, PDF keeps just the
+     first, one page per order instead of two. */
+  body.pdf-single-copy .invoice-sheet[data-copy="2"] {
+    display: none;
+  }
 }
