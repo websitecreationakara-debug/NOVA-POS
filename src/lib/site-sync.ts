@@ -1,7 +1,7 @@
 import { supabaseAdmin } from "@/lib/supabase/server";
 import { catalogForBrandSlug } from "@/lib/websiteProducts/catalogs";
 import { updateWebsiteProductVariation } from "@/lib/websiteProducts/client";
-import type { ProductSiteLink } from "@/types/database";
+import type { FulfillmentStatus, ProductSiteLink } from "@/types/database";
 
 // POS is the source of truth for stock on the ~28 products that also exist on a
 // live storefront (see product_site_links, Phase 7). This pushes a stock change
@@ -220,4 +220,59 @@ async function pushSimpleLinkStock(
       }
     })
   );
+}
+
+// POS -> storefront status mapping, the inverse of what /api/order-status-sync
+// (the website -> POS direction) accepts -- see that route for the pairing
+// this mirrors. "pre_order" has no storefront equivalent, so it's treated
+// the same as "new_order".
+const STATUS_TO_SITE: Record<FulfillmentStatus, string> = {
+  pre_order: "pending",
+  new_order: "pending",
+  processing: "processing",
+  delivered: "shipped",
+  cancelled: "cancelled",
+  complete: "completed",
+};
+
+// Push side of order status sync: staff change an order's status in POS, and
+// (for an order that came from a storefront -- see channel/site/site_order_id
+// on the Order type) that storefront's own admin view gets told, so it shows
+// the same status instead of staying frozen at whatever it started as. Mirror
+// of notifyPosOfOrderStatus on each storefront, which does the same thing in
+// the other direction. Best-effort -- never throws; the caller decides
+// whether/how to surface a failure.
+export async function pushOrderStatusToSite(
+  site: ProductSiteLink["site"],
+  siteOrderId: string,
+  status: FulfillmentStatus
+): Promise<{ ok: true } | { ok: false; reason: string }> {
+  const secret = process.env.STOCK_SYNC_SECRET;
+  const baseUrl = SITE_BASE_URL[site];
+  if (!secret) return { ok: false, reason: "STOCK_SYNC_SECRET is not configured" };
+  if (!baseUrl) return { ok: false, reason: `no base URL configured for ${site}` };
+
+  try {
+    const res = await fetch(`${baseUrl}/api/pos-order-status`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${secret}`,
+      },
+      body: JSON.stringify({ siteOrderId, status: STATUS_TO_SITE[status] }),
+      signal: AbortSignal.timeout(8000),
+    });
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      console.error(
+        `pos-order-status push rejected by ${site} for order ${siteOrderId} ` +
+          `(HTTP ${res.status}): ${body.slice(0, 300)}`
+      );
+      return { ok: false, reason: `HTTP ${res.status}` };
+    }
+    return { ok: true };
+  } catch (e) {
+    console.error(`pos-order-status push failed for ${site} order ${siteOrderId}`, e);
+    return { ok: false, reason: e instanceof Error ? e.message : "network error" };
+  }
 }

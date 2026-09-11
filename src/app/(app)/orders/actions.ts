@@ -2,8 +2,8 @@
 
 import { revalidatePath } from "next/cache";
 import { supabaseAdmin } from "@/lib/supabase/server";
-import { pushStockToSites } from "@/lib/site-sync";
-import type { FulfillmentStatus } from "@/types/database";
+import { pushOrderStatusToSite, pushStockToSites } from "@/lib/site-sync";
+import type { FulfillmentStatus, ProductSiteLink } from "@/types/database";
 
 export type DueDelivery = {
   id: string;
@@ -257,15 +257,31 @@ export async function updateFulfillmentStatusAction(
   orderId: string,
   status: FulfillmentStatus
 ): Promise<void> {
-  const { error } = await supabaseAdmin
+  const { data: order, error } = await supabaseAdmin
     .from("orders")
     .update({ fulfillment_status: status })
-    .eq("id", orderId);
+    .eq("id", orderId)
+    .select("channel, site, site_order_id")
+    .single();
 
   if (error) throw error;
   revalidatePath(`/invoice/${orderId}`);
   revalidatePath(`/orders/${orderId}`);
   revalidatePath("/orders");
+
+  // Mirror of /api/order-status-sync (the website -> POS direction): for an
+  // order that came from a storefront, push this status change back out so
+  // that storefront's own admin view shows the same thing instead of staying
+  // frozen at whatever it started as. Best-effort -- a push failure here
+  // shouldn't undo the status change staff just made in POS.
+  if (order?.channel === "online" && order.site && order.site_order_id) {
+    const site = order.site as ProductSiteLink["site"];
+    const siteOrderId = order.site_order_id;
+    const result = await pushOrderStatusToSite(site, siteOrderId, status);
+    if (!result.ok) {
+      console.error(`Failed to push order status to ${site}: ${result.reason}`);
+    }
+  }
 }
 
 // Deletes an invoice/order and restores the stock it consumed (see
