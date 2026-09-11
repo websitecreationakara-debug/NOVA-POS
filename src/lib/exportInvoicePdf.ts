@@ -78,7 +78,13 @@ export async function exportInvoicePdf(filename: string): Promise<void> {
     const y = MARGIN_MM;
 
     if (i > 0) pdf.addPage();
-    pdf.addImage(canvas.toDataURL("image/png"), "PNG", x, y, drawW, drawH);
+    // JPEG, not PNG: jsPDF embeds a PNG data URL largely uncompressed, which
+    // measured ~9MB for a single one-page invoice (and >20MB for just two
+    // orders in the bulk export) -- a real batch of a few dozen orders would
+    // be hundreds of MB. JPEG at high quality embeds as a compact DCTDecode
+    // stream instead, ~30x smaller, with no visible quality loss on this
+    // mostly text-and-line-art content.
+    pdf.addImage(canvas.toDataURL("image/jpeg", 0.92), "JPEG", x, y, drawW, drawH);
   }
 
   const safeName = filename.replace(/[\\/:*?"<>|]/g, "-");
