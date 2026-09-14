@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase/server";
+import { pushStockToSites } from "@/lib/site-sync";
 import type { FulfillmentStatus, ProductSiteLink } from "@/types/database";
 
 const VALID_SITES: ProductSiteLink["site"][] = [
@@ -73,12 +74,20 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ ok: true, skipped: true });
   }
 
-  const { error: updateError } = await supabaseAdmin
-    .from("orders")
-    .update({ fulfillment_status: mapped })
-    .eq("id", order.id);
+  // set_order_fulfillment_status() (migration 0025) keeps stock in sync with
+  // the status the same way POS's own status control does: deducted for
+  // every non-cancelled status, given back only while "cancelled" -- so a
+  // storefront cancelling/un-cancelling an order behaves the same as staff
+  // doing it in POS.
+  const { data: movedStock, error: updateError } = await supabaseAdmin.rpc(
+    "set_order_fulfillment_status",
+    { p_order_id: order.id, p_status: mapped }
+  );
   if (updateError) {
     return NextResponse.json({ error: updateError.message }, { status: 500 });
+  }
+  if (movedStock && movedStock.length > 0) {
+    await pushStockToSites(movedStock);
   }
 
   return NextResponse.json({ ok: true, orderId: order.id, status: mapped });
