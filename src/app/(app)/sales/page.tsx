@@ -104,6 +104,7 @@ export default async function SalesPage({
         customerAddress: editInvoice.customerAddress ?? "",
         discount: editInvoice.order.discount,
         deliveryFee: editInvoice.order.delivery_fee,
+        paymentMethod: editInvoice.order.payment_method,
         // Raw ISO -- SalesClient converts to a local datetime-local value so
         // the timezone maths happens in the browser, not on the server.
         deliveryAt: editInvoice.order.delivery_at ?? "",

@@ -61,6 +61,7 @@ export type EditOrderSeed = {
   // Stored discount dollar amount and delivery fee from the order.
   discount: number;
   deliveryFee: number;
+  paymentMethod: PaymentMethod | null;
   // Requested delivery as an ISO timestamp, or "" for none.
   deliveryAt: string;
   note: string;
@@ -164,7 +165,7 @@ export default function SalesClient({
   const [page, setPage] = useState(1);
   const [categoriesExpanded, setCategoriesExpanded] = useState(false);
   const [cart, setCart] = useState<CartLine[]>(() => editOrder?.lines ?? []);
-  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("khqr");
+  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>(editOrder?.paymentMethod ?? "khqr");
   const [paymentReference, setPaymentReference] = useState("");
   const [note, setNote] = useState(() => editOrder?.note ?? "");
   const [customerName, setCustomerName] = useState(() => editOrder?.customerName ?? "");
@@ -554,6 +555,7 @@ export default function SalesClient({
             deliveryFee: deliveryFeeValue,
             deliveryAt: deliveryAt ? new Date(deliveryAt).toISOString() : "",
             note: note.trim(),
+            paymentMethod,
           });
           router.push(`/orders/${editOrder.orderId}`);
         } catch (e) {
