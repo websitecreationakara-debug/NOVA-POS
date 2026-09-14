@@ -263,14 +263,23 @@ export async function updateFulfillmentStatusAction(
   orderId: string,
   status: FulfillmentStatus
 ): Promise<void> {
-  const { data: order, error } = await supabaseAdmin
-    .from("orders")
-    .update({ fulfillment_status: status })
-    .eq("id", orderId)
-    .select("channel, site, site_order_id")
-    .single();
+  // set_order_fulfillment_status() (migration 0025) keeps stock in sync with
+  // the status: deducted for every non-cancelled status, given back only
+  // while "cancelled" -- moved only when crossing that boundary, so cycling
+  // statuses back and forth never drifts the total.
+  const [{ data: movedStock, error: rpcErr }, { data: order, error: fetchErr }] = await Promise.all([
+    supabaseAdmin.rpc("set_order_fulfillment_status", { p_order_id: orderId, p_status: status }),
+    supabaseAdmin.from("orders").select("channel, site, site_order_id").eq("id", orderId).single(),
+  ]);
+  if (rpcErr) throw rpcErr;
+  if (fetchErr) throw fetchErr;
 
-  if (error) throw error;
+  if (movedStock && movedStock.length > 0) {
+    revalidatePath("/stock");
+    revalidatePath("/sales");
+    await pushStockToSites(movedStock);
+  }
+
   revalidatePath(`/invoice/${orderId}`);
   revalidatePath(`/orders/${orderId}`);
   revalidatePath("/orders");

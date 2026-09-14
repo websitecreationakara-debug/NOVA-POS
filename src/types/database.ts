@@ -357,6 +357,13 @@ export type Database = {
         };
         Returns: string[];
       };
+      set_order_fulfillment_status: {
+        Args: {
+          p_order_id: string;
+          p_status: FulfillmentStatus;
+        };
+        Returns: string[];
+      };
       create_online_order: {
         Args: {
           p_brand_id: string;
