@@ -59,6 +59,35 @@ export async function addExpenseAction(input: {
   revalidatePath("/accountance");
 }
 
+export async function updateExpenseAction(
+  expenseId: string,
+  input: {
+    brandId: string;
+    description: string;
+    amount: number;
+    category?: string;
+    date: string;
+  }
+): Promise<void> {
+  const { brandId, description, amount, category, date } = input;
+  if (!description.trim()) throw new Error("Description is required");
+  if (amount <= 0) throw new Error("Amount must be greater than 0");
+
+  const { error } = await supabaseAdmin
+    .from("expenses")
+    .update({
+      brand_id: brandId,
+      description: description.trim(),
+      amount,
+      category: category?.trim() || null,
+      expense_date: date,
+    })
+    .eq("id", expenseId);
+
+  if (error) throw error;
+  revalidatePath("/accountance");
+}
+
 export async function deleteExpenseAction(expenseId: string): Promise<void> {
   const { error } = await supabaseAdmin.from("expenses").delete().eq("id", expenseId);
   if (error) throw error;

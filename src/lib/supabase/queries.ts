@@ -3,6 +3,7 @@ import { configuredCatalogs } from "@/lib/websiteProducts/catalogs";
 import { listWebsiteProducts } from "@/lib/websiteProducts/client";
 import { countLowStock } from "@/lib/websiteProducts/stock";
 import { formatInvoiceNumber, invoiceMonthStamp, invoiceMonthStartIso } from "@/lib/invoiceNumber";
+import { ALL_PAYMENT_METHODS, type PaymentMethod } from "@/lib/paymentMethods";
 import type {
   Brand,
   CashReconciliation,
@@ -24,6 +25,11 @@ export type ProductWithStock = Product & {
 // regardless of alphabetical order (which would otherwise put BOSBA
 // Drink&Snack first).
 export const DEFAULT_BRAND_SLUG = "bosba-premium-foods";
+
+// Sentinel "brand id" the Accountance page uses for its "All Businesses"
+// view -- the queries below drop their brand_id filter entirely when they
+// see it, combining all brands' rows instead of scoping to one.
+export const ALL_BUSINESSES_ID = "all";
 
 export async function getBrands(): Promise<Brand[]> {
   const { data, error } = await supabaseAdmin.from("brands").select("*").order("name");
@@ -120,35 +126,56 @@ export async function getCatalogForBrandSlug(slug: string): Promise<{
 
 export type DailySalesSummary = {
   cashTotal: number;
-  bankQrTotal: number;
+  // Every non-cash method combined -- the "expected non-cash" figure cash
+  // reconciliation needs. Was bankQrTotal back when bank_qr was the only
+  // non-cash method.
+  nonCashTotal: number;
+  // Per-method totals (cash included), for the Reports view's payment
+  // breakdown -- only methods with a nonzero total are included.
+  paymentBreakdown: { method: PaymentMethod; total: number }[];
   orderCount: number;
   total: number;
 };
 
 export async function getDailySales(
   brandId: string,
-  date: string
+  fromDate: string,
+  toDate: string
 ): Promise<{ summary: DailySalesSummary; orders: Order[] }> {
-  const { data, error } = await supabaseAdmin
+  let query = supabaseAdmin
     .from("orders")
     .select("*")
-    .eq("brand_id", brandId)
     .eq("status", "paid")
-    .gte("paid_at", `${date}T00:00:00.000Z`)
-    .lte("paid_at", `${date}T23:59:59.999Z`)
+    .gte("paid_at", `${fromDate}T00:00:00.000Z`)
+    .lte("paid_at", `${toDate}T23:59:59.999Z`)
     .order("paid_at", { ascending: false });
+  if (brandId !== ALL_BUSINESSES_ID) query = query.eq("brand_id", brandId);
+  const { data, error } = await query;
 
   if (error) throw error;
   const orders = data ?? [];
-  const cashTotal = orders
-    .filter((o) => o.payment_method === "cash")
-    .reduce((sum, o) => sum + o.total, 0);
-  const bankQrTotal = orders
-    .filter((o) => o.payment_method === "bank_qr")
-    .reduce((sum, o) => sum + o.total, 0);
+  // A paid order with no payment_method recorded (create_online_order()
+  // allows it, and it can be cleared via Edit) still got paid somehow --
+  // counted as cash, the POS's own default, rather than left out of every
+  // bucket and only ever showing up in the Total revenue card.
+  const totalsByMethod = new Map<PaymentMethod, number>();
+  for (const o of orders) {
+    const method = (o.payment_method ?? "cash") as PaymentMethod;
+    totalsByMethod.set(method, (totalsByMethod.get(method) ?? 0) + o.total);
+  }
+  const cashTotal = totalsByMethod.get("cash") ?? 0;
+  const paymentBreakdown = ALL_PAYMENT_METHODS.filter((m) => totalsByMethod.has(m)).map((method) => ({
+    method,
+    total: totalsByMethod.get(method) ?? 0,
+  }));
+  // Every paid order's own total -- i.e. what its invoice says. Kept as its
+  // own sum (rather than summing the per-method buckets) so it stays
+  // correct even if a method is ever missing from ALL_PAYMENT_METHODS.
+  const total = orders.reduce((sum, o) => sum + o.total, 0);
+  const nonCashTotal = total - cashTotal;
 
   return {
-    summary: { cashTotal, bankQrTotal, orderCount: orders.length, total: cashTotal + bankQrTotal },
+    summary: { cashTotal, nonCashTotal, paymentBreakdown, orderCount: orders.length, total },
     orders,
   };
 }
@@ -157,6 +184,9 @@ export async function getReconciliation(
   brandId: string,
   date: string
 ): Promise<CashReconciliation | null> {
+  // Reconciling counted cash only makes sense against one business's own
+  // till -- there's no single "counted cash" figure across all 3 combined.
+  if (brandId === ALL_BUSINESSES_ID) return null;
   const { data, error } = await supabaseAdmin
     .from("cash_reconciliations")
     .select("*")
@@ -175,6 +205,15 @@ export type DashboardStats = {
   lowStockCount: number;
   dailyRevenue: { date: string; total: number }[];
   dailyOrders: { date: string; total: number }[];
+  // Same two series, split out per brand -- lets the dashboard charts switch
+  // between "all businesses" (the series above) and a single business's own
+  // day/month/year earnings.
+  byBrand: {
+    brandId: string;
+    brandName: string;
+    dailyRevenue: { date: string; total: number }[];
+    dailyOrders: { date: string; total: number }[];
+  }[];
   recentOrders: {
     id: string;
     brandName: string;
@@ -254,7 +293,7 @@ export async function getDashboardStats(): Promise<DashboardStats> {
     lowStockCount,
     { data: recentOrdersData, error: recentError },
   ] = await Promise.all([
-    supabaseAdmin.from("orders").select("total, paid_at").eq("status", "paid"),
+    supabaseAdmin.from("orders").select("total, paid_at, brand_id, brands(name)").eq("status", "paid"),
     supabaseAdmin.from("products").select("id", { count: "exact", head: true }).eq("is_active", true),
     getLowStockCount(),
     supabaseAdmin
@@ -269,7 +308,13 @@ export async function getDashboardStats(): Promise<DashboardStats> {
   if (prodError) throw prodError;
   if (recentError) throw recentError;
 
-  const orders = paidOrders ?? [];
+  type PaidOrderRow = {
+    total: number;
+    paid_at: string | null;
+    brand_id: string | null;
+    brands: { name: string } | null;
+  };
+  const orders = (paidOrders ?? []) as PaidOrderRow[];
   // Scoped to the current calendar year, not all-time -- so the dashboard's
   // headline number resets to $0 each January instead of only ever growing,
   // matching how the Revenue chart's year view treats "this year".
@@ -303,6 +348,40 @@ export async function getDashboardStats(): Promise<DashboardStats> {
     .map(([date, total]) => ({ date, total }))
     .sort((a, b) => (a.date < b.date ? -1 : 1));
 
+  // Same two series again, this time bucketed per brand -- so "how much did
+  // this one business earn" can be read off the same charts as the
+  // all-businesses total above, instead of only ever showing the combined
+  // number.
+  const brandRevenue = new Map<string, { name: string; daily: Map<string, number> }>();
+  const brandOrderCounts = new Map<string, { name: string; daily: Map<string, number> }>();
+  for (const o of orders) {
+    const d = (o.paid_at ?? "").slice(0, 10);
+    if (!d || !o.brand_id) continue;
+    const name = o.brands?.name ?? "—";
+
+    const revEntry = brandRevenue.get(o.brand_id) ?? { name, daily: new Map<string, number>() };
+    revEntry.daily.set(d, (revEntry.daily.get(d) ?? 0) + o.total);
+    brandRevenue.set(o.brand_id, revEntry);
+
+    const countEntry = brandOrderCounts.get(o.brand_id) ?? { name, daily: new Map<string, number>() };
+    countEntry.daily.set(d, (countEntry.daily.get(d) ?? 0) + 1);
+    brandOrderCounts.set(o.brand_id, countEntry);
+  }
+  const byBrand = Array.from(brandRevenue.keys()).map((brandId) => {
+    const rev = brandRevenue.get(brandId)!;
+    const counts = brandOrderCounts.get(brandId);
+    return {
+      brandId,
+      brandName: rev.name,
+      dailyRevenue: Array.from(rev.daily.entries())
+        .map(([date, total]) => ({ date, total }))
+        .sort((a, b) => (a.date < b.date ? -1 : 1)),
+      dailyOrders: Array.from(counts?.daily.entries() ?? [])
+        .map(([date, total]) => ({ date, total }))
+        .sort((a, b) => (a.date < b.date ? -1 : 1)),
+    };
+  });
+
   type RecentOrderRow = {
     id: string;
     status: string;
@@ -325,6 +404,7 @@ export async function getDashboardStats(): Promise<DashboardStats> {
     lowStockCount,
     dailyRevenue,
     dailyOrders,
+    byBrand,
     recentOrders,
   };
 }
@@ -498,13 +578,19 @@ export async function getInvoice(orderId: string): Promise<InvoiceData | null> {
   };
 }
 
-export async function getExpensesForDate(brandId: string, date: string): Promise<Expense[]> {
-  const { data, error } = await supabaseAdmin
+export async function getExpensesForDateRange(
+  brandId: string,
+  fromDate: string,
+  toDate: string
+): Promise<Expense[]> {
+  let query = supabaseAdmin
     .from("expenses")
     .select("*")
-    .eq("brand_id", brandId)
-    .eq("expense_date", date)
+    .gte("expense_date", fromDate)
+    .lte("expense_date", toDate)
     .order("created_at", { ascending: false });
+  if (brandId !== ALL_BUSINESSES_ID) query = query.eq("brand_id", brandId);
+  const { data, error } = await query;
 
   if (error) throw error;
   return data ?? [];

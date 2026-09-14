@@ -14,11 +14,19 @@ export default async function AppLayout({ children }: { children: React.ReactNod
     // print:* unwinds the app shell when printing -- a scroll container
     // (overflow-y-auto) makes Chrome drop the forced page break between the
     // two invoice copies, collapsing the PDF to a single page.
-    <div className="flex h-full print:block print:h-auto">
+    //
+    // overflow-hidden here (undone for print) is what actually keeps
+    // scrolling confined to #app-scroll-area below: h-full alone doesn't
+    // clip a taller-than-viewport descendant, so without this the window
+    // itself grows a second, outer scrollbar alongside that container's own.
+    <div className="flex h-full overflow-hidden print:block print:h-auto print:overflow-visible">
       <Sidebar role={user?.role ?? ""} />
       <div className="flex min-h-0 min-w-0 flex-1 flex-col print:block print:min-h-0">
         <TopBar fullName={user?.fullName ?? ""} role={user?.role ?? ""} />
-        <div className="min-h-0 flex-1 overflow-y-auto print:overflow-visible print:flex-none">
+        <div
+          id="app-scroll-area"
+          className="min-h-0 flex-1 overflow-y-auto print:overflow-visible print:flex-none"
+        >
           {children}
         </div>
       </div>

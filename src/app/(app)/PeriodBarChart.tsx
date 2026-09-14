@@ -20,6 +20,10 @@ type ChartPoint = { key: string; label: string; total: number };
 
 const RANGE_LABEL: Record<Range, string> = { day: "Day", month: "Month", year: "Year" };
 const UNIT: Record<Range, string> = { day: "day", month: "week", year: "month" };
+// What the summed-up total actually covers in each toggle -- the "Day"
+// toggle browses a week at a time, so its total is a week's worth, not a
+// single day's.
+const TOTAL_UNIT: Record<Range, string> = { day: "week", month: "month", year: "year" };
 const DAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 const MONTH_LABELS = [
   "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
@@ -129,6 +133,12 @@ function gradientIdFor(key: string | number): string {
   return `bar-gradient-${key}`;
 }
 
+export type BusinessSeries = {
+  id: string;
+  name: string;
+  dailyData: { date: string; total: number }[];
+};
+
 // Shared by every "value per day, browsable by day/week-of-month/year" chart
 // on the dashboard (Revenue, Orders, ...) -- only what a value *means* differs
 // between them (formatting, the bar color), not how it's bucketed or browsed.
@@ -136,22 +146,46 @@ export default function PeriodBarChart({
   title,
   dailyData,
   metric,
+  businesses,
+  initialRange,
+  initialAnchor,
 }: {
   title: string;
   dailyData: { date: string; total: number }[];
   metric: Metric;
+  // When given, adds an "All Businesses"/per-business selector above the
+  // period toggle -- `dailyData` (the combined series, unchanged) stays the
+  // "All Businesses" option, so the old all-up chart is still exactly one
+  // click away.
+  businesses?: BusinessSeries[];
+  // Lets an embedding page open this chart already lined up with its own
+  // filter (e.g. Accountance's own Day/Month/Year + date) instead of always
+  // starting on "this week" -- pass a `key` that changes with that filter so
+  // the chart actually remounts and re-reads these on every filter change,
+  // since they only apply once, at mount.
+  initialRange?: Range;
+  initialAnchor?: Date;
 }) {
   const { barColor, allowDecimalTicks, formatValue, formatTick } = METRIC[metric];
-  const [range, setRange] = useState<Range>("day");
+  const [range, setRange] = useState<Range>(initialRange ?? "day");
   const today = useMemo(() => utcMidnight(new Date()), []);
-  const [anchor, setAnchor] = useState<Date>(today);
+  const [anchor, setAnchor] = useState<Date>(initialAnchor ?? today);
   // Extra years to total up next to the anchor year -- year range only. e.g.
   // anchor 2026 + compareYears [2027, 2028] shows one bar per year, each
   // year's full total, instead of the anchor year's 12 months.
   const [compareYears, setCompareYears] = useState<number[]>([]);
   const comparingYears = range === "year" && compareYears.length > 0;
 
-  const dailyMap = useMemo(() => new Map(dailyData.map((d) => [d.date, d.total])), [dailyData]);
+  const [businessId, setBusinessId] = useState<string>("all");
+  const activeDailyData = useMemo(() => {
+    if (businessId === "all") return dailyData;
+    return businesses?.find((b) => b.id === businessId)?.dailyData ?? dailyData;
+  }, [businessId, businesses, dailyData]);
+
+  const dailyMap = useMemo(
+    () => new Map(activeDailyData.map((d) => [d.date, d.total])),
+    [activeDailyData]
+  );
 
   // Every year currently selectable/selected -> the bar color it'll use once
   // picked, anchor year first so it keeps this chart's own metric color.
@@ -273,6 +307,12 @@ export default function PeriodBarChart({
     return { data: points, periodLabel: years.join(" vs "), isCurrent };
   }, [range, anchor, dailyMap, today, compareYears]);
 
+  // Sum of whatever bars are currently on screen -- the day toggle's week,
+  // the month toggle's four weeks, or the year toggle's twelve months (or
+  // its compared years), so switching Day/Month/Year always reads as "total
+  // earned this day-range/month/year", not just a per-bar breakdown.
+  const periodTotal = useMemo(() => data.reduce((sum, d) => sum + d.total, 0), [data]);
+
   // Only call out a best/worst when there's an actual spread to report --
   // an all-zero period (nothing happened yet) has no "best day" worth
   // labeling. In year-compare mode this becomes "best/slowest year".
@@ -317,6 +357,41 @@ export default function PeriodBarChart({
         </div>
       </div>
 
+      {/* Business filter -- "All Businesses" is the pre-existing combined
+          series, so switching here never loses the old all-up view. Only
+          rendered when the page actually has per-business data to offer. */}
+      {businesses && businesses.length > 0 && (
+        <div className="mt-3 inline-flex flex-wrap gap-1.5">
+          <button
+            type="button"
+            onClick={() => setBusinessId("all")}
+            aria-pressed={businessId === "all"}
+            className={`rounded-full border px-3 py-1 text-xs font-medium transition-colors ${
+              businessId === "all"
+                ? "border-brand bg-brand text-black"
+                : "border-border text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            All Businesses
+          </button>
+          {businesses.map((b) => (
+            <button
+              key={b.id}
+              type="button"
+              onClick={() => setBusinessId(b.id)}
+              aria-pressed={businessId === b.id}
+              className={`rounded-full border px-3 py-1 text-xs font-medium transition-colors ${
+                businessId === b.id
+                  ? "border-brand bg-brand text-black"
+                  : "border-border text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              {b.name}
+            </button>
+          ))}
+        </div>
+      )}
+
       <div className="mt-3 flex items-center gap-1.5">
         <button
           type="button"
@@ -346,6 +421,17 @@ export default function PeriodBarChart({
           </button>
         )}
       </div>
+
+      {/* The headline number this card exists for -- how much this exact
+          view (the week/month/year on screen, for whichever business is
+          selected) adds up to, spelled out instead of left for the reader to
+          add up off the bars themselves. */}
+      <p className="mt-2 text-2xl font-bold">
+        {formatValue(periodTotal)}
+        <span className="ml-2 text-xs font-medium text-muted-foreground">
+          {comparingYears ? "combined total" : `total this ${TOTAL_UNIT[range]}`}
+        </span>
+      </p>
 
       {/* Faster than clicking each chip for a wide span -- fills in every
           year between the two endpoints (minus the anchor year) in one go. */}
