@@ -34,6 +34,10 @@ export function formatDateTime(iso: string | null) {
 const PAYMENT_LABELS: Record<string, string> = {
   bank_qr: "BANK TRS",
   cash: "CASH",
+  aba_pay: "ABA PAY",
+  wing: "WING",
+  khqr: "KHQR",
+  card: "CARD",
 };
 
 export function InvoiceDoc({
@@ -66,6 +70,12 @@ export function InvoiceDoc({
   const paymentLabel = order.payment_method
     ? (PAYMENT_LABELS[order.payment_method] ?? order.payment_method)
     : "—";
+  // The KHQR block and "wire transfer only" remark print on every invoice
+  // regardless of how this particular order was paid -- it's a standing
+  // "here's how to pay us" notice for the brand, not a claim about this one
+  // order's own payment method.
+  const remarks = [...brand.remarks, brand.wireTransferRemark];
+  const showKhqr = Boolean(brand.khqrUrl);
   const channelLabel =
     order.channel === "online" && order.site
       ? `Online — ${SITE_LABEL[order.site as ProductSiteLink["site"]] ?? order.site}`
@@ -234,13 +244,13 @@ export function InvoiceDoc({
         {/* 5. Remarks */}
         <div className="mt-2 text-[14px] leading-snug">
           <p className="font-bold">Remarks: កំណត់ចំណាំ៖</p>
-          {brand.remarks.map((r, i) => (
+          {remarks.map((r, i) => (
             <p key={i}>- {r}</p>
           ))}
         </div>
 
         {/* 6. KHQR -- centered between the Remarks and the closing lines */}
-        {brand.khqrUrl && (
+        {showKhqr && brand.khqrUrl && (
           <div className="flex flex-1 flex-col items-center justify-center py-2">
             <span className="rounded bg-red-600 px-3 py-1 text-[11px] font-bold tracking-wide text-white">
               KHQR
@@ -259,7 +269,7 @@ export function InvoiceDoc({
 
         {/* 7. Closing lines -- directly below the KHQR */}
         <div
-          className={`space-y-1 text-center text-[14px] ${brand.khqrUrl ? "mt-2" : "mt-auto pt-10"}`}
+          className={`space-y-1 text-center text-[14px] ${showKhqr ? "mt-2" : "mt-auto pt-10"}`}
         >
           {brand.closing.map((line, i) => (
             <p key={i} className={i === 0 ? "font-bold" : ""}>

@@ -1,3 +1,5 @@
+import type { PaymentMethod } from "@/lib/paymentMethods";
+
 export type Json = string | number | boolean | null | { [key: string]: Json | undefined } | Json[];
 
 export type StaffRole = "admin" | "sales" | "stock" | "accountance" | "marketing";
@@ -16,7 +18,9 @@ export const STAFF_ROLE_LABELS: Record<StaffRole, string> = {
 export function staffRoleLabel(role: string): string {
   return (STAFF_ROLE_LABELS as Record<string, string>)[role] ?? role;
 }
-export type PaymentMethod = "cash" | "bank_qr";
+// Re-exported for compatibility with existing importers -- the canonical
+// definition (plus labels/checkout list) lives in @/lib/paymentMethods.
+export type { PaymentMethod } from "@/lib/paymentMethods";
 export type OrderStatus = "open" | "paid" | "voided";
 export type FulfillmentStatus =
   | "pre_order"

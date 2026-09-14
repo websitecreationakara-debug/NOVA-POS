@@ -71,6 +71,27 @@ export default async function Home() {
 
   const currentYear = new Date().getUTCFullYear();
 
+  // Same brand order as the header chips, not whatever order orders happened
+  // to come back in.
+  const byBrandOrdered = stats.byBrand.toSorted((a, b) => {
+    const ia = BRANDS.indexOf(a.brandName);
+    const ib = BRANDS.indexOf(b.brandName);
+    if (ia === -1 && ib === -1) return a.brandName.localeCompare(b.brandName);
+    if (ia === -1) return 1;
+    if (ib === -1) return -1;
+    return ia - ib;
+  });
+  const revenueByBusiness = byBrandOrdered.map((b) => ({
+    id: b.brandId,
+    name: b.brandName,
+    dailyData: b.dailyRevenue,
+  }));
+  const ordersByBusiness = byBrandOrdered.map((b) => ({
+    id: b.brandId,
+    name: b.brandName,
+    dailyData: b.dailyOrders,
+  }));
+
   const statCards = [
     {
       label: `Total Revenue (${currentYear})`,
@@ -177,9 +198,19 @@ export default async function Home() {
         </Link>
       )}
 
-      <PeriodBarChart title="Revenue" dailyData={stats.dailyRevenue} metric="money" />
+      <PeriodBarChart
+        title="Revenue"
+        dailyData={stats.dailyRevenue}
+        metric="money"
+        businesses={revenueByBusiness}
+      />
 
-      <PeriodBarChart title="Orders" dailyData={stats.dailyOrders} metric="count" />
+      <PeriodBarChart
+        title="Orders"
+        dailyData={stats.dailyOrders}
+        metric="count"
+        businesses={ordersByBusiness}
+      />
 
       <section className="overflow-hidden rounded-2xl border border-border bg-card">
         <div className="border-b border-border px-6 py-4">

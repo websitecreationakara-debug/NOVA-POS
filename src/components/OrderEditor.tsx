@@ -6,16 +6,11 @@ import { useRouter } from "next/navigation";
 import { Check, Pencil, Plus, RefreshCw, Trash2, X } from "lucide-react";
 import { updateOrderAction } from "@/app/(app)/orders/actions";
 import { notifyOrdersChanged } from "@/lib/ordersChanged";
-import type { PaymentMethod } from "@/types/database";
+import { PAYMENT_METHOD_LABELS, type PaymentMethod } from "@/lib/paymentMethods";
 
 function formatMoney(n: number) {
   return `$${n.toFixed(2)}`;
 }
-
-const PAYMENT_METHOD_LABELS: Record<PaymentMethod, string> = {
-  cash: "Cash",
-  bank_qr: "Bank QR",
-};
 
 // "YYYY-MM-DDTHH:MM" local value for <input type="datetime-local">, from an
 // ISO timestamp -- same approach as the Sales page's own delivery picker.
@@ -175,6 +170,11 @@ export default function OrderEditor({
 
   const fieldCls =
     "w-full rounded border border-border bg-transparent px-2 py-1 text-sm outline-none focus:border-foreground/40";
+  // <select>'s dropdown popup is a native OS control -- the app's own
+  // `color-scheme` (globals.css) only reliably darkens it in some
+  // browser/OS combos, so this pins it explicitly per element instead of
+  // leaving it to inherit and sometimes render as unreadable light-on-white.
+  const selectCls = `${fieldCls} bg-card [color-scheme:light] dark:[color-scheme:dark]`;
 
   return (
     <div>
@@ -250,7 +250,7 @@ export default function OrderEditor({
             <select
               value={dBrandId}
               onChange={(e) => setDBrandId(e.target.value)}
-              className={fieldCls}
+              className={selectCls}
             >
               {brands.map((b) => (
                 <option key={b.id} value={b.id}>
@@ -294,7 +294,7 @@ export default function OrderEditor({
               <select
                 value={dPaymentMethod}
                 onChange={(e) => setDPaymentMethod(e.target.value as PaymentMethod | "")}
-                className={fieldCls}
+                className={selectCls}
               >
                 <option value="">—</option>
                 {(Object.keys(PAYMENT_METHOD_LABELS) as PaymentMethod[]).map((pm) => (

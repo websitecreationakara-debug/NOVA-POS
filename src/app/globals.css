@@ -86,6 +86,18 @@ body {
   font-family: Arial, Helvetica, sans-serif;
 }
 
+/* Hides the visible scrollbar on #app-scroll-area (the shared app-shell
+   scroll container in (app)/layout.tsx) without disabling scrolling itself --
+   applied/removed at runtime (see AccountanceClient) so it only affects
+   whichever page opts into it, not the app shell everywhere. */
+.no-scrollbar {
+  scrollbar-width: none; /* Firefox */
+  -ms-overflow-style: none; /* legacy Edge */
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none; /* Chrome/Safari/Chromium Edge */
+}
+
 /* Kill the native number-input spinner arrows everywhere -- staff type prices
    and quantities, they never click the tiny steppers, and the arrows just
    crowd the field. */

@@ -1,13 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase/server";
-import type { PaymentMethod, ProductSiteLink } from "@/types/database";
+import type { ProductSiteLink } from "@/types/database";
+import { ALL_PAYMENT_METHODS, type PaymentMethod } from "@/lib/paymentMethods";
 
 const VALID_SITES: ProductSiteLink["site"][] = [
   "bosba-premium-foods",
   "bosba-drink-snack",
   "sora-sake",
 ];
-const VALID_PAYMENT_METHODS: PaymentMethod[] = ["cash", "bank_qr"];
+const VALID_PAYMENT_METHODS = ALL_PAYMENT_METHODS;
 
 type InboundItem = { siteProductId: string; quantity: number; unitPrice: number };
 

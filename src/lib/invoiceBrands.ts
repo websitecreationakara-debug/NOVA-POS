@@ -8,20 +8,28 @@ export type InvoiceBrandConfig = {
   // Shown top-right of the letterhead (address + phone). Keep it one line.
   contactLine: string;
   // Public path to the brand's KHQR merchant QR (drop the file in /public).
-  // null hides the whole QR block.
+  // null hides the whole QR block. Also hidden outright on a cash-paid
+  // invoice (see InvoiceDoc) -- a customer who already paid cash has no use
+  // for a "pay us by QR" block.
   khqrUrl: string | null;
   // Small caption under the QR, e.g. the Bakong account name.
   khqrLabel: string;
-  // "Remarks" bullet lines, printed as-is.
+  // "Remarks" bullet lines shown on every invoice regardless of how it was
+  // paid, printed as-is.
   remarks: string[];
+  // One more remark appended only when the order wasn't paid in cash --
+  // "we accept wire transfer only" reads as a contradiction on an invoice
+  // that already says CASH as its payment method.
+  wireTransferRemark: string;
   // Closing lines under the QR.
   closing: string[];
 };
 
 const DEFAULT_REMARKS = [
   "Please pay before or during the drop off សូមបង់ប្រាក់មុន ឬនៅពេលទទួលទំនិញ",
-  "We accept wire transfer only យើងទទួលប្រាក់តាម KHQR តែមួយគត់",
 ];
+const WIRE_TRANSFER_REMARK =
+  "We accept wire transfer only យើងទទួលប្រាក់តាម KHQR តែមួយគត់";
 
 const DEFAULT_CLOSING = [
   "អរគុណសម្រាប់ការកម្មង់អាហារ សូមជូនពរមានសុខភាពល្អ និងសំណាងល្អ",
@@ -33,6 +41,7 @@ const FALLBACK: InvoiceBrandConfig = {
   khqrUrl: null,
   khqrLabel: "NOVA",
   remarks: DEFAULT_REMARKS,
+  wireTransferRemark: WIRE_TRANSFER_REMARK,
   closing: DEFAULT_CLOSING,
 };
 
@@ -44,6 +53,7 @@ export const INVOICE_BRANDS: Record<string, InvoiceBrandConfig> = {
     khqrUrl: "/khqr/nova.png",
     khqrLabel: "NOVA",
     remarks: DEFAULT_REMARKS,
+    wireTransferRemark: WIRE_TRANSFER_REMARK,
     closing: DEFAULT_CLOSING,
   },
   "bosba-drink-snack": {
@@ -52,6 +62,7 @@ export const INVOICE_BRANDS: Record<string, InvoiceBrandConfig> = {
     khqrUrl: "/khqr/nova.png",
     khqrLabel: "NOVA",
     remarks: DEFAULT_REMARKS,
+    wireTransferRemark: WIRE_TRANSFER_REMARK,
     closing: DEFAULT_CLOSING,
   },
   "sora-sake": {
@@ -60,6 +71,7 @@ export const INVOICE_BRANDS: Record<string, InvoiceBrandConfig> = {
     khqrUrl: "/khqr/nova.png",
     khqrLabel: "NOVA",
     remarks: DEFAULT_REMARKS,
+    wireTransferRemark: WIRE_TRANSFER_REMARK,
     closing: DEFAULT_CLOSING,
   },
 };

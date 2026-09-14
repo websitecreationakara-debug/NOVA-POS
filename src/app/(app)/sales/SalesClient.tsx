@@ -4,19 +4,38 @@ import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
+  Banknote,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
   ChevronUp,
+  CreditCard,
   Plus,
+  QrCode,
   ShoppingCart,
+  Smartphone,
   User,
   UtensilsCrossed,
+  Wallet,
 } from "lucide-react";
-import type { Brand, Category, PaymentMethod } from "@/types/database";
+import type { Brand, Category } from "@/types/database";
+import { CHECKOUT_PAYMENT_METHODS, PAYMENT_METHOD_LABELS, type PaymentMethod } from "@/lib/paymentMethods";
+
+// No real brand-logo assets to license/embed for ABA Pay/Wing/KHQR/Visa --
+// a generic-but-distinct icon per method still speeds up recognition at
+// checkout without pretending to be an official logo.
+const PAYMENT_METHOD_ICONS: Record<PaymentMethod, typeof Banknote> = {
+  cash: Banknote,
+  aba_pay: Smartphone,
+  wing: Wallet,
+  khqr: QrCode,
+  card: CreditCard,
+  bank_qr: QrCode,
+};
 import type { ProductWithStock } from "@/lib/supabase/queries";
 import type { WebsiteProduct, WebsiteProductVariation } from "@/lib/websiteProducts/types";
 import SalesWebsiteGrid from "./SalesWebsiteGrid";
+import TopBarSlot from "@/components/TopBarSlot";
 import type { SalesWebsiteCatalog } from "./page";
 import {
   chargeOrder,
@@ -145,7 +164,7 @@ export default function SalesClient({
   const [page, setPage] = useState(1);
   const [categoriesExpanded, setCategoriesExpanded] = useState(false);
   const [cart, setCart] = useState<CartLine[]>(() => editOrder?.lines ?? []);
-  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("cash");
+  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("khqr");
   const [paymentReference, setPaymentReference] = useState("");
   const [note, setNote] = useState(() => editOrder?.note ?? "");
   const [customerName, setCustomerName] = useState(() => editOrder?.customerName ?? "");
@@ -643,7 +662,10 @@ export default function SalesClient({
           </div>
         </div>
       )}
-      <header className="flex items-center gap-3 border-b border-black/[.08] px-6 py-3 dark:border-white/[.145]">
+      {/* Portaled into the shared TopBar's left side (see TopBarSlot) instead
+          of its own row below it -- Sales' product grid benefits the most of
+          any page from that extra row of vertical space. */}
+      <TopBarSlot>
         <select
           className="rounded border border-black/[.15] bg-card px-3 py-1.5 text-sm text-foreground disabled:opacity-50 dark:border-white/[.2]"
           value={currentBrand.id}
@@ -656,7 +678,7 @@ export default function SalesClient({
             </option>
           ))}
         </select>
-        <h1 className="text-lg font-medium">Sales</h1>
+        <h1 className="text-sm font-semibold text-foreground">Sales</h1>
         {!showWebsite && (
           <input
             type="text"
@@ -666,7 +688,7 @@ export default function SalesClient({
             className="ml-auto w-64 rounded border border-black/[.15] bg-transparent px-3 py-1.5 text-sm dark:border-white/[.2]"
           />
         )}
-      </header>
+      </TopBarSlot>
 
       {editOrder && (
         <div className="flex items-center justify-between gap-3 border-b border-amber-300 bg-amber-50 px-6 py-2 text-sm text-amber-800 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-200">
@@ -702,12 +724,12 @@ export default function SalesClient({
               products down. */}
           <div className="mb-4">
             <div
-              className="flex flex-wrap gap-2"
+              className="flex flex-wrap gap-1.5"
               style={categoriesExpanded ? undefined : { maxHeight: "7.5rem", overflow: "hidden" }}
             >
               <button
                 onClick={() => setActiveCategoryId("all")}
-                className={`rounded-full border px-4 py-1.5 text-sm ${
+                className={`rounded-full border px-3 py-1 text-xs ${
                   activeCategoryId === "all"
                     ? "border-black bg-black text-white dark:border-white dark:bg-white dark:text-black"
                     : "border-black/[.15] dark:border-white/[.2]"
@@ -719,7 +741,7 @@ export default function SalesClient({
                 <button
                   key={c.id}
                   onClick={() => setActiveCategoryId(c.id)}
-                  className={`rounded-full border px-4 py-1.5 text-sm ${
+                  className={`rounded-full border px-3 py-1 text-xs ${
                     activeCategoryId === c.id
                       ? "border-black bg-black text-white dark:border-white dark:bg-white dark:text-black"
                       : "border-black/[.15] dark:border-white/[.2]"
@@ -1064,29 +1086,29 @@ export default function SalesClient({
               <p className="mb-1.5 text-[11px] font-semibold tracking-wide text-zinc-400 uppercase">
                 Payment
               </p>
-              <div className="flex gap-2">
-                <button
-                  className={`flex-1 rounded-full border py-1.5 text-sm ${
-                    paymentMethod === "cash"
-                      ? "border-black bg-black text-white dark:border-white dark:bg-white dark:text-black"
-                      : "border-black/[.15] dark:border-white/[.2]"
-                  }`}
-                  onClick={() => setPaymentMethod("cash")}
-                >
-                  Cash
-                </button>
-                <button
-                  className={`flex-1 rounded-full border py-1.5 text-sm ${
-                    paymentMethod === "bank_qr"
-                      ? "border-black bg-black text-white dark:border-white dark:bg-white dark:text-black"
-                      : "border-black/[.15] dark:border-white/[.2]"
-                  }`}
-                  onClick={() => setPaymentMethod("bank_qr")}
-                >
-                  Bank / QR
-                </button>
+              <div className="grid grid-cols-3 gap-1.5">
+                {CHECKOUT_PAYMENT_METHODS.map((pm) => {
+                  const Icon = PAYMENT_METHOD_ICONS[pm];
+                  const active = paymentMethod === pm;
+                  return (
+                    <button
+                      key={pm}
+                      type="button"
+                      onClick={() => setPaymentMethod(pm)}
+                      aria-pressed={active}
+                      className={`flex flex-col items-center gap-0.5 rounded-lg border py-1.5 text-[11px] leading-tight font-medium transition-colors ${
+                        active
+                          ? "border-brand bg-brand text-black"
+                          : "border-black/[.15] hover:border-black/[.3] dark:border-white/[.2] dark:hover:border-white/[.35]"
+                      }`}
+                    >
+                      <Icon className="size-3.5" />
+                      {PAYMENT_METHOD_LABELS[pm]}
+                    </button>
+                  );
+                })}
               </div>
-              {paymentMethod === "bank_qr" && (
+              {paymentMethod !== "cash" && (
                 <input
                   className="mt-2 w-full rounded border border-black/[.15] bg-transparent px-3 py-1.5 text-sm dark:border-white/[.2]"
                   placeholder="Reference number (optional)"

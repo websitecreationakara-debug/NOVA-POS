@@ -19,6 +19,9 @@ export default function TopBar({ fullName, role }: { fullName: string; role: str
   return (
     <header className="print:hidden flex shrink-0 items-center gap-3 border-b border-border bg-card px-6 py-3">
       <LiveOrdersWatcher />
+      {/* A page can portal its own title/filters in here (see TopBarSlot)
+          instead of rendering a separate row below this bar. */}
+      <div id="topbar-left-slot" className="flex min-w-0 flex-1 items-center gap-3" />
       <div className="ml-auto flex items-center gap-3">
         <DeliveryAlertBell />
         <ThemeToggle />
