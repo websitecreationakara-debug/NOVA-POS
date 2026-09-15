@@ -54,6 +54,31 @@ export type WebsiteProduct = {
   tabs?: unknown[];
 };
 
+// A storefront's small separate add-on catalog (rice, sauce, extra ikura,
+// ...) -- optional extras a cashier can ring up alongside (or instead of) a
+// regular product. Managed here in Stock (create/edit/delete) or on the
+// storefront's own admin -- see listWebsiteAddons/createWebsiteAddon/etc. in
+// ./client.
+export type WebsiteAddon = {
+  id: string;
+  title: string;
+  description: string | null;
+  price: number;
+  image_url: string | null;
+  stock: number | null;
+  status: WebsiteProductStatus;
+  sort_order: number;
+};
+
+export type WebsiteAddonWrite = {
+  title: string;
+  description?: string | null;
+  price?: number;
+  image_url?: string | null;
+  stock?: number | null;
+  status?: WebsiteProductStatus;
+};
+
 export type WebsiteProductWrite = {
   title: string;
   description?: string | null;

@@ -40,10 +40,10 @@ const bottomItems = [
 // a literal list here (rather than imported) since that file is a server
 // component and this needs to stay a plain client-safe array.
 const ACCOUNTANCE_LINKS = [
+  { tab: "reconciliation", label: "Cash Reconciliation" },
   { tab: "reports", label: "Financial Reporting & P&L" },
   { tab: "expenses", label: "Expense & Accounts Payable" },
   { tab: "cogs", label: "COGS & Margin Tracking" },
-  { tab: "reconciliation", label: "Cash Reconciliation" },
 ];
 const ACCOUNTANCE_ROLES = ["admin", "accountance"];
 

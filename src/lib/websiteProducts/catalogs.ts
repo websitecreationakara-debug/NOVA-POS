@@ -13,6 +13,10 @@ export type WebsiteCatalog = {
   urlEnv: string;
   // env var holding the API credential (server-only, never NEXT_PUBLIC_)
   keyEnv: string;
+  // env var holding the catalog's add-on API base URL (up to and including
+  // `/api/v1/addons`), if this storefront has one -- read-only, reuses `keyEnv`
+  // for auth. Omitted for a catalog with no add-on endpoint yet.
+  addonsUrlEnv?: string;
   auth: AuthScheme;
   // When set, the list endpoint takes this query string to include drafts
   // (and requires auth to do so). Omit for catalogs whose list is all-or-nothing.
@@ -75,6 +79,7 @@ export const CATALOGS: WebsiteCatalog[] = [
     brandSlug: "bosba-premium-foods",
     urlEnv: "BOSBA_PREMIUM_FOODS_PRODUCTS_API_URL",
     keyEnv: "BOSBA_PREMIUM_FOODS_PRODUCTS_API_KEY",
+    addonsUrlEnv: "BOSBA_PREMIUM_FOODS_ADDONS_API_URL",
     auth: "x-api-key",
     // status=all + drafts require the write key; limit is capped at 500.
     listAllParam: "status=all&limit=500",

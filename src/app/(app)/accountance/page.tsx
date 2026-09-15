@@ -1,8 +1,10 @@
 import {
   ALL_BUSINESSES_ID,
   getBrands,
+  getCogsSummary,
   getDailySales,
   getExpensesForDateRange,
+  getMarginReport,
   getReconciliation,
 } from "@/lib/supabase/queries";
 import type { Brand } from "@/types/database";
@@ -149,6 +151,8 @@ export default async function AccountancePage({
         getDailySales(brandIdParam, fromDate, toDate),
         reconciliationFor(brandIdParam, fromDate, toDate),
         getExpensesForDateRange(brandIdParam, fromDate, toDate),
+        getCogsSummary(brandIdParam, fromDate, toDate),
+        getMarginReport(brandIdParam, fromDate, toDate),
       ])
     : null;
 
@@ -168,13 +172,15 @@ export default async function AccountancePage({
       ? ALL_BUSINESSES_BRAND
       : (brands.find((b) => b.id === brandIdParam) ?? brands[0]);
 
-  const [{ summary, orders }, reconciliation, expenses] =
+  const [{ summary, orders }, reconciliation, expenses, cogsSummary, marginReport] =
     optimisticDataPromise && currentBrand.id === brandIdParam
       ? await optimisticDataPromise
       : await Promise.all([
           getDailySales(currentBrand.id, fromDate, toDate),
           reconciliationFor(currentBrand.id, fromDate, toDate),
           getExpensesForDateRange(currentBrand.id, fromDate, toDate),
+          getCogsSummary(currentBrand.id, fromDate, toDate),
+          getMarginReport(currentBrand.id, fromDate, toDate),
         ]);
 
   return (
@@ -193,6 +199,8 @@ export default async function AccountancePage({
       orders={orders}
       reconciliation={reconciliation}
       expenses={expenses}
+      cogsSummary={cogsSummary}
+      marginReport={marginReport}
     />
   );
 }

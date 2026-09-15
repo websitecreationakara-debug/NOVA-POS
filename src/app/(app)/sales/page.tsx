@@ -6,7 +6,7 @@ import {
   getInvoice,
 } from "@/lib/supabase/queries";
 import { catalogForBrandSlug } from "@/lib/websiteProducts/catalogs";
-import { listWebsiteProducts } from "@/lib/websiteProducts/client";
+import { ADDON_CATEGORY_ID, listSellableWebsiteProducts } from "@/lib/websiteProducts/client";
 import type { WebsiteCatalogId, WebsiteProduct } from "@/lib/websiteProducts/types";
 import SalesClient, { type EditOrderSeed } from "./SalesClient";
 
@@ -69,16 +69,22 @@ export default async function SalesPage({
   // The brand's storefront catalog, pulled live from its own products API (same
   // source the Stock > Website tab uses). Kick the fetch off in parallel with
   // the Supabase catalog; failures here never block the sale screen -- they
-  // surface inside the Website tab.
+  // surface inside the Website tab. Add-ons (if this storefront has that
+  // endpoint configured) ride along as their own sellable entries under a
+  // synthetic "Addon" chip -- a failure fetching those alone never blocks
+  // regular products, it just means no add-ons show up this load.
   const catalog = catalogForBrandSlug(currentBrand.slug);
   const websiteCatalogPromise: Promise<SalesWebsiteCatalog | null> = catalog
-    ? listWebsiteProducts(catalog.id)
-        .then((prods) => ({
+    ? listSellableWebsiteProducts(catalog.id)
+        .then(({ products, addonCount }) => ({
           id: catalog.id,
           label: catalog.label,
-          products: prods,
+          products,
           error: null,
-          categories: catalog.categories ?? [],
+          categories:
+            addonCount > 0
+              ? [...(catalog.categories ?? []), { id: ADDON_CATEGORY_ID, label: "Addon" }]
+              : (catalog.categories ?? []),
         }))
         .catch((e) => ({
           id: catalog.id,
@@ -89,9 +95,12 @@ export default async function SalesPage({
         }))
     : Promise.resolve(null);
 
-  const { categories, products } = optimisticIsValid
+  const { categories, products: allProducts } = optimisticIsValid
     ? await optimisticCatalogPromise
     : await getCatalogForBrand(currentBrand.id);
+  // Ingredients (recipe components/packaging) are managed in Stock but
+  // aren't sold on their own -- keep them out of the checkout grid.
+  const products = allProducts.filter((p) => !p.is_ingredient);
   const websiteCatalog = await websiteCatalogPromise;
 
   const editOrder: EditOrderSeed | null = editInvoice

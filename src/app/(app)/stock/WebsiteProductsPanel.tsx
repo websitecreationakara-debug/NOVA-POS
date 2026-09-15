@@ -13,8 +13,10 @@ import {
 } from "lucide-react";
 import type { ProductWithStock } from "@/lib/supabase/queries";
 import Dropdown from "@/components/Dropdown";
+import WebsiteAddonsTable from "@/components/WebsiteAddonsTable";
 import { getCatalog } from "@/lib/websiteProducts/catalogs";
 import type {
+  WebsiteAddon,
   WebsiteCatalogId,
   WebsiteProduct,
   WebsiteProductVariation,
@@ -45,6 +47,10 @@ const POLL_INTERVAL_MS = 15_000;
 
 // Rows-per-page choices for the table footer.
 const PAGE_SIZE_OPTIONS = [10, 25, 50];
+
+// Sentinel `categoryFilter` value for the "Addons" chip -- picked so it can
+// never collide with a real category_id (those are UUIDs).
+const ADDONS_FILTER_ID = "__addons__";
 
 const fieldInputClass =
   "rounded border border-black/[.15] bg-transparent px-2.5 py-1.5 text-sm outline-none focus:border-black/40 dark:border-white/[.2] dark:focus:border-white/50";
@@ -133,6 +139,7 @@ export default function WebsiteProductsPanel({
   initialProducts,
   initialError,
   posProducts,
+  addons,
 }: {
   catalogId: WebsiteCatalogId;
   initialProducts: WebsiteProduct[] | null;
@@ -141,6 +148,12 @@ export default function WebsiteProductsPanel({
   // (and edit) the POS-linked product for that size, if one exists yet --
   // see setVariationPriceAction/setVariationStockAction.
   posProducts: ProductWithStock[];
+  // This storefront's add-on catalog, if it has one (empty = no add-on
+  // endpoint configured -- see addonsUrlEnv). Rendered as its own table (see
+  // WebsiteAddonsTable) when the "Addons" chip is active -- never merged into
+  // `products` above, since an add-on id must never flow through the product
+  // edit/delete endpoints.
+  addons?: WebsiteAddon[];
 }) {
   const router = useRouter();
   const [products, setProducts] = useState<WebsiteProduct[] | null>(initialProducts);
@@ -786,6 +799,19 @@ export default function WebsiteProductsPanel({
         >
           Uncategorized
         </button>
+        {!!addons?.length && (
+          <button
+            type="button"
+            onClick={() => setCategoryFilter(ADDONS_FILTER_ID)}
+            className={`rounded-full border px-3 py-1 text-xs ${
+              categoryFilter === ADDONS_FILTER_ID
+                ? "border-black bg-black text-white dark:border-white dark:bg-white dark:text-black"
+                : "border-black/[.15] dark:border-white/[.2]"
+            }`}
+          >
+            Addons ({addons.length})
+          </button>
+        )}
       </div>
 
       {selected.size > 0 && (
@@ -969,6 +995,10 @@ export default function WebsiteProductsPanel({
       )}
 
       <div className="flex-1 overflow-auto">
+        {categoryFilter === ADDONS_FILTER_ID ? (
+          <WebsiteAddonsTable catalogId={catalogId} addons={addons ?? []} />
+        ) : (
+        <>
         {loadError && <p className="px-6 py-3 text-sm text-red-500">{loadError}</p>}
         {products === null && !loadError && (
           <p className="px-6 py-8 text-center text-sm text-zinc-500">Loading…</p>
@@ -1164,9 +1194,11 @@ export default function WebsiteProductsPanel({
             </tbody>
           </table>
         )}
+        </>
+        )}
       </div>
 
-      {products && filtered.length > 0 && (
+      {categoryFilter !== ADDONS_FILTER_ID && products && filtered.length > 0 && (
         <div className="flex flex-wrap items-center justify-between gap-3 border-t border-black/[.08] px-6 py-3 text-sm dark:border-white/[.145]">
           <label className="flex items-center gap-2 text-xs text-zinc-500">
             Items per page

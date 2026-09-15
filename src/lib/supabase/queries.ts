@@ -4,6 +4,7 @@ import { listWebsiteProducts } from "@/lib/websiteProducts/client";
 import { countLowStock } from "@/lib/websiteProducts/stock";
 import { formatInvoiceNumber, invoiceMonthStamp, invoiceMonthStartIso } from "@/lib/invoiceNumber";
 import { ALL_PAYMENT_METHODS, type PaymentMethod } from "@/lib/paymentMethods";
+import { aggregatePartialCogs, aggregateStrictCogs, computeGrossMargin } from "@/lib/cogs";
 import type {
   Brand,
   CashReconciliation,
@@ -221,6 +222,15 @@ export type DashboardStats = {
     total: number;
     paidAt: string | null;
   }[];
+  // Same "current calendar year" scope as totalRevenue, so these agree with
+  // it -- see getCogsSummary for the same numbers scoped to Accountance's
+  // own date range instead.
+  totalCogs: number;
+  hasUnknownCost: boolean;
+  grossProfit: number;
+  grossMarginPct: number | null;
+  wasteCost: number;
+  promotionCost: number;
 };
 
 // Total products across the three storefront catalogs (what the Sales/Stock
@@ -292,6 +302,8 @@ export async function getDashboardStats(): Promise<DashboardStats> {
     { count: totalProducts, error: prodError },
     lowStockCount,
     { data: recentOrdersData, error: recentError },
+    { data: orderItemsData, error: itemsError },
+    { data: adjustmentsData, error: adjError },
   ] = await Promise.all([
     supabaseAdmin.from("orders").select("total, paid_at, brand_id, brands(name)").eq("status", "paid"),
     supabaseAdmin.from("products").select("id", { count: "exact", head: true }).eq("is_active", true),
@@ -302,11 +314,20 @@ export async function getDashboardStats(): Promise<DashboardStats> {
       .eq("status", "paid")
       .order("paid_at", { ascending: false })
       .limit(5),
+    // COGS -- joined to paid orders the same way the revenue query above is
+    // filtered, so "this year" means the same thing for both.
+    supabaseAdmin.from("order_items").select("cogs, orders!inner(status, paid_at)").eq("orders.status", "paid"),
+    supabaseAdmin
+      .from("stock_adjustments")
+      .select("category, cost_impact, created_at")
+      .not("cost_impact", "is", null),
   ]);
 
   if (ordersError) throw ordersError;
   if (prodError) throw prodError;
   if (recentError) throw recentError;
+  if (itemsError) throw itemsError;
+  if (adjError) throw adjError;
 
   type PaidOrderRow = {
     total: number;
@@ -323,6 +344,25 @@ export async function getDashboardStats(): Promise<DashboardStats> {
     .filter((o) => (o.paid_at ?? "").slice(0, 4) === currentYear)
     .reduce((sum, o) => sum + o.total, 0);
   const ordersToday = orders.filter((o) => (o.paid_at ?? "").slice(0, 10) === today).length;
+
+  type OrderItemCogsRow = { cogs: number | null; orders: { status: string; paid_at: string | null } | null };
+  const thisYearCogsValues = ((orderItemsData ?? []) as OrderItemCogsRow[])
+    .filter((i) => (i.orders?.paid_at ?? "").slice(0, 4) === currentYear)
+    .map((i) => i.cogs);
+  const { totalCogs, hasUnknownCost } = aggregatePartialCogs(thisYearCogsValues);
+  const grossProfit = round2(totalRevenue - totalCogs);
+  const grossMarginPct = totalRevenue === 0 ? null : round2((grossProfit / totalRevenue) * 10000) / 100;
+
+  type AdjustmentRow = { category: string; cost_impact: number | null; created_at: string };
+  const thisYearAdjustments = ((adjustmentsData ?? []) as AdjustmentRow[]).filter(
+    (a) => a.created_at.slice(0, 4) === currentYear
+  );
+  const wasteCost = round2(
+    thisYearAdjustments.filter((a) => a.category === "waste").reduce((sum, a) => sum + (a.cost_impact ?? 0), 0)
+  );
+  const promotionCost = round2(
+    thisYearAdjustments.filter((a) => a.category === "promotion").reduce((sum, a) => sum + (a.cost_impact ?? 0), 0)
+  );
 
   // One row per calendar day that had any revenue -- the client buckets this
   // into weeks/months/years and lets staff page back through history, rather
@@ -406,6 +446,12 @@ export async function getDashboardStats(): Promise<DashboardStats> {
     dailyOrders,
     byBrand,
     recentOrders,
+    totalCogs,
+    hasUnknownCost,
+    grossProfit,
+    grossMarginPct,
+    wasteCost,
+    promotionCost,
   };
 }
 
@@ -576,6 +622,141 @@ export async function getInvoice(orderId: string): Promise<InvoiceData | null> {
       lineTotal: i.line_total,
     })),
   };
+}
+
+function round2(n: number): number {
+  return Math.round(n * 100) / 100;
+}
+
+export type CogsSummary = {
+  totalCogs: number;
+  // True if some sold line in range had no cost price recorded -- totalCogs
+  // is a partial sum (known costs only), not the true total, when this is set.
+  hasUnknownCost: boolean;
+  wasteCost: number;
+  promotionCost: number;
+};
+
+// Powers both the Dashboard's COGS/Waste/Promotion cards and the Accountance
+// COGS tab's summary cards -- one query pair (paid order lines' cogs, plus
+// stock_adjustments' cost_impact by category) for the same brand/date range
+// every other Accountance tab already filters by.
+export async function getCogsSummary(
+  brandId: string,
+  fromDate: string,
+  toDate: string
+): Promise<CogsSummary> {
+  let itemsQuery = supabaseAdmin
+    .from("order_items")
+    .select("cogs, orders!inner(status, paid_at, brand_id)")
+    .eq("orders.status", "paid")
+    .gte("orders.paid_at", `${fromDate}T00:00:00.000Z`)
+    .lte("orders.paid_at", `${toDate}T23:59:59.999Z`);
+  if (brandId !== ALL_BUSINESSES_ID) itemsQuery = itemsQuery.eq("orders.brand_id", brandId);
+
+  let adjustmentsQuery = supabaseAdmin
+    .from("stock_adjustments")
+    .select("category, cost_impact, created_at, products!inner(brand_id)")
+    .gte("created_at", `${fromDate}T00:00:00.000Z`)
+    .lte("created_at", `${toDate}T23:59:59.999Z`)
+    .not("cost_impact", "is", null);
+  if (brandId !== ALL_BUSINESSES_ID) adjustmentsQuery = adjustmentsQuery.eq("products.brand_id", brandId);
+
+  const [{ data: items, error: itemsError }, { data: adjustments, error: adjError }] = await Promise.all([
+    itemsQuery,
+    adjustmentsQuery,
+  ]);
+  if (itemsError) throw itemsError;
+  if (adjError) throw adjError;
+
+  const { totalCogs, hasUnknownCost } = aggregatePartialCogs((items ?? []).map((i) => i.cogs));
+
+  let wasteCost = 0;
+  let promotionCost = 0;
+  for (const a of adjustments ?? []) {
+    const impact = a.cost_impact ?? 0;
+    if (a.category === "waste") wasteCost += impact;
+    else if (a.category === "promotion") promotionCost += impact;
+  }
+
+  return { totalCogs, hasUnknownCost, wasteCost: round2(wasteCost), promotionCost: round2(promotionCost) };
+}
+
+export type MarginReportRow = {
+  productId: string;
+  name: string;
+  categoryName: string | null;
+  unitsSold: number;
+  revenue: number;
+  // null (not 0/undefined) whenever any sold line in range had no cost
+  // price -- see hasUnknownCost. Never a silently-wrong number.
+  unitCost: number | null;
+  // The product's current stored price, not an average of what it actually
+  // sold for over the range -- editing this here updates that same stored
+  // value, so it stays put until changed again.
+  sellingPrice: number;
+  totalCogs: number | null;
+  grossProfit: number | null;
+  grossMarginPct: number | null;
+  hasUnknownCost: boolean;
+};
+
+// Per-product breakdown behind the COGS tab's Margin Report table (req #9) --
+// same brand/date-range scoping as getCogsSummary, grouped by product.
+export async function getMarginReport(
+  brandId: string,
+  fromDate: string,
+  toDate: string
+): Promise<MarginReportRow[]> {
+  let query = supabaseAdmin
+    .from("order_items")
+    .select("product_id, quantity, line_total, cogs, orders!inner(status, paid_at, brand_id)")
+    .eq("orders.status", "paid")
+    .gte("orders.paid_at", `${fromDate}T00:00:00.000Z`)
+    .lte("orders.paid_at", `${toDate}T23:59:59.999Z`);
+  if (brandId !== ALL_BUSINESSES_ID) query = query.eq("orders.brand_id", brandId);
+
+  const { data: items, error } = await query;
+  if (error) throw error;
+  if (!items || items.length === 0) return [];
+
+  const productIds = [...new Set(items.map((i) => i.product_id))];
+  const { data: products, error: prodError } = await supabaseAdmin
+    .from("products")
+    .select("id, name, price, categories(name)")
+    .in("id", productIds);
+  if (prodError) throw prodError;
+  const productById = new Map((products ?? []).map((p) => [p.id, p]));
+
+  const byProduct = new Map<string, { unitsSold: number; revenue: number; cogsValues: (number | null)[] }>();
+  for (const item of items) {
+    const entry = byProduct.get(item.product_id) ?? { unitsSold: 0, revenue: 0, cogsValues: [] };
+    entry.unitsSold += item.quantity;
+    entry.revenue += item.line_total;
+    entry.cogsValues.push(item.cogs);
+    byProduct.set(item.product_id, entry);
+  }
+
+  return Array.from(byProduct.entries())
+    .map(([productId, agg]) => {
+      const product = productById.get(productId);
+      const { totalCogs, hasUnknownCost } = aggregateStrictCogs(agg.cogsValues);
+      const { grossProfit, grossMarginPct } = computeGrossMargin(agg.revenue, totalCogs);
+      return {
+        productId,
+        name: product?.name ?? "—",
+        categoryName: (product?.categories as { name: string } | null)?.name ?? null,
+        unitsSold: round2(agg.unitsSold),
+        revenue: round2(agg.revenue),
+        unitCost: totalCogs === null ? null : round2(totalCogs / agg.unitsSold),
+        sellingPrice: product?.price ?? round2(agg.revenue / agg.unitsSold),
+        totalCogs,
+        grossProfit,
+        grossMarginPct,
+        hasUnknownCost,
+      };
+    })
+    .sort((a, b) => b.revenue - a.revenue);
 }
 
 export async function getExpensesForDateRange(

@@ -1,7 +1,8 @@
 import { getBrands, getCatalogForBrand } from "@/lib/supabase/queries";
 import { catalogForBrandSlug } from "@/lib/websiteProducts/catalogs";
-import { listWebsiteProducts } from "@/lib/websiteProducts/client";
+import { listWebsiteAddons, listWebsiteProducts } from "@/lib/websiteProducts/client";
 import type {
+  WebsiteAddon,
   WebsiteCatalogId,
   WebsiteProduct,
 } from "@/lib/websiteProducts/types";
@@ -12,6 +13,10 @@ export type WebsiteCatalogData = {
   label: string;
   products: WebsiteProduct[] | null;
   error: string | null;
+  // Read-only -- see addonToWebsiteProduct's comment in
+  // lib/websiteProducts/client.ts for why these never go through the
+  // editable product list above. Empty for a brand with no add-on endpoint.
+  addons: WebsiteAddon[];
 };
 
 export default async function StockPage({
@@ -45,11 +50,12 @@ export default async function StockPage({
   const websiteCatalogPromise: Promise<WebsiteCatalogData | null> =
     catalog
       ? listWebsiteProducts(catalog.id)
-          .then((prods) => ({
+          .then(async (prods) => ({
             id: catalog.id,
             label: catalog.label,
             products: prods,
             error: null,
+            addons: await listWebsiteAddons(catalog.id).catch(() => []),
           }))
           .catch((e) => ({
             id: catalog.id,
@@ -59,6 +65,7 @@ export default async function StockPage({
               e instanceof Error
                 ? e.message
                 : "Failed to load",
+            addons: [],
           }))
       : Promise.resolve(null);
 
