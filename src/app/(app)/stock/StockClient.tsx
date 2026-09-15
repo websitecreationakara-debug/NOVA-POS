@@ -2,25 +2,31 @@
 
 import { Fragment, useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { ArrowDown, ArrowUp, ArrowUpDown, X } from "lucide-react";
 import type { Brand, Category } from "@/types/database";
 import type { ProductWithStock } from "@/lib/supabase/queries";
 import type { WebsiteCatalogData } from "./page";
 import {
+  addRecipeItemAction,
   adjustStockAction,
   createCategoryAction,
   createProductAction,
   deactivateProductAction,
   deleteCategoryAction,
+  getRecipeItemsAction,
   linkProductToSiteAction,
   removeProductImageAction,
+  removeRecipeItemAction,
   renameProductAction,
   searchSiteProductForLinkAction,
   setLowStockThresholdAction,
   setProductCategoryAction,
-  setProductPriceAction,
+  setProductIsIngredientAction,
   uploadProductImageAction,
+  type RecipeItemRow,
 } from "./actions";
+import type { StockAdjustmentCategory } from "@/types/database";
 import WebsiteProductsPanel from "./WebsiteProductsPanel";
 
 type SiteProductCandidate = { id: string; title: string; stock: number | null; type: string };
@@ -80,7 +86,16 @@ export default function StockClient({
   const [lowStockOnly, setLowStockOnly] = useState(false);
   const [drafts, setDrafts] = useState<Record<string, Draft>>({});
   const [thresholdDrafts, setThresholdDrafts] = useState<Record<string, string>>({});
-  const [priceDrafts, setPriceDrafts] = useState<Record<string, string>>({});
+  const [adjustCategoryDrafts, setAdjustCategoryDrafts] = useState<Record<string, StockAdjustmentCategory>>({});
+  const [recipeProductId, setRecipeProductId] = useState<string | null>(null);
+  const [recipeItems, setRecipeItems] = useState<RecipeItemRow[]>([]);
+  const [recipeLoading, setRecipeLoading] = useState(false);
+  const [recipeError, setRecipeError] = useState<string | null>(null);
+  const [newIngredientId, setNewIngredientId] = useState("");
+  const [newIngredientQty, setNewIngredientQty] = useState("");
+  const [addingIngredient, setAddingIngredient] = useState(false);
+  const [removingIngredientId, setRemovingIngredientId] = useState<string | null>(null);
+  const [ingredientTogglingId, setIngredientTogglingId] = useState<string | null>(null);
   const [nameDrafts, setNameDrafts] = useState<Record<string, string>>({});
   const [showAddForm, setShowAddForm] = useState(false);
   const [newProduct, setNewProduct] = useState({
@@ -111,9 +126,9 @@ export default function StockClient({
   const [imageErrors, setImageErrors] = useState<Record<string, string>>({});
   const [uploadingId, setUploadingId] = useState<string | null>(null);
   const [removingId, setRemovingId] = useState<string | null>(null);
-  const [sortKey, setSortKey] = useState<"name" | "price" | "category" | "stock" | "threshold" | null>(
-    null
-  );
+  const [sortKey, setSortKey] = useState<
+    "name" | "price" | "cost" | "category" | "stock" | "threshold" | null
+  >(null);
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
   const [, startTransition] = useTransition();
 
@@ -122,7 +137,7 @@ export default function StockClient({
     [categories]
   );
 
-  function toggleSort(key: "name" | "price" | "category" | "stock" | "threshold") {
+  function toggleSort(key: "name" | "price" | "cost" | "category" | "stock" | "threshold") {
     if (sortKey !== key) {
       setSortKey(key);
       setSortDir("asc");
@@ -156,6 +171,7 @@ export default function StockClient({
       list = [...list].sort((a, b) => {
         if (sortKey === "name") return a.name.localeCompare(b.name) * dir;
         if (sortKey === "price") return (a.price - b.price) * dir;
+        if (sortKey === "cost") return ((a.cost_price ?? -1) - (b.cost_price ?? -1)) * dir;
         if (sortKey === "stock") return (a.stock_quantity - b.stock_quantity) * dir;
         if (sortKey === "threshold") return (a.low_stock_threshold - b.low_stock_threshold) * dir;
         const nameA = categoryName.get(a.category_id ?? "") ?? "";
@@ -201,7 +217,11 @@ export default function StockClient({
     setPendingId(productId);
     startTransition(async () => {
       try {
-        await adjustStockAction({ productId, delta });
+        await adjustStockAction({
+          productId,
+          delta,
+          category: adjustCategoryDrafts[productId] ?? "other",
+        });
         setDrafts((prev) => {
           const next = { ...prev };
           delete next[productId];
@@ -488,26 +508,75 @@ export default function StockClient({
     });
   }
 
-  function savePrice(productId: string, currentPrice: number) {
-    const raw = priceDrafts[productId];
-    if (raw === undefined) return;
-    const price = parseFloat(raw);
-    const clear = () =>
-      setPriceDrafts((prev) => {
-        const next = { ...prev };
-        delete next[productId];
-        return next;
-      });
-    if (Number.isNaN(price) || price < 0 || price === currentPrice) {
-      clear();
-      return;
-    }
+  function toggleIsIngredient(productId: string, isIngredient: boolean) {
+    setIngredientTogglingId(productId);
     startTransition(async () => {
       try {
-        await setProductPriceAction({ productId, price });
+        await setProductIsIngredientAction({ productId, isIngredient });
         router.refresh();
       } finally {
-        clear();
+        setIngredientTogglingId(null);
+      }
+    });
+  }
+
+  async function openRecipePanel(productId: string) {
+    setRecipeProductId(productId);
+    setRecipeError(null);
+    setNewIngredientId("");
+    setNewIngredientQty("");
+    setRecipeLoading(true);
+    try {
+      setRecipeItems(await getRecipeItemsAction(productId));
+    } catch {
+      setRecipeError("Failed to load recipe");
+    } finally {
+      setRecipeLoading(false);
+    }
+  }
+
+  function closeRecipePanel() {
+    setRecipeProductId(null);
+    setRecipeItems([]);
+    setRecipeError(null);
+  }
+
+  function addIngredient(productId: string) {
+    const qty = parseFloat(newIngredientQty);
+    if (!newIngredientId) {
+      setRecipeError("Pick an ingredient");
+      return;
+    }
+    if (Number.isNaN(qty) || qty <= 0) {
+      setRecipeError("Quantity must be greater than zero");
+      return;
+    }
+    setRecipeError(null);
+    setAddingIngredient(true);
+    startTransition(async () => {
+      try {
+        await addRecipeItemAction({ productId, ingredientProductId: newIngredientId, quantity: qty });
+        setNewIngredientId("");
+        setNewIngredientQty("");
+        setRecipeItems(await getRecipeItemsAction(productId));
+        router.refresh();
+      } catch (e) {
+        setRecipeError(e instanceof Error ? e.message : "Failed to add ingredient");
+      } finally {
+        setAddingIngredient(false);
+      }
+    });
+  }
+
+  function removeIngredient(productId: string, recipeItemId: string) {
+    setRemovingIngredientId(recipeItemId);
+    startTransition(async () => {
+      try {
+        await removeRecipeItemAction({ recipeItemId });
+        setRecipeItems(await getRecipeItemsAction(productId));
+        router.refresh();
+      } finally {
+        setRemovingIngredientId(null);
       }
     });
   }
@@ -564,6 +633,7 @@ export default function StockClient({
           initialProducts={websiteCatalog.products}
           initialError={websiteCatalog.error}
           posProducts={products}
+          addons={websiteCatalog.addons}
         />
       ) : (
       <>
@@ -692,6 +762,14 @@ export default function StockClient({
               </th>
               <th className="px-3 py-2">
                 <SortHeader
+                  label="Cost"
+                  active={sortKey === "cost"}
+                  dir={sortDir}
+                  onClick={() => toggleSort("cost")}
+                />
+              </th>
+              <th className="px-3 py-2">
+                <SortHeader
                   label="Category"
                   active={sortKey === "category"}
                   dir={sortDir}
@@ -725,7 +803,6 @@ export default function StockClient({
                 !isOut && p.low_stock_threshold > 0 && p.stock_quantity <= p.low_stock_threshold;
               const draft = drafts[p.id] ?? { delta: "" };
               const thresholdValue = thresholdDrafts[p.id] ?? String(p.low_stock_threshold);
-              const priceValue = priceDrafts[p.id] ?? String(p.price);
               const nameValue = nameDrafts[p.id] ?? p.name;
               return (
                 <Fragment key={p.id}>
@@ -795,6 +872,13 @@ export default function StockClient({
                       className="w-full min-w-0 rounded border border-transparent bg-transparent px-1 py-0.5 font-medium hover:border-black/[.15] focus:border-black/[.3] dark:hover:border-white/[.2] dark:focus:border-white/[.4]"
                     />
                     {p.sku && <div className="text-xs text-zinc-400">{p.sku}</div>}
+                    <button
+                      type="button"
+                      onClick={() => openRecipePanel(p.id)}
+                      className="mt-1 block text-xs text-blue-600 underline dark:text-blue-400"
+                    >
+                      Recipe
+                    </button>
                     {p.site_link ? (
                       <div className="mt-1 text-xs text-green-600 dark:text-green-500">
                         🔗 Linked ({p.site_link.site})
@@ -811,18 +895,31 @@ export default function StockClient({
                   </td>
                   <td className="px-3 py-2">
                     <div className="flex items-center gap-1">
-                      <span className="text-zinc-400">$</span>
-                      <input
-                        type="number"
-                        min={0}
-                        step="0.01"
-                        value={priceValue}
-                        onChange={(e) => setPriceDrafts((prev) => ({ ...prev, [p.id]: e.target.value }))}
-                        onBlur={() => savePrice(p.id, p.price)}
-                        className="w-20 rounded border border-black/[.15] bg-transparent px-2 py-1 text-sm dark:border-white/[.2]"
-                      />
+                      <span>${p.price.toFixed(2)}</span>
                       <span className="text-zinc-400">/ {p.unit}</span>
                     </div>
+                  </td>
+                  <td className="px-3 py-2">
+                    {p.cost_price === null ? (
+                      <div className="text-xs text-amber-500">⚠ No cost price</div>
+                    ) : (
+                      <span>${p.cost_price.toFixed(2)}</span>
+                    )}
+                    <Link
+                      href="/accountance?tab=cogs"
+                      className="mt-1 block text-xs text-blue-600 underline dark:text-blue-400"
+                    >
+                      Edit in Margin Report
+                    </Link>
+                    <label className="mt-1 flex items-center gap-1.5 text-xs text-zinc-500">
+                      <input
+                        type="checkbox"
+                        checked={p.is_ingredient}
+                        disabled={ingredientTogglingId === p.id}
+                        onChange={(e) => toggleIsIngredient(p.id, e.target.checked)}
+                      />
+                      Ingredient only
+                    </label>
                   </td>
                   <td className="px-3 py-2">
                     <select
@@ -870,6 +967,20 @@ export default function StockClient({
                         onChange={(e) => updateDraft(p.id, "delta", e.target.value)}
                         className="w-20 rounded border border-black/[.15] bg-transparent px-2 py-1 text-sm dark:border-white/[.2]"
                       />
+                      <select
+                        value={adjustCategoryDrafts[p.id] ?? "other"}
+                        onChange={(e) =>
+                          setAdjustCategoryDrafts((prev) => ({
+                            ...prev,
+                            [p.id]: e.target.value as StockAdjustmentCategory,
+                          }))
+                        }
+                        className="rounded border border-black/[.15] bg-card px-1.5 py-1 text-xs text-foreground dark:border-white/[.2]"
+                      >
+                        <option value="other">Other</option>
+                        <option value="waste">Waste</option>
+                        <option value="promotion">Promotion</option>
+                      </select>
                       <button
                         disabled={pendingId === p.id}
                         onClick={() => applyAdjustment(p.id)}
@@ -912,7 +1023,7 @@ export default function StockClient({
                 </tr>
                 {linkingProductId === p.id && (
                   <tr className="border-b border-black/[.06] bg-black/[.02] dark:border-white/[.08] dark:bg-white/[.03]">
-                    <td colSpan={8} className="px-6 py-3">
+                    <td colSpan={9} className="px-6 py-3">
                       <div className="flex flex-wrap items-center gap-2">
                         <span className="text-xs text-zinc-500">
                           Linking to {currentBrand.name}&apos;s website:
@@ -972,12 +1083,93 @@ export default function StockClient({
                     </td>
                   </tr>
                 )}
+                {recipeProductId === p.id && (
+                  <tr className="border-b border-black/[.06] bg-black/[.02] dark:border-white/[.08] dark:bg-white/[.03]">
+                    <td colSpan={9} className="px-6 py-3">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs text-zinc-500">
+                          Recipe for {p.name} -- ingredients consumed per 1 {p.unit} sold. No rows =
+                          priced from this product&apos;s own Cost instead.
+                        </span>
+                        <button
+                          type="button"
+                          onClick={closeRecipePanel}
+                          className="rounded border border-black/[.15] px-2 py-1 text-xs dark:border-white/[.2]"
+                        >
+                          Close
+                        </button>
+                      </div>
+                      {recipeLoading ? (
+                        <p className="mt-2 text-xs text-zinc-500">Loading…</p>
+                      ) : (
+                        <>
+                          {recipeItems.length > 0 && (
+                            <ul className="mt-2 flex flex-col gap-1">
+                              {recipeItems.map((r) => (
+                                <li
+                                  key={r.id}
+                                  className="flex items-center justify-between gap-2 rounded border border-black/[.1] px-3 py-1.5 text-sm dark:border-white/[.15]"
+                                >
+                                  <span>
+                                    {r.quantity} x {r.ingredientName}
+                                  </span>
+                                  <button
+                                    type="button"
+                                    disabled={removingIngredientId === r.id}
+                                    onClick={() => removeIngredient(p.id, r.id)}
+                                    className="rounded border border-black/[.15] px-2 py-1 text-xs text-red-500 dark:border-white/[.2]"
+                                  >
+                                    {removingIngredientId === r.id ? "…" : "Remove"}
+                                  </button>
+                                </li>
+                              ))}
+                            </ul>
+                          )}
+                          <div className="mt-2 flex flex-wrap items-center gap-2">
+                            <select
+                              value={newIngredientId}
+                              onChange={(e) => setNewIngredientId(e.target.value)}
+                              className="rounded border border-black/[.15] bg-card px-2 py-1 text-sm text-foreground dark:border-white/[.2]"
+                            >
+                              <option value="">Pick an ingredient…</option>
+                              {products
+                                .filter((ing) => ing.id !== p.id)
+                                .map((ing) => (
+                                  <option key={ing.id} value={ing.id}>
+                                    {ing.name}
+                                  </option>
+                                ))}
+                            </select>
+                            <input
+                              type="number"
+                              min={0}
+                              step="0.0001"
+                              placeholder="qty"
+                              value={newIngredientQty}
+                              onChange={(e) => setNewIngredientQty(e.target.value)}
+                              className="w-24 rounded border border-black/[.15] bg-transparent px-2 py-1 text-sm dark:border-white/[.2]"
+                            />
+                            <button
+                              type="button"
+                              disabled={addingIngredient}
+                              onClick={() => addIngredient(p.id)}
+                              className="rounded border border-black/[.15] px-2 py-1 text-xs dark:border-white/[.2]"
+                            >
+                              {addingIngredient ? "…" : "Add"}
+                            </button>
+                          </div>
+                          {recipeError && <p className="mt-2 text-xs text-red-500">{recipeError}</p>}
+                        </>
+                      )}
+                    </td>
+                  </tr>
+                )}
                 </Fragment>
               );
             })}
             {visibleProducts.length === 0 && (
               <tr>
-                <td colSpan={8} className="px-6 py-8 text-center text-sm text-zinc-500">
+                <td colSpan={9} className="px-6 py-8 text-center text-sm text-zinc-500">
                   No products match.
                 </td>
               </tr>

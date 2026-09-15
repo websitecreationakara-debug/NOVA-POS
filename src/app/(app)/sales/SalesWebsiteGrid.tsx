@@ -7,7 +7,7 @@ import type {
   WebsiteProduct,
   WebsiteProductVariation,
 } from "@/lib/websiteProducts/types";
-import { listWebsiteProductsAction } from "../stock/websiteActions";
+import { listSellableWebsiteProductsAction } from "../stock/websiteActions";
 
 // useLayoutEffect on the client, useEffect on the server (avoids the SSR warning).
 const useIsoLayoutEffect = typeof window !== "undefined" ? useLayoutEffect : useEffect;
@@ -120,7 +120,7 @@ export default function SalesWebsiteGrid({
       busyRef.current = true;
       if (!background) setLoadError(null);
       try {
-        const data = await listWebsiteProductsAction(catalogId);
+        const data = await listSellableWebsiteProductsAction(catalogId);
         const nextSig = catalogSignature(data);
         if (nextSig !== signatureRef.current) {
           signatureRef.current = nextSig;

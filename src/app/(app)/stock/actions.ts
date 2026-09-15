@@ -4,14 +4,69 @@ import { revalidatePath } from "next/cache";
 import { supabaseAdmin } from "@/lib/supabase/server";
 import { pushStockToSites, searchSiteProducts, linkProductToSite, type SiteProductCandidate } from "@/lib/site-sync";
 import { requireStockAccess } from "@/lib/stockAccess";
-import type { ProductSiteLink } from "@/types/database";
+import { computeLineCogs, computeRecipeUnitCost } from "@/lib/cogs";
+import type { ProductSiteLink, StockAdjustmentCategory } from "@/types/database";
+
+// Order lines never had a cost recorded because cost tracking didn't exist
+// yet at the time they were sold (cogs IS NULL) get priced retroactively
+// once the product's cost price is set -- same direct/recipe pricing
+// charge_order() and updateOrderAction use. Lines that already have a
+// recorded cogs are left untouched: a later cost-price change still can't
+// rewrite an already-priced sale.
+async function backfillOrderItemCogs(productId: string): Promise<void> {
+  const { data: recipeRows, error: recipeErr } = await supabaseAdmin
+    .from("recipe_items")
+    .select("quantity, products!recipe_items_ingredient_product_id_fkey(cost_price)")
+    .eq("product_id", productId);
+  if (recipeErr) throw recipeErr;
+
+  let unitCost: number | null;
+  let costSource: "direct" | "recipe";
+  if (recipeRows && recipeRows.length > 0) {
+    costSource = "recipe";
+    unitCost = computeRecipeUnitCost(
+      recipeRows.map((r) => ({
+        quantity: r.quantity,
+        costPrice: (r.products as { cost_price: number | null } | null)?.cost_price ?? null,
+      }))
+    );
+  } else {
+    costSource = "direct";
+    const { data: product, error: productErr } = await supabaseAdmin
+      .from("products")
+      .select("cost_price")
+      .eq("id", productId)
+      .single();
+    if (productErr) throw productErr;
+    unitCost = product?.cost_price ?? null;
+  }
+  if (unitCost === null) return;
+
+  const { data: unpriced, error: unpricedErr } = await supabaseAdmin
+    .from("order_items")
+    .select("id, quantity")
+    .eq("product_id", productId)
+    .is("cogs", null);
+  if (unpricedErr) throw unpricedErr;
+  if (!unpriced || unpriced.length === 0) return;
+
+  await Promise.all(
+    unpriced.map((item) =>
+      supabaseAdmin
+        .from("order_items")
+        .update({ unit_cost: unitCost, cogs: computeLineCogs(unitCost, item.quantity), cost_source: costSource })
+        .eq("id", item.id)
+    )
+  );
+}
 
 export async function adjustStockAction(input: {
   productId: string;
   delta: number;
   reason?: string;
+  category?: StockAdjustmentCategory;
 }): Promise<{ quantity: number }> {
-  const { productId, delta, reason } = input;
+  const { productId, delta, reason, category } = input;
   const user = await requireStockAccess();
 
   const { data, error } = await supabaseAdmin.rpc("adjust_stock", {
@@ -19,6 +74,7 @@ export async function adjustStockAction(input: {
     p_delta: delta,
     p_reason: reason ?? null,
     p_created_by: user?.id ?? null,
+    p_category: category ?? "other",
   });
 
   if (error || data === null) {
@@ -131,6 +187,112 @@ export async function setProductPriceAction(input: {
   }
 
   const { error } = await supabaseAdmin.from("products").update({ price }).eq("id", productId);
+
+  if (error) throw error;
+
+  revalidatePath("/stock");
+  revalidatePath("/sales");
+  revalidatePath("/accountance");
+}
+
+// null clears the cost price back to "unknown" -- COGS/margin reporting
+// treats that as a warning, never as $0.
+export async function setProductCostAction(input: {
+  productId: string;
+  costPrice: number | null;
+}): Promise<void> {
+  await requireStockAccess();
+  const { productId, costPrice } = input;
+  if (costPrice !== null && (Number.isNaN(costPrice) || costPrice < 0)) {
+    throw new Error("Cost price cannot be negative");
+  }
+
+  const { error } = await supabaseAdmin
+    .from("products")
+    .update({ cost_price: costPrice })
+    .eq("id", productId);
+
+  if (error) throw error;
+
+  if (costPrice !== null) await backfillOrderItemCogs(productId);
+
+  revalidatePath("/stock");
+  revalidatePath("/sales");
+  revalidatePath("/accountance");
+}
+
+export async function setProductIsIngredientAction(input: {
+  productId: string;
+  isIngredient: boolean;
+}): Promise<void> {
+  await requireStockAccess();
+  const { productId, isIngredient } = input;
+
+  const { error } = await supabaseAdmin
+    .from("products")
+    .update({ is_ingredient: isIngredient })
+    .eq("id", productId);
+
+  if (error) throw error;
+
+  revalidatePath("/stock");
+  revalidatePath("/sales");
+}
+
+export type RecipeItemRow = {
+  id: string;
+  ingredientProductId: string;
+  ingredientName: string;
+  quantity: number;
+};
+
+export async function getRecipeItemsAction(productId: string): Promise<RecipeItemRow[]> {
+  await requireStockAccess();
+  const { data, error } = await supabaseAdmin
+    .from("recipe_items")
+    .select("id, ingredient_product_id, quantity, products!recipe_items_ingredient_product_id_fkey(name)")
+    .eq("product_id", productId)
+    .order("created_at");
+
+  if (error) throw error;
+  return (data ?? []).map((r) => ({
+    id: r.id,
+    ingredientProductId: r.ingredient_product_id,
+    ingredientName: (r.products as { name: string } | null)?.name ?? "—",
+    quantity: r.quantity,
+  }));
+}
+
+export async function addRecipeItemAction(input: {
+  productId: string;
+  ingredientProductId: string;
+  quantity: number;
+}): Promise<void> {
+  await requireStockAccess();
+  const { productId, ingredientProductId, quantity } = input;
+  if (productId === ingredientProductId) {
+    throw new Error("A product can't be an ingredient of itself");
+  }
+  if (Number.isNaN(quantity) || quantity <= 0) {
+    throw new Error("Quantity must be greater than zero");
+  }
+
+  const { error } = await supabaseAdmin
+    .from("recipe_items")
+    .upsert(
+      { product_id: productId, ingredient_product_id: ingredientProductId, quantity },
+      { onConflict: "product_id,ingredient_product_id" }
+    );
+
+  if (error) throw error;
+
+  revalidatePath("/stock");
+  revalidatePath("/sales");
+}
+
+export async function removeRecipeItemAction(input: { recipeItemId: string }): Promise<void> {
+  await requireStockAccess();
+  const { error } = await supabaseAdmin.from("recipe_items").delete().eq("id", input.recipeItemId);
 
   if (error) throw error;
 

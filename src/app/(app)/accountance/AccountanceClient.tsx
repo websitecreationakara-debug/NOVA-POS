@@ -2,17 +2,20 @@
 
 import { useEffect, useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { ChevronLeft, ChevronRight, Pencil } from "lucide-react";
+import { Check, ChevronLeft, ChevronRight, Pencil, TriangleAlert, X } from "lucide-react";
 import type { Brand, CashReconciliation, Expense, Order } from "@/types/database";
-import { ALL_BUSINESSES_ID, type DailySalesSummary } from "@/lib/supabase/queries";
-import { PAYMENT_METHOD_LABELS, type PaymentMethod } from "@/lib/paymentMethods";
 import {
-  addExpenseAction,
-  deleteExpenseAction,
-  saveReconciliationAction,
-  updateExpenseAction,
-} from "./actions";
+  ALL_BUSINESSES_ID,
+  type CogsSummary,
+  type DailySalesSummary,
+  type MarginReportRow,
+} from "@/lib/supabase/queries";
+import { PAYMENT_METHOD_LABELS, type PaymentMethod } from "@/lib/paymentMethods";
+import { addExpenseAction, saveReconciliationAction, updateExpenseAction } from "./actions";
+import { setProductCostAction, setProductPriceAction } from "../stock/actions";
 import { exportAccountancePdf } from "@/lib/exportAccountancePdf";
+import DeleteExpenseDialog from "@/components/DeleteExpenseDialog";
+import BulkAddCostPriceModal from "@/components/BulkAddCostPriceModal";
 import type { AccountanceTab } from "./page";
 
 type RangeMode = "day" | "week" | "month" | "quarter" | "year";
@@ -58,6 +61,8 @@ export default function AccountanceClient({
   orders,
   reconciliation,
   expenses,
+  cogsSummary,
+  marginReport,
 }: {
   brands: Brand[];
   currentBrand: Brand;
@@ -73,6 +78,8 @@ export default function AccountanceClient({
   orders: Order[];
   reconciliation: CashReconciliation | null;
   expenses: Expense[];
+  cogsSummary: CogsSummary;
+  marginReport: MarginReportRow[];
 }) {
   const router = useRouter();
   const [countedCash, setCountedCash] = useState(
@@ -104,6 +111,16 @@ export default function AccountanceClient({
   const [showRangeEnd, setShowRangeEnd] = useState(fromDate !== toDate);
   const [expenseSearch, setExpenseSearch] = useState("");
   const [expenseCategoryFilter, setExpenseCategoryFilter] = useState("");
+  const [marginSearch, setMarginSearch] = useState("");
+  const [marginCategoryFilter, setMarginCategoryFilter] = useState("");
+  // Draft text for the Margin Report's inline Unit Cost / Selling Price
+  // edits, keyed by product id -- same pattern as Stock's per-row editing.
+  const [marginCostDrafts, setMarginCostDrafts] = useState<Record<string, string>>({});
+  const [marginPriceDrafts, setMarginPriceDrafts] = useState<Record<string, string>>({});
+  const [confirmDeleteExpense, setConfirmDeleteExpense] = useState<{
+    id: string;
+    description: string;
+  } | null>(null);
 
   // Hides the app shell's scrollbar while this page is mounted -- scrolling
   // itself still works (wheel/keyboard/touch), only the visible track/thumb
@@ -225,7 +242,12 @@ export default function AccountanceClient({
               : `${fromDate} to ${toDate}`;
 
   const expenseTotal = expenses.reduce((sum, e) => sum + e.amount, 0);
-  const netProfit = summary.total - expenseTotal;
+  const wastePromoTotal = cogsSummary.wasteCost + cogsSummary.promotionCost;
+  // Gross profit = revenue - COGS; net profit also backs out operating
+  // expenses and the cost of waste/spillage/comps -- see the plan's
+  // confirmed decision on folding waste/promo into net profit.
+  const grossProfit = summary.total - cogsSummary.totalCogs;
+  const netProfit = grossProfit - expenseTotal - wastePromoTotal;
 
   const filteredExpenses = useMemo(() => {
     const q = expenseSearch.trim().toLowerCase();
@@ -241,6 +263,91 @@ export default function AccountanceClient({
     [expenses]
   );
   const isExpenseFilterActive = expenseSearch.trim() !== "" || expenseCategoryFilter !== "";
+
+  const filteredMarginReport = useMemo(() => {
+    const q = marginSearch.trim().toLowerCase();
+    return marginReport.filter((r) => {
+      if (marginCategoryFilter && (r.categoryName ?? "") !== marginCategoryFilter) return false;
+      if (q && !r.name.toLowerCase().includes(q)) return false;
+      return true;
+    });
+  }, [marginReport, marginSearch, marginCategoryFilter]);
+  const marginCategories = useMemo(
+    () =>
+      Array.from(new Set(marginReport.map((r) => r.categoryName).filter((c): c is string => Boolean(c)))).sort(),
+    [marginReport]
+  );
+  // Feeds both the top-of-report "N products are missing a cost price" bar
+  // and the bulk-fill modal -- unaffected by the search/category filter, so
+  // the count and the modal's list always match the whole range.
+  const missingCostRows = useMemo(() => marginReport.filter((r) => r.unitCost === null), [marginReport]);
+
+  // Which row's Unit Cost / Selling Price are currently shown as inputs --
+  // one at a time, everything else stays a compact chip/value so the table
+  // reads cleanly instead of every row carrying two empty boxes.
+  const [editingMarginId, setEditingMarginId] = useState<string | null>(null);
+  const [bulkCostModalOpen, setBulkCostModalOpen] = useState(false);
+
+  function startMarginEdit(productId: string) {
+    setError(null);
+    setEditingMarginId(productId);
+  }
+
+  function cancelMarginEdit(productId: string) {
+    setMarginCostDrafts((prev) => {
+      const next = { ...prev };
+      delete next[productId];
+      return next;
+    });
+    setMarginPriceDrafts((prev) => {
+      const next = { ...prev };
+      delete next[productId];
+      return next;
+    });
+    setEditingMarginId(null);
+  }
+
+  // Saves whichever of Unit Cost / Selling Price the row's drafts actually
+  // changed. Setting a unit cost also backfills COGS for that product's
+  // already-sold lines that never had a cost recorded (see
+  // setProductCostAction) -- so a product added before cost tracking existed
+  // stops showing "No cost price" once its cost is filled in. A selling-price
+  // change only applies going forward -- past lines' revenue was already
+  // recorded at sale time and isn't rewritten.
+  function saveMarginRow(r: MarginReportRow) {
+    const costRaw = marginCostDrafts[r.productId];
+    const priceRaw = marginPriceDrafts[r.productId];
+    const trimmedCost = costRaw?.trim();
+    const costPrice = trimmedCost === undefined ? undefined : trimmedCost === "" ? null : parseFloat(trimmedCost);
+    const price = priceRaw === undefined ? undefined : parseFloat(priceRaw);
+
+    if (costPrice !== undefined && costPrice !== null && (Number.isNaN(costPrice) || costPrice < 0)) {
+      setError("Unit cost cannot be negative");
+      return;
+    }
+    if (price !== undefined && (Number.isNaN(price) || price < 0)) {
+      setError("Selling price cannot be negative");
+      return;
+    }
+    setError(null);
+
+    const costChanged = costPrice !== undefined && costPrice !== r.unitCost;
+    const priceChanged = price !== undefined && price !== r.sellingPrice;
+    if (!costChanged && !priceChanged) {
+      cancelMarginEdit(r.productId);
+      return;
+    }
+
+    startTransition(async () => {
+      try {
+        if (costChanged) await setProductCostAction({ productId: r.productId, costPrice: costPrice ?? null });
+        if (priceChanged) await setProductPriceAction({ productId: r.productId, price: price as number });
+        router.refresh();
+      } finally {
+        cancelMarginEdit(r.productId);
+      }
+    });
+  }
 
   function saveReconciliation() {
     const counted = parseFloat(countedCash);
@@ -309,12 +416,8 @@ export default function AccountanceClient({
     });
   }
 
-  function removeExpense(id: string) {
-    startTransition(async () => {
-      await deleteExpenseAction(id);
-      if (editingExpenseId === id) resetExpenseForm();
-      router.refresh();
-    });
+  function handleExpenseDeleted(id: string) {
+    if (editingExpenseId === id) resetExpenseForm();
   }
 
   const fileDateLabel =
@@ -847,7 +950,7 @@ export default function AccountanceClient({
                         <Pencil className="inline size-3.5" />
                       </button>
                       <button
-                        onClick={() => removeExpense(e.id)}
+                        onClick={() => setConfirmDeleteExpense({ id: e.id, description: e.description })}
                         aria-label={`Delete ${e.description}`}
                         className="text-zinc-400 hover:text-red-500"
                       >
@@ -888,13 +991,25 @@ export default function AccountanceClient({
                 <div className="flex justify-between">
                   <span className="text-zinc-500">
                     Cost of goods sold
-                    <span className="ml-1 text-[11px] text-zinc-400">(not yet tracked)</span>
+                    {cogsSummary.hasUnknownCost && (
+                      <span className="ml-1 text-[11px] text-amber-500">
+                        ⚠ incomplete -- some items have no cost price
+                      </span>
+                    )}
                   </span>
-                  <span className="font-medium text-zinc-400">—</span>
+                  <span className="font-medium">-{formatMoney(cogsSummary.totalCogs)}</span>
+                </div>
+                <div className="flex justify-between font-semibold">
+                  <span className="text-zinc-500">Gross profit</span>
+                  <span>{formatMoney(grossProfit)}</span>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-zinc-500">Operating expenses</span>
                   <span className="font-medium">-{formatMoney(expenseTotal)}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-zinc-500">Waste / promo cost</span>
+                  <span className="font-medium">-{formatMoney(wastePromoTotal)}</span>
                 </div>
                 <div className="flex justify-between border-t border-black/[.08] pt-2 text-base font-semibold dark:border-white/[.145]">
                   <span>Net profit</span>
@@ -903,10 +1018,6 @@ export default function AccountanceClient({
                   </span>
                 </div>
               </div>
-              <p className="mt-3 text-[11px] text-zinc-400">
-                COGS &amp; margin tracking (synced with Stock) is coming in a later update --
-                net profit above is gross sales minus operating expenses only.
-              </p>
             </section>
 
             <section className="rounded-lg border border-black/[.08] p-4 dark:border-white/[.145]">
@@ -947,17 +1058,243 @@ export default function AccountanceClient({
         )}
 
         {tab === "cogs" && (
-          <section className="rounded-lg border border-black/[.08] p-4 dark:border-white/[.145]">
-            <h2 className="font-medium">COGS &amp; Margin Tracking</h2>
-            <p className="mt-2 text-sm text-zinc-500">
-              Coming in a later update. This will deduct each sale&apos;s ingredient/item cost
-              from the Stock module in real time to compute gross margins per business, plus
-              a ledger for waste, spillage, comps, and promotional giveaways -- none of which
-              can be calculated yet since products don&apos;t have a cost price recorded.
-            </p>
-          </section>
+          <div className="flex flex-col gap-6">
+            {cogsSummary.hasUnknownCost && (
+              <p className="rounded-lg border border-amber-300 bg-amber-50 px-4 py-2 text-xs text-amber-800 dark:border-amber-900 dark:bg-amber-950/60 dark:text-amber-300">
+                ⚠ Some items sold in this period have no cost price recorded -- the totals below
+                only include what&apos;s known. Add the missing costs in the Margin Report below to
+                complete them.
+              </p>
+            )}
+            <div className="grid grid-cols-2 gap-4 lg:grid-cols-5">
+              <div className="rounded-lg border border-black/[.08] p-4 dark:border-white/[.145]">
+                <div className="text-xs text-zinc-500">Total COGS</div>
+                <div className="mt-1 text-xl font-semibold">{formatMoney(cogsSummary.totalCogs)}</div>
+              </div>
+              <div className="rounded-lg border border-black/[.08] p-4 dark:border-white/[.145]">
+                <div className="text-xs text-zinc-500">Gross profit</div>
+                <div className="mt-1 text-xl font-semibold">{formatMoney(grossProfit)}</div>
+              </div>
+              <div className="rounded-lg border border-black/[.08] p-4 dark:border-white/[.145]">
+                <div className="text-xs text-zinc-500">Gross margin %</div>
+                <div className="mt-1 text-xl font-semibold">
+                  {summary.total === 0 ? "—" : `${((grossProfit / summary.total) * 100).toFixed(1)}%`}
+                </div>
+              </div>
+              <div className="rounded-lg border border-black/[.08] p-4 dark:border-white/[.145]">
+                <div className="text-xs text-zinc-500">Waste</div>
+                <div className="mt-1 text-xl font-semibold">{formatMoney(cogsSummary.wasteCost)}</div>
+              </div>
+              <div className="rounded-lg border border-black/[.08] p-4 dark:border-white/[.145]">
+                <div className="text-xs text-zinc-500">Promotions</div>
+                <div className="mt-1 text-xl font-semibold">{formatMoney(cogsSummary.promotionCost)}</div>
+              </div>
+            </div>
+
+            <section className="rounded-lg border border-black/[.08] p-4 dark:border-white/[.145]">
+              <h2 className="font-medium">Margin Report</h2>
+              <p className="mt-1 text-xs text-zinc-500">{rangeLabel}</p>
+
+              {missingCostRows.length > 0 && (
+                <div className="mt-3 flex items-center justify-between gap-3 rounded-lg border border-amber-300 bg-amber-50 px-4 py-2.5 text-sm text-amber-800 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-200">
+                  <span className="flex items-center gap-2">
+                    <TriangleAlert className="size-4 shrink-0" />
+                    {missingCostRows.length} product{missingCostRows.length === 1 ? "" : "s"}{" "}
+                    {missingCostRows.length === 1 ? "is" : "are"} missing a cost price
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setBulkCostModalOpen(true)}
+                    className="shrink-0 rounded-full border border-amber-400 px-3 py-1 text-xs font-medium hover:bg-amber-100 dark:border-amber-700 dark:hover:bg-amber-900"
+                  >
+                    Add all costs
+                  </button>
+                </div>
+              )}
+
+              <div className="mt-3 flex flex-wrap gap-2">
+                <input
+                  type="text"
+                  placeholder="Search product..."
+                  value={marginSearch}
+                  onChange={(e) => setMarginSearch(e.target.value)}
+                  className="flex-1 rounded border border-black/[.15] bg-transparent px-3 py-1.5 text-sm dark:border-white/[.2]"
+                />
+                <select
+                  value={marginCategoryFilter}
+                  onChange={(e) => setMarginCategoryFilter(e.target.value)}
+                  className="rounded border border-black/[.15] bg-transparent px-3 py-1.5 text-sm dark:border-white/[.2]"
+                >
+                  <option value="">All categories</option>
+                  {marginCategories.map((c) => (
+                    <option key={c} value={c}>
+                      {c}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="mt-4 overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-black/[.08] text-left text-xs text-zinc-500 dark:border-white/[.145]">
+                      <th className="py-2 pr-3 font-medium">Product</th>
+                      <th className="py-2 pr-3 text-right font-medium">Units Sold</th>
+                      <th className="py-2 pr-3 text-right font-medium">Revenue</th>
+                      <th className="py-2 pr-3 text-right font-medium">Unit Cost</th>
+                      <th className="py-2 pr-3 text-right font-medium">Selling Price</th>
+                      <th className="py-2 pr-3 text-right font-medium">Total COGS</th>
+                      <th className="py-2 pr-3 text-right font-medium">Gross Profit</th>
+                      <th className="py-2 text-right font-medium">Gross Margin %</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-black/[.06] dark:divide-white/[.08]">
+                    {filteredMarginReport.map((r) => {
+                      const editing = editingMarginId === r.productId;
+                      const costValue =
+                        marginCostDrafts[r.productId] ?? (r.unitCost === null ? "" : String(r.unitCost));
+                      const priceValue = marginPriceDrafts[r.productId] ?? String(r.sellingPrice);
+                      return (
+                      <tr key={r.productId} className={editing ? "bg-blue-50 dark:bg-blue-950/30" : undefined}>
+                        <td className="py-2 pr-3">{r.name}</td>
+                        <td className="py-2 pr-3 text-right">{r.unitsSold}</td>
+                        <td className="py-2 pr-3 text-right">{formatMoney(r.revenue)}</td>
+                        {editing ? (
+                          <>
+                            <td className="py-2 pr-3 text-right">
+                              <div className="flex items-center justify-end gap-1">
+                                <span className="text-zinc-400">$</span>
+                                <input
+                                  autoFocus
+                                  type="number"
+                                  min={0}
+                                  step="0.01"
+                                  placeholder="—"
+                                  value={costValue}
+                                  onChange={(e) =>
+                                    setMarginCostDrafts((prev) => ({ ...prev, [r.productId]: e.target.value }))
+                                  }
+                                  onKeyDown={(e) => {
+                                    if (e.key === "Enter") saveMarginRow(r);
+                                    if (e.key === "Escape") cancelMarginEdit(r.productId);
+                                  }}
+                                  className="w-20 rounded border border-black/[.15] bg-transparent px-2 py-1 text-right text-sm dark:border-white/[.2]"
+                                />
+                              </div>
+                            </td>
+                            <td className="py-2 pr-3 text-right">
+                              <div className="flex items-center justify-end gap-1">
+                                <span className="text-zinc-400">$</span>
+                                <input
+                                  type="number"
+                                  min={0}
+                                  step="0.01"
+                                  value={priceValue}
+                                  onChange={(e) =>
+                                    setMarginPriceDrafts((prev) => ({ ...prev, [r.productId]: e.target.value }))
+                                  }
+                                  onKeyDown={(e) => {
+                                    if (e.key === "Enter") saveMarginRow(r);
+                                    if (e.key === "Escape") cancelMarginEdit(r.productId);
+                                  }}
+                                  className="w-20 rounded border border-black/[.15] bg-transparent px-2 py-1 text-right text-sm dark:border-white/[.2]"
+                                />
+                                <button
+                                  type="button"
+                                  title="Save"
+                                  onClick={() => saveMarginRow(r)}
+                                  className="rounded p-1 text-green-600 hover:bg-green-100 dark:hover:bg-green-900/40"
+                                >
+                                  <Check className="size-3.5" />
+                                </button>
+                                <button
+                                  type="button"
+                                  title="Cancel"
+                                  onClick={() => cancelMarginEdit(r.productId)}
+                                  className="rounded p-1 text-zinc-500 hover:bg-black/[.06] dark:hover:bg-white/[.1]"
+                                >
+                                  <X className="size-3.5" />
+                                </button>
+                              </div>
+                            </td>
+                          </>
+                        ) : (
+                          <>
+                            <td className="py-2 pr-3 text-right">
+                              {r.unitCost === null ? (
+                                <button
+                                  type="button"
+                                  onClick={() => startMarginEdit(r.productId)}
+                                  className="rounded-full border border-amber-400 px-2.5 py-1 text-xs font-medium text-amber-600 hover:bg-amber-50 dark:border-amber-700 dark:text-amber-400 dark:hover:bg-amber-950"
+                                >
+                                  + Add cost price
+                                </button>
+                              ) : (
+                                <button
+                                  type="button"
+                                  onClick={() => startMarginEdit(r.productId)}
+                                  className="rounded px-1 py-0.5 hover:bg-black/[.05] dark:hover:bg-white/[.08]"
+                                >
+                                  {formatMoney(r.unitCost)}
+                                </button>
+                              )}
+                            </td>
+                            <td className="py-2 pr-3 text-right">
+                              <button
+                                type="button"
+                                onClick={() => startMarginEdit(r.productId)}
+                                className="rounded px-1 py-0.5 hover:bg-black/[.05] dark:hover:bg-white/[.08]"
+                              >
+                                {formatMoney(r.sellingPrice)}
+                              </button>
+                            </td>
+                          </>
+                        )}
+                        <td className="py-2 pr-3 text-right">
+                          {r.totalCogs === null ? (
+                            <span className="text-amber-500">⚠ No cost price</span>
+                          ) : (
+                            formatMoney(r.totalCogs)
+                          )}
+                        </td>
+                        <td className="py-2 pr-3 text-right">
+                          {r.grossProfit === null ? "—" : formatMoney(r.grossProfit)}
+                        </td>
+                        <td className="py-2 text-right">
+                          {r.grossMarginPct === null ? "—" : `${r.grossMarginPct.toFixed(1)}%`}
+                        </td>
+                      </tr>
+                      );
+                    })}
+                    {filteredMarginReport.length === 0 && (
+                      <tr>
+                        <td colSpan={8} className="py-4 text-center text-sm text-zinc-500">
+                          {marginReport.length === 0
+                            ? `No sales logged for ${isSingleDay ? "this day" : "this date range"}.`
+                            : "No products match this search/filter."}
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          </div>
         )}
       </div>
+
+      {confirmDeleteExpense && (
+        <DeleteExpenseDialog
+          expenseId={confirmDeleteExpense.id}
+          description={confirmDeleteExpense.description}
+          onClose={() => setConfirmDeleteExpense(null)}
+          onDeleted={() => handleExpenseDeleted(confirmDeleteExpense.id)}
+        />
+      )}
+
+      {bulkCostModalOpen && (
+        <BulkAddCostPriceModal rows={missingCostRows} onClose={() => setBulkCostModalOpen(false)} />
+      )}
     </div>
   );
 }

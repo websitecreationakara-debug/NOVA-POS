@@ -4,14 +4,20 @@ import { revalidatePath } from "next/cache";
 import { supabaseAdmin } from "@/lib/supabase/server";
 import { ensurePosProductForSiteProduct } from "@/app/(app)/sales/websiteActions";
 import {
+  createWebsiteAddon,
   createWebsiteProduct,
+  deleteWebsiteAddon,
   deleteWebsiteProduct,
   deleteWebsiteProductVariation,
+  listSellableWebsiteProducts,
   listWebsiteProducts,
+  updateWebsiteAddon,
   updateWebsiteProduct,
   updateWebsiteProductVariation,
 } from "@/lib/websiteProducts/client";
 import type {
+  WebsiteAddon,
+  WebsiteAddonWrite,
   WebsiteCatalogId,
   WebsiteProduct,
   WebsiteProductWrite,
@@ -48,6 +54,49 @@ export async function listWebsiteProductsAction(
 ): Promise<WebsiteProduct[]> {
   await requireStockAccess();
   return listWebsiteProducts(catalogId);
+}
+
+// Sales' grid only -- see listSellableWebsiteProducts for why this merges in
+// add-ons and Stock's product panel doesn't.
+export async function listSellableWebsiteProductsAction(
+  catalogId: WebsiteCatalogId
+): Promise<WebsiteProduct[]> {
+  await requireStockAccess();
+  const { products } = await listSellableWebsiteProducts(catalogId);
+  return products;
+}
+
+export async function createWebsiteAddonAction(
+  catalogId: WebsiteCatalogId,
+  input: WebsiteAddonWrite
+): Promise<WebsiteAddon> {
+  await requireStockAccess();
+  const addon = await createWebsiteAddon(catalogId, input);
+  revalidatePath("/stock");
+  revalidatePath("/sales");
+  return addon;
+}
+
+export async function updateWebsiteAddonAction(
+  catalogId: WebsiteCatalogId,
+  id: string,
+  input: { price?: number; stock?: number | null }
+): Promise<WebsiteAddon> {
+  await requireStockAccess();
+  const addon = await updateWebsiteAddon(catalogId, id, input);
+  revalidatePath("/stock");
+  revalidatePath("/sales");
+  return addon;
+}
+
+export async function deleteWebsiteAddonAction(
+  catalogId: WebsiteCatalogId,
+  id: string
+): Promise<void> {
+  await requireStockAccess();
+  await deleteWebsiteAddon(catalogId, id);
+  revalidatePath("/stock");
+  revalidatePath("/sales");
 }
 
 export async function createWebsiteProductAction(

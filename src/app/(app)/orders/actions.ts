@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { supabaseAdmin } from "@/lib/supabase/server";
 import { pushOrderStatusToSite, pushStockToSites } from "@/lib/site-sync";
+import { computeLineCogs, computeRecipeUnitCost } from "@/lib/cogs";
 import type { FulfillmentStatus, PaymentMethod, ProductSiteLink } from "@/types/database";
 
 export type DueDelivery = {
@@ -127,20 +128,107 @@ export async function updateOrderAction(
 
   const [{ data: order, error: orderErr }, { data: existing, error: itemsErr }] = await Promise.all([
     supabaseAdmin.from("orders").select("id, customer_id").eq("id", orderId).maybeSingle(),
-    supabaseAdmin.from("order_items").select("product_id, quantity").eq("order_id", orderId),
+    supabaseAdmin.from("order_items").select("id, product_id, quantity").eq("order_id", orderId),
   ]);
   if (orderErr) throw orderErr;
   if (itemsErr) throw itemsErr;
   if (!order) throw new Error("Order not found.");
 
-  // Net stock movement per product: what the old lines consumed minus what
-  // the new lines consume. Positive => hand stock back; negative => take more.
+  // What the old lines' recipes (if any) consumed, so it can be handed back
+  // below -- same idea as giving back the sold product's own stock.
+  const existingItemIds = (existing ?? []).map((r) => r.id);
+  const { data: existingIngredients, error: existingIngErr } = existingItemIds.length
+    ? await supabaseAdmin
+        .from("order_item_ingredients")
+        .select("ingredient_product_id, quantity")
+        .in("order_item_id", existingItemIds)
+    : { data: [], error: null };
+  if (existingIngErr) throw existingIngErr;
+
+  // Price each new line the same way charge_order() does: from the
+  // product's own cost_price ("direct"), or, if it has a recipe, from
+  // summing the recipe's ingredient costs ("recipe") -- and work out what
+  // that recipe now needs to consume.
+  const productIds = [...new Set(clean.map((i) => i.productId))];
+  const { data: recipeRows, error: recipeErr } = productIds.length
+    ? await supabaseAdmin
+        .from("recipe_items")
+        .select(
+          "product_id, ingredient_product_id, quantity, products!recipe_items_ingredient_product_id_fkey(cost_price)"
+        )
+        .in("product_id", productIds)
+    : { data: [], error: null };
+  if (recipeErr) throw recipeErr;
+
+  const recipesByProduct = new Map<
+    string,
+    { ingredientProductId: string; quantity: number; costPrice: number | null }[]
+  >();
+  for (const r of recipeRows ?? []) {
+    const list = recipesByProduct.get(r.product_id) ?? [];
+    list.push({
+      ingredientProductId: r.ingredient_product_id,
+      quantity: r.quantity,
+      costPrice: (r.products as { cost_price: number | null } | null)?.cost_price ?? null,
+    });
+    recipesByProduct.set(r.product_id, list);
+  }
+
+  const directCostProductIds = productIds.filter((id) => !recipesByProduct.has(id));
+  const { data: directCostRows, error: directCostErr } = directCostProductIds.length
+    ? await supabaseAdmin.from("products").select("id, cost_price").in("id", directCostProductIds)
+    : { data: [], error: null };
+  if (directCostErr) throw directCostErr;
+  const directCostByProduct = new Map((directCostRows ?? []).map((p) => [p.id, p.cost_price]));
+
+  const pricedItems = clean.map((it) => {
+    const recipe = recipesByProduct.get(it.productId);
+    const id = crypto.randomUUID();
+    if (recipe && recipe.length > 0) {
+      const unitCost = computeRecipeUnitCost(recipe.map((r) => ({ quantity: r.quantity, costPrice: r.costPrice })));
+      return {
+        id,
+        ...it,
+        unitCost,
+        cogs: computeLineCogs(unitCost, it.quantity),
+        costSource: "recipe" as const,
+        ingredients: recipe.map((r) => ({
+          ingredientProductId: r.ingredientProductId,
+          quantity: r.quantity * it.quantity,
+          unitCost: r.costPrice,
+        })),
+      };
+    }
+    const unitCost = directCostByProduct.get(it.productId) ?? null;
+    return {
+      id,
+      ...it,
+      unitCost,
+      cogs: computeLineCogs(unitCost, it.quantity),
+      costSource: "direct" as const,
+      ingredients: [] as { ingredientProductId: string; quantity: number; unitCost: number | null }[],
+    };
+  });
+
+  // Net stock movement per product (sold products and recipe ingredients
+  // alike -- both just live in stock_levels): what the old lines consumed
+  // minus what the new lines consume. Positive => hand stock back; negative
+  // => take more.
   const delta = new Map<string, number>();
   for (const row of existing ?? []) {
     delta.set(row.product_id, (delta.get(row.product_id) ?? 0) + Number(row.quantity));
   }
-  for (const it of clean) {
+  for (const row of existingIngredients ?? []) {
+    delta.set(
+      row.ingredient_product_id,
+      (delta.get(row.ingredient_product_id) ?? 0) + Number(row.quantity)
+    );
+  }
+  for (const it of pricedItems) {
     delta.set(it.productId, (delta.get(it.productId) ?? 0) - it.quantity);
+    for (const ing of it.ingredients) {
+      delta.set(ing.ingredientProductId, (delta.get(ing.ingredientProductId) ?? 0) - ing.quantity);
+    }
   }
 
   const { error: delErr } = await supabaseAdmin
@@ -150,15 +238,32 @@ export async function updateOrderAction(
   if (delErr) throw delErr;
 
   const { error: insErr } = await supabaseAdmin.from("order_items").insert(
-    clean.map((i) => ({
+    pricedItems.map((i) => ({
+      id: i.id,
       order_id: orderId,
       product_id: i.productId,
       quantity: i.quantity,
       unit_price: i.unitPrice,
       line_total: round2(i.quantity * i.unitPrice),
+      unit_cost: i.unitCost,
+      cogs: i.cogs,
+      cost_source: i.costSource,
     }))
   );
   if (insErr) throw insErr;
+
+  const ingredientRows = pricedItems.flatMap((i) =>
+    i.ingredients.map((ing) => ({
+      order_item_id: i.id,
+      ingredient_product_id: ing.ingredientProductId,
+      quantity: ing.quantity,
+      unit_cost: ing.unitCost,
+    }))
+  );
+  if (ingredientRows.length > 0) {
+    const { error: ingErr } = await supabaseAdmin.from("order_item_ingredients").insert(ingredientRows);
+    if (ingErr) throw ingErr;
+  }
 
   const subtotal = round2(clean.reduce((s, i) => s + i.quantity * i.unitPrice, 0));
   const pct = Math.min(100, Math.max(0, Number(input.discountPercent) || 0));

@@ -837,7 +837,7 @@ export default function SalesClient({
         </main>
         )}
 
-        <aside className="flex w-96 flex-col border-l border-black/[.08] dark:border-white/[.145]">
+        <aside className="flex w-[34rem] flex-col border-l border-black/[.08] dark:border-white/[.145]">
           <div className="border-b border-black/[.08] px-4 py-3 font-medium dark:border-white/[.145]">
             Order
           </div>
