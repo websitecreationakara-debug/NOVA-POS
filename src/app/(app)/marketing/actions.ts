@@ -5,7 +5,7 @@ import { supabaseAdmin } from "@/lib/supabase/server";
 import { getSessionUser } from "@/lib/supabase/auth-server";
 import type { Customer, DiscountType, Promotion } from "@/types/database";
 
-async function requireMarketingAccess() {
+export async function requireMarketingAccess() {
   // Defense in depth: /marketing is already role-gated in proxy.ts, but
   // Server Actions are their own endpoint and reachable independent of
   // which page rendered them, so re-check here rather than trust the route.

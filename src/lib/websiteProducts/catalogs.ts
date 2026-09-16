@@ -21,6 +21,12 @@ export type WebsiteCatalog = {
   // When set, the list endpoint takes this query string to include drafts
   // (and requires auth to do so). Omit for catalogs whose list is all-or-nothing.
   listAllParam?: string;
+  // When set, listWebsiteProducts pages through the list endpoint at this
+  // page size (via &limit=&offset=) instead of one request -- works around
+  // bosbapremiumfoods.com's status=all endpoint 500ing past ~100 results
+  // (its catalog crossed 100 products including drafts). Omit for catalogs
+  // with no known limit.
+  listPageSize?: number;
   // Category filter chips for the Sales > Website tab. The storefront product
   // API only returns a `category_id` (a UUID) per product and has no endpoint
   // for category names, so the `label`s below were inferred from the products
@@ -81,8 +87,10 @@ export const CATALOGS: WebsiteCatalog[] = [
     keyEnv: "BOSBA_PREMIUM_FOODS_PRODUCTS_API_KEY",
     addonsUrlEnv: "BOSBA_PREMIUM_FOODS_ADDONS_API_URL",
     auth: "x-api-key",
-    // status=all + drafts require the write key; limit is capped at 500.
-    listAllParam: "status=all&limit=500",
+    // status=all + drafts require the write key. No &limit here -- paged via
+    // listPageSize instead (see its comment: status=all 500s past ~100).
+    listAllParam: "status=all",
+    listPageSize: 100,
     // Reconstructed from the live catalog: each id is a category actually in
     // use on a product, named from that group's contents (the storefront still
     // has no endpoint that returns category names). "Frozen Seafoods" and

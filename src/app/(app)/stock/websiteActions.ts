@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { supabaseAdmin } from "@/lib/supabase/server";
 import { ensurePosProductForSiteProduct } from "@/app/(app)/sales/websiteActions";
+import { getCatalog } from "@/lib/websiteProducts/catalogs";
 import {
   createWebsiteAddon,
   createWebsiteProduct,
@@ -15,6 +16,7 @@ import {
   updateWebsiteProduct,
   updateWebsiteProductVariation,
 } from "@/lib/websiteProducts/client";
+import { setWebsitePurchaseCost } from "@/lib/websiteProducts/purchaseCosts";
 import type {
   WebsiteAddon,
   WebsiteAddonWrite,
@@ -22,6 +24,7 @@ import type {
   WebsiteProduct,
   WebsiteProductWrite,
 } from "@/lib/websiteProducts/types";
+import type { ProductSiteLink } from "@/types/database";
 import { requireStockAccess } from "@/lib/stockAccess";
 import { adjustStockAction, setProductPriceAction } from "./actions";
 
@@ -97,6 +100,25 @@ export async function deleteWebsiteAddonAction(
   await deleteWebsiteAddon(catalogId, id);
   revalidatePath("/stock");
   revalidatePath("/sales");
+}
+
+// Product table's Original Cost / Total Cost 10% / Extra Money columns --
+// purely an internal purchasing record (what staff paid to acquire the
+// stock), stored in POS's own database and never sent to the storefront.
+export async function setWebsitePurchaseCostAction(
+  catalogId: WebsiteCatalogId,
+  siteProductId: string,
+  variationId: string,
+  fields: Partial<{
+    original_cost: number | null;
+    total_cost_10pct: number | null;
+    extra_money: number | null;
+  }>
+): Promise<void> {
+  await requireStockAccess();
+  const site = getCatalog(catalogId).brandSlug as ProductSiteLink["site"];
+  await setWebsitePurchaseCost(site, siteProductId, variationId, fields);
+  revalidatePath("/stock");
 }
 
 export async function createWebsiteProductAction(

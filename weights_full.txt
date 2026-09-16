@@ -1,0 +1,60 @@
+count 59
+096a5429-ed2a-47dd-b5a5-04ec115fe100|400-500g/head|Fresh Horsehair Crab Kegani 
+965bb758-92fb-4b82-93d4-f9f1078d9d23|5kg|Fresh Bluefin Tuna Harakami (No Blood)
+7516345d-48e2-4368-b4e2-bdf30e9dc7de|500g/pkt|Flatfish Halibut Fin
+9fe24bd6-a2ff-4ac5-9ee9-b74c8811987e|20pc/pkt|Bigfin Reef Sliced Squid
+17404953-2f8f-4acf-b248-1e44d134b9d3|1kg|Mixed Seafood
+2c9efcc8-814f-402a-ada6-bc9f186f8cac|1kg/pkt|Seaweed Wakame
+73b37822-d688-487a-91b8-65e6e58a7083|250g*5pcs/pkt|Japanese Noodles Udon
+0bc35be0-a5fd-4a76-beb1-bf1ba5cee872|1kg/pkt|Japanese Brown Rice
+1aee701a-b57b-49fc-a2eb-406dd51516c1|4kg|Japonica White Rice
+30529aaa-84a7-42e5-993a-32c7b0085cdb|800g/pkt|Red Snow Crab Flake
+97d7c3ed-aec5-4ad9-b713-d04b9862283d|1kg/pkt|Salted Squid Shiokara
+475b94fd-c00f-4bca-afa7-2b26d780cdfe|1-1.5kg/pc|Boiled Octopus Tako
+7dd9f989-2a2b-421f-9420-c97a69a7cac9|1kg/pkt|Dory Fillet
+cfb6c6b1-522a-471a-b507-28d41aaac4ad|2kg/pkt|Yellowtail Collar Hamachi Kama
+b505379f-79da-45b6-8104-106a523f0cbe|1.5kg+|Gindara Black Cod Fillet
+4a8eb83a-fbea-44d1-a5f0-fb7e2eb6b46f|200g|Wagyu A4 Lean Meat for BBQ
+3a4808fe-3946-4d52-b8b0-1cf9a9d485d1|200g|Miyazaki Wagyu Bulgogi
+cd49c688-0870-4108-83f5-50647cf619c2|200g|Crossbred Wagyu Rump & Rump Cap Ribeye Suki-Yaki
+fe26c3b8-5a1c-4186-a5d7-b35408602214|200g|Crossbred Wagyu Rump & Rump Cap Steak
+f2bca856-597b-4ba5-a011-b1be598ba9de|200g|Crossbred Wagyu Rump & Rump Cap BBQ
+f03a1490-4ae6-4ac3-b2fa-cc5e979b5147|200g|Crossbred Wagyu Rump & Rump Cap Shabu
+a4b5f36b-ab31-473f-b9b8-47280645c22a|300g|Snow Crab Meat Scallop Salmon Roe Set (A)
+590d5971-0d7e-4bff-8862-57dc8327cd13|300g|Lean Bluefin Tuna Salmon Yellowtail Set (B)
+4d7ff8a8-1f2e-4cd1-a1c8-37d228da7af1|300g|Fatty Bluefin Tuna Salmon Yellowtail Set (C)
+0994f54a-9316-4bbf-b8cc-2f682b0852a5|300g|Premium Sashimi 3in1 Set (D)
+67b48129-83b0-4f81-9b36-aebf1a21ed89|300g|Scallop Fresh Salmon Herring Roe Set (E)
+135feca7-05e0-4a1e-a297-1dcc7bfbb614|300g|Scallop Fresh Salmon Yellowtail Set (F)
+4e65d725-6ac8-45ef-ae9f-2f290f1bd4d0|250g|Sea Urchin Fresh Salmon Yellowtail Set (G)
+63b52bbe-009d-4c85-9b45-7d5a09c9b54f|300g|Premium Sashimi 3in1 Set (H)
+42dc51a2-293d-46f1-8e4e-3fbab21cbd92|300g|Frozen Uni and Sashimi Set
+6738f37e-c631-42bd-b834-1aec82fa77f1|1kg|Fresh Smart Oyster Set
+30bff16b-c837-452c-a215-f8fac3f3b999|1pkt|Wasabi Fresh Paste
+07b267bb-dfcb-4c81-84fc-adc316517719|1pkt|Wasabi Shaki Shaki
+adfffe48-5782-434e-a918-f4cf9bb45883|(10pkt)|Dried Sea Grapes Umi Buduo
+00c3a408-236a-44cb-9795-ebda0b3dba7d|(10pkt)|Roasted Seaweed Nori
+44aa54c5-5505-4a86-a17a-fdcc2fb26707|500g|Chuka Wakame
+7de90de8-9da1-4679-9d65-f6ecb4dab7fc|1Kg|Edamame 1Kg
+0902b688-8380-4f5d-8574-eea4bb013467|pkt (5pcs)|Simmered Conger Eel Fillet
+1ffb5318-4747-4a43-91a6-802826fd6fd8|pkt (8pcs)|Deep Fried Oysters
+419bbb1c-d80f-4a02-aea6-cf6668ee697d|5pcs x 3pkt|Capelin Fish
+9db17ca0-949c-44ee-be60-23e61bc92a0f|180g x 3pkt|Deep Fried Capelin
+b3f36aeb-ee3c-411a-a34f-284dcd6d2aa5|300g|Roasted Beef
+acf3d0b1-f646-4340-8b10-001ca1d33f59|1kg|Meat Oyster Kaki
+7c374a4e-f664-4530-95c8-e05cc3f234db|1kg|Fresh Smart Oyster
+c5c17982-c542-4e26-bff1-f668e94094b8|15g|Caviar Baeri Classic
+4b6556a4-344c-411d-a2e3-8e89b2ec7aac|1kg|King Crab Legs Tarabagani
+4369083b-bbfd-4d1c-8f59-780fb064333f|1kg|Katsuo Tataki
+9e242298-97e8-4381-9c81-8c8b80a82fdd|200g|Boiled Monkfish Liver Ankimo
+e0c1e0bd-654c-47ca-a9fe-6e84b3cffcf9|1kg|Nishin Yellow
+3cd1f984-1e98-4a1e-a98b-7ec7ad637cb5|1kg|Frozen Scallop
+a27d4dca-0e1b-4a16-8132-74e69f8dd9d5|100g|Crab Butter Kanimiso
+8b557bae-ae40-4623-9882-a448dba16df9|1kg|Steamed Chunk Octopus
+d234073e-2fd3-470a-8b0b-63dcaad91753|1kg|Hokkaido octopus legs
+134940b9-e2a7-4780-b767-ed7765baf0fc|1kg|Boiled Snow Crab Claw Meat
+3b574173-0434-47e0-8b88-5cc83aafe45c|pc ( 1kg )|Whole snow crab
+1aa71929-0b94-4a7b-acc6-d4f9531e227b|250g|Engawa
+4170c950-05e0-4f23-8732-fe7413dc44a5|500g|Octopus Green Takowasabi
+06b1a848-d544-4df0-ba1f-f21b5f8ee51d|500g|Octopus Red Takowasabi
+78a5118a-b0e5-4541-b830-3edd5c0a762d|250g|White Leg Shrimp

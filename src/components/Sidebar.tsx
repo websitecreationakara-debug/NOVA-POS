@@ -32,9 +32,17 @@ const topItems = [
 ];
 
 const bottomItems = [
-  { href: "/marketing", label: "Marketing", icon: Megaphone, roles: ["admin", "marketing"] },
   { href: "/users", label: "Staff Accounts", icon: Users, roles: ["admin"] },
 ];
+
+// Mirrors the `tab` query param the Marketing page itself reads -- kept as a
+// literal list here for the same reason ACCOUNTANCE_LINKS is (this file
+// needs to stay a plain client-safe array).
+const MARKETING_LINKS = [
+  { tab: "promotions", label: "Promotions & Customers" },
+  { tab: "cost-control", label: "Cost Control" },
+];
+const MARKETING_ROLES = ["admin", "marketing"];
 
 // Mirrors AccountanceTab from src/app/(app)/accountance/page.tsx -- kept as
 // a literal list here (rather than imported) since that file is a server
@@ -68,6 +76,19 @@ export default function Sidebar({ role }: { role: string }) {
   }
 
   const showAccountance = ACCOUNTANCE_ROLES.includes(role);
+
+  const isOnMarketing = pathname.startsWith("/marketing");
+  const currentMarketingTab = searchParams.get("tab") ?? "promotions";
+
+  // Same open/close behavior as Accountance's dropdown above.
+  const [marketingOpen, setMarketingOpen] = useState(isOnMarketing);
+  const [wasOnMarketing, setWasOnMarketing] = useState(isOnMarketing);
+  if (isOnMarketing !== wasOnMarketing) {
+    setWasOnMarketing(isOnMarketing);
+    if (isOnMarketing) setMarketingOpen(true);
+  }
+
+  const showMarketing = MARKETING_ROLES.includes(role);
 
   function topLinkClass(active: boolean) {
     return `flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors ${
@@ -132,6 +153,45 @@ export default function Sidebar({ role }: { role: string }) {
                     key={l.tab}
                     href={`/accountance?tab=${l.tab}`}
                     className={subLinkClass(isOnAccountance && currentTab === l.tab)}
+                  >
+                    {l.label}
+                  </Link>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {showMarketing && (
+          <div>
+            <div
+              className={`flex items-center gap-3 rounded-lg pr-2 pl-3 text-sm font-medium transition-colors ${
+                isOnMarketing ? "bg-brand text-black" : "text-muted-foreground hover:bg-muted"
+              }`}
+            >
+              <Link href="/marketing" className="flex flex-1 items-center gap-3 py-2.5">
+                <Megaphone className="size-4" />
+                Marketing
+              </Link>
+              <button
+                type="button"
+                onClick={() => setMarketingOpen((open) => !open)}
+                aria-expanded={marketingOpen}
+                aria-label={marketingOpen ? "Collapse Marketing" : "Expand Marketing"}
+                className={`rounded p-1 ${isOnMarketing ? "hover:bg-black/10" : "hover:bg-black/5 dark:hover:bg-white/10"}`}
+              >
+                <ChevronDown
+                  className={`size-4 transition-transform ${marketingOpen ? "rotate-180" : ""}`}
+                />
+              </button>
+            </div>
+            {marketingOpen && (
+              <div className="mt-1 flex flex-col gap-0.5 border-l border-border pl-4">
+                {MARKETING_LINKS.map((l) => (
+                  <Link
+                    key={l.tab}
+                    href={`/marketing?tab=${l.tab}`}
+                    className={subLinkClass(isOnMarketing && currentMarketingTab === l.tab)}
                   >
                     {l.label}
                   </Link>
