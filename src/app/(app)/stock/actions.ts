@@ -221,6 +221,29 @@ export async function setProductCostAction(input: {
   revalidatePath("/accountance");
 }
 
+// null clears the weight back to "unknown" -- Cost Control Set lines can't
+// offer kg/g Scale conversion for this product until it's set.
+export async function setProductWeightAction(input: {
+  productId: string;
+  weightGrams: number | null;
+}): Promise<void> {
+  await requireStockAccess();
+  const { productId, weightGrams } = input;
+  if (weightGrams !== null && (Number.isNaN(weightGrams) || weightGrams <= 0)) {
+    throw new Error("Weight must be greater than zero");
+  }
+
+  const { error } = await supabaseAdmin
+    .from("products")
+    .update({ weight_grams: weightGrams })
+    .eq("id", productId);
+
+  if (error) throw error;
+
+  revalidatePath("/stock");
+  revalidatePath("/marketing");
+}
+
 export async function setProductIsIngredientAction(input: {
   productId: string;
   isIngredient: boolean;

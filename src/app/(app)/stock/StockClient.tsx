@@ -23,6 +23,7 @@ import {
   setLowStockThresholdAction,
   setProductCategoryAction,
   setProductIsIngredientAction,
+  setProductWeightAction,
   uploadProductImageAction,
   type RecipeItemRow,
 } from "./actions";
@@ -97,6 +98,7 @@ export default function StockClient({
   const [removingIngredientId, setRemovingIngredientId] = useState<string | null>(null);
   const [ingredientTogglingId, setIngredientTogglingId] = useState<string | null>(null);
   const [nameDrafts, setNameDrafts] = useState<Record<string, string>>({});
+  const [weightDrafts, setWeightDrafts] = useState<Record<string, string>>({});
   const [showAddForm, setShowAddForm] = useState(false);
   const [newProduct, setNewProduct] = useState({
     name: "",
@@ -349,6 +351,35 @@ export default function StockClient({
     startTransition(async () => {
       try {
         await renameProductAction({ productId, name: trimmed });
+        router.refresh();
+      } finally {
+        clear();
+      }
+    });
+  }
+
+  function saveWeight(productId: string, currentWeight: number | null) {
+    const raw = weightDrafts[productId];
+    if (raw === undefined) return;
+    const trimmed = raw.trim();
+    const clear = () =>
+      setWeightDrafts((prev) => {
+        const next = { ...prev };
+        delete next[productId];
+        return next;
+      });
+    const weightGrams = trimmed === "" ? null : parseFloat(trimmed);
+    if (weightGrams !== null && (Number.isNaN(weightGrams) || weightGrams <= 0)) {
+      clear();
+      return;
+    }
+    if (weightGrams === currentWeight) {
+      clear();
+      return;
+    }
+    startTransition(async () => {
+      try {
+        await setProductWeightAction({ productId, weightGrams });
         router.refresh();
       } finally {
         clear();
@@ -634,6 +665,7 @@ export default function StockClient({
           initialError={websiteCatalog.error}
           posProducts={products}
           addons={websiteCatalog.addons}
+          purchaseCosts={websiteCatalog.purchaseCosts}
         />
       ) : (
       <>
@@ -768,6 +800,7 @@ export default function StockClient({
                   onClick={() => toggleSort("cost")}
                 />
               </th>
+              <th className="px-3 py-2 font-medium">Weight (g)</th>
               <th className="px-3 py-2">
                 <SortHeader
                   label="Category"
@@ -920,6 +953,19 @@ export default function StockClient({
                       />
                       Ingredient only
                     </label>
+                  </td>
+                  <td className="px-3 py-2">
+                    <input
+                      type="number"
+                      min={0}
+                      step="0.01"
+                      placeholder="—"
+                      value={weightDrafts[p.id] ?? (p.weight_grams === null ? "" : String(p.weight_grams))}
+                      onChange={(e) => setWeightDrafts((prev) => ({ ...prev, [p.id]: e.target.value }))}
+                      onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
+                      onBlur={() => saveWeight(p.id, p.weight_grams)}
+                      className="w-20 rounded border border-black/[.15] bg-transparent px-2 py-1 dark:border-white/[.2]"
+                    />
                   </td>
                   <td className="px-3 py-2">
                     <select

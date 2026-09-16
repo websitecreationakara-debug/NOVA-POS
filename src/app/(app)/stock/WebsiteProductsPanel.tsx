@@ -15,6 +15,12 @@ import type { ProductWithStock } from "@/lib/supabase/queries";
 import Dropdown from "@/components/Dropdown";
 import WebsiteAddonsTable from "@/components/WebsiteAddonsTable";
 import { getCatalog } from "@/lib/websiteProducts/catalogs";
+import {
+  derivePurchaseCost,
+  purchaseCostKey,
+  EMPTY_PURCHASE_COSTS,
+  type PurchaseCostFields,
+} from "@/lib/websiteProducts/purchaseCosts";
 import type {
   WebsiteAddon,
   WebsiteCatalogId,
@@ -29,6 +35,7 @@ import {
   listWebsiteProductsAction,
   setVariationPriceAction,
   setVariationStockAction,
+  setWebsitePurchaseCostAction,
   updateWebsiteProductAction,
   uploadWebsiteImageAction,
 } from "./websiteActions";
@@ -38,6 +45,10 @@ import {
 // variation_id on a simple product's own link.
 function posEntryKey(siteProductId: string, variationId: string): string {
   return `${siteProductId}::${variationId}`;
+}
+
+function formatMoney(n: number): string {
+  return `$${n.toFixed(2)}`;
 }
 
 // How often to re-pull the storefront catalog so edits made on the website (or
@@ -140,6 +151,7 @@ export default function WebsiteProductsPanel({
   initialError,
   posProducts,
   addons,
+  purchaseCosts,
 }: {
   catalogId: WebsiteCatalogId;
   initialProducts: WebsiteProduct[] | null;
@@ -154,6 +166,10 @@ export default function WebsiteProductsPanel({
   // `products` above, since an add-on id must never flow through the product
   // edit/delete endpoints.
   addons?: WebsiteAddon[];
+  // Original Cost / Total Cost 10% / Extra Money columns -- POS's own
+  // purchasing record (see lib/websiteProducts/purchaseCosts.ts), keyed by
+  // purchaseCostKey(siteProductId, variationId).
+  purchaseCosts?: Record<string, PurchaseCostFields>;
 }) {
   const router = useRouter();
   const [products, setProducts] = useState<WebsiteProduct[] | null>(initialProducts);
@@ -212,6 +228,16 @@ export default function WebsiteProductsPanel({
   // is typing.
   const [drafts, setDrafts] = useState<
     Record<string, { price?: string; stock?: string; title?: string }>
+  >({});
+  // "Add Stock" column: a quantity being *received* (e.g. a new delivery),
+  // not the absolute count -- applying it adds to whatever the current stock
+  // already is, then the box clears back to empty/0 rather than sitting at
+  // the new total (see applyAddStock).
+  const [addStockDrafts, setAddStockDrafts] = useState<Record<string, string>>({});
+  // Original Cost / Total Cost 10% / Extra Money -- purely manual inputs
+  // (Purchase Cost and Total are always derived, see derivePurchaseCost).
+  const [costDrafts, setCostDrafts] = useState<
+    Record<string, { original?: string; total10?: string; extra?: string }>
   >({});
 
   const posByEntryKey = useMemo(() => {
@@ -475,6 +501,76 @@ export default function WebsiteProductsPanel({
       } catch (e) {
         notify(e instanceof Error ? e.message : "Failed to update this size's stock", "err");
         setPendingId(null);
+      }
+    });
+  }
+
+  // "Add Stock" column: adds the typed quantity to whatever's currently on
+  // hand (e.g. a new delivery of 2 on top of an existing 5 -> 7) instead of
+  // replacing it -- the usual way stock actually gets restocked. The box
+  // itself always clears back to empty once applied, whether it succeeded or
+  // not: a zero/blank amount is a no-op, and a real failure already shows in
+  // the toast, so there's nothing useful left to retype.
+  function applyAddStock(
+    editId: string,
+    p: WebsiteProduct,
+    v: WebsiteProductVariation | null,
+    linked: ProductWithStock | null,
+    currentStock: number
+  ) {
+    const raw = addStockDrafts[editId];
+    const amount = parseFloat(raw ?? "");
+    setAddStockDrafts((prev) => {
+      const next = { ...prev };
+      delete next[editId];
+      return next;
+    });
+    if (!raw || Number.isNaN(amount) || amount === 0) return;
+    const newStock = (currentStock ?? 0) + amount;
+    if (v) patchVariationStock(p, v, linked, newStock);
+    else patch(p.id, { stock: newStock }, "Stock updated");
+  }
+
+  // Original Cost / Total Cost 10% / Extra Money -- each box saves
+  // independently on blur, same as Price/Stock. Purely an internal
+  // purchasing record kept in POS's own database (see
+  // lib/websiteProducts/purchaseCosts.ts); never sent to the storefront.
+  function saveCostField(
+    costKey: string,
+    siteProductId: string,
+    variationId: string,
+    field: "original" | "total10" | "extra",
+    currentValue: number | null
+  ) {
+    const raw = costDrafts[costKey]?.[field];
+    if (raw === undefined) return;
+    const clearField = () =>
+      setCostDrafts((prev) => {
+        const rowDraft = { ...(prev[costKey] ?? {}) };
+        delete rowDraft[field];
+        const next = { ...prev };
+        if (Object.keys(rowDraft).length === 0) delete next[costKey];
+        else next[costKey] = rowDraft;
+        return next;
+      });
+
+    const trimmed = raw.trim();
+    const value = trimmed === "" ? null : parseFloat(trimmed);
+    if ((value !== null && (Number.isNaN(value) || value < 0)) || value === currentValue) {
+      clearField();
+      return;
+    }
+
+    const dbField =
+      field === "original" ? "original_cost" : field === "total10" ? "total_cost_10pct" : "extra_money";
+    startTransition(async () => {
+      try {
+        await setWebsitePurchaseCostAction(catalogId, siteProductId, variationId, { [dbField]: value });
+        router.refresh();
+      } catch (e) {
+        notify(e instanceof Error ? e.message : "Failed to save cost", "err");
+      } finally {
+        clearField();
       }
     });
   }
@@ -1017,9 +1113,25 @@ export default function WebsiteProductsPanel({
                   />
                 </th>
                 <th className="w-14 px-3 py-2 font-medium">Image</th>
-                <th className="px-3 py-2 font-medium">Product</th>
-                <th className="w-28 px-3 py-2 text-right font-medium">Price</th>
-                <th className="w-20 px-3 py-2 text-right font-medium">Stock</th>
+                <th className="min-w-[14rem] px-3 py-2 font-medium">Product</th>
+                <th className="w-20 bg-black/[.015] px-2 py-2 text-right font-medium dark:bg-white/[.02]">
+                  Original Cost
+                </th>
+                <th className="w-20 bg-black/[.015] px-2 py-2 text-right font-medium dark:bg-white/[.02]">
+                  Total Cost 10%
+                </th>
+                <th className="w-20 bg-black/[.015] px-2 py-2 text-right font-medium dark:bg-white/[.02]">
+                  Purchase Cost
+                </th>
+                <th className="w-20 bg-black/[.015] px-2 py-2 text-right font-medium dark:bg-white/[.02]">
+                  Extra Money
+                </th>
+                <th className="w-20 border-r border-black/[.08] bg-black/[.015] px-2 py-2 text-right font-medium dark:border-white/[.145] dark:bg-white/[.02]">
+                  Total
+                </th>
+                <th className="w-24 px-2 py-2 text-right font-medium">Price</th>
+                <th className="w-20 px-2 py-2 text-right font-medium">Stock</th>
+                <th className="w-20 px-2 py-2 text-right font-medium">Add Stock</th>
                 <th className="w-32 px-3 py-2 font-medium">Status</th>
                 <th className="w-16 px-3 py-2 text-right font-medium">Actions</th>
               </tr>
@@ -1041,6 +1153,18 @@ export default function WebsiteProductsPanel({
                 // patchVariationPrice/Stock) -- separate from, and never
                 // written back to, the website's own listing for this size.
                 const editTitle = v ? "Updates this size's price/stock on the website too" : undefined;
+                const costKey = purchaseCostKey(p.id, v ? v.id : "");
+                const savedCosts = purchaseCosts?.[costKey] ?? EMPTY_PURCHASE_COSTS;
+                const { purchaseCost, total } = derivePurchaseCost(savedCosts);
+                const originalCostValue =
+                  costDrafts[costKey]?.original ??
+                  (savedCosts.originalCost === null ? "" : String(savedCosts.originalCost));
+                const total10Value =
+                  costDrafts[costKey]?.total10 ??
+                  (savedCosts.totalCost10pct === null ? "" : String(savedCosts.totalCost10pct));
+                const extraValue =
+                  costDrafts[costKey]?.extra ??
+                  (savedCosts.extraMoney === null ? "" : String(savedCosts.extraMoney));
                 return (
                   <tr
                     key={key}
@@ -1069,7 +1193,7 @@ export default function WebsiteProductsPanel({
                         )}
                       </div>
                     </td>
-                    <td className="px-3 py-2">
+                    <td className="min-w-[14rem] px-3 py-2">
                       {/* Editable name. Keyed by p.id (not editId) so the sibling
                           size-rows of a "variable" product share one draft and
                           rename the parent together. */}
@@ -1092,10 +1216,91 @@ export default function WebsiteProductsPanel({
                         <div className="break-words text-xs text-zinc-400">{p.taste_notes}</div>
                       )}
                     </td>
-                    <td className="px-3 py-2 text-right">
+                    <td className="bg-black/[.015] px-2 py-2 text-right dark:bg-white/[.02]">
+                      <label className="inline-flex w-16 items-center gap-1 rounded border border-black/[.15] px-2 py-1 text-sm tabular-nums focus-within:border-black/40 dark:border-white/[.2] dark:focus-within:border-white/50">
+                        <span className="select-none text-zinc-400">$</span>
+                        <input
+                          type="number"
+                          min={0}
+                          step="0.01"
+                          placeholder="—"
+                          value={originalCostValue}
+                          onChange={(e) =>
+                            setCostDrafts((prev) => ({
+                              ...prev,
+                              [costKey]: { ...prev[costKey], original: e.target.value },
+                            }))
+                          }
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") e.currentTarget.blur();
+                          }}
+                          onBlur={() =>
+                            saveCostField(costKey, p.id, v ? v.id : "", "original", savedCosts.originalCost)
+                          }
+                          className="w-full min-w-0 bg-transparent text-right outline-none"
+                        />
+                      </label>
+                    </td>
+                    <td className="bg-black/[.015] px-2 py-2 text-right dark:bg-white/[.02]">
+                      <label className="inline-flex w-16 items-center gap-1 rounded border border-black/[.15] px-2 py-1 text-sm tabular-nums focus-within:border-black/40 dark:border-white/[.2] dark:focus-within:border-white/50">
+                        <span className="select-none text-zinc-400">$</span>
+                        <input
+                          type="number"
+                          min={0}
+                          step="0.01"
+                          placeholder="—"
+                          value={total10Value}
+                          onChange={(e) =>
+                            setCostDrafts((prev) => ({
+                              ...prev,
+                              [costKey]: { ...prev[costKey], total10: e.target.value },
+                            }))
+                          }
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") e.currentTarget.blur();
+                          }}
+                          onBlur={() =>
+                            saveCostField(costKey, p.id, v ? v.id : "", "total10", savedCosts.totalCost10pct)
+                          }
+                          className="w-full min-w-0 bg-transparent text-right outline-none"
+                        />
+                      </label>
+                    </td>
+                    <td className="bg-black/[.015] px-2 py-2 text-right tabular-nums text-zinc-500 dark:bg-white/[.02]">
+                      {purchaseCost === null ? "—" : formatMoney(purchaseCost)}
+                    </td>
+                    <td className="bg-black/[.015] px-2 py-2 text-right dark:bg-white/[.02]">
+                      <label className="inline-flex w-16 items-center gap-1 rounded border border-black/[.15] px-2 py-1 text-sm tabular-nums focus-within:border-black/40 dark:border-white/[.2] dark:focus-within:border-white/50">
+                        <span className="select-none text-zinc-400">$</span>
+                        <input
+                          type="number"
+                          min={0}
+                          step="0.01"
+                          placeholder="—"
+                          value={extraValue}
+                          onChange={(e) =>
+                            setCostDrafts((prev) => ({
+                              ...prev,
+                              [costKey]: { ...prev[costKey], extra: e.target.value },
+                            }))
+                          }
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") e.currentTarget.blur();
+                          }}
+                          onBlur={() =>
+                            saveCostField(costKey, p.id, v ? v.id : "", "extra", savedCosts.extraMoney)
+                          }
+                          className="w-full min-w-0 bg-transparent text-right outline-none"
+                        />
+                      </label>
+                    </td>
+                    <td className="border-r border-black/[.08] bg-black/[.015] px-2 py-2 text-right font-medium tabular-nums text-zinc-500 dark:border-white/[.145] dark:bg-white/[.02]">
+                      {total === null ? "—" : formatMoney(total)}
+                    </td>
+                    <td className="px-2 py-2 text-right">
                       <label
                         title={editTitle}
-                        className="inline-flex w-24 items-center gap-1 rounded border border-black/[.15] px-2 py-1 text-sm focus-within:border-black/40 dark:border-white/[.2] dark:focus-within:border-white/50"
+                        className="inline-flex w-20 items-center gap-1 rounded border border-black/[.15] px-2 py-1 text-sm focus-within:border-black/40 dark:border-white/[.2] dark:focus-within:border-white/50"
                       >
                         <span className="select-none text-zinc-400">$</span>
                         <input
@@ -1117,7 +1322,7 @@ export default function WebsiteProductsPanel({
                         />
                       </label>
                     </td>
-                    <td className="px-3 py-2 text-right">
+                    <td className="px-2 py-2 text-right">
                       <input
                         type="number"
                         min={0}
@@ -1133,6 +1338,23 @@ export default function WebsiteProductsPanel({
                           }
                           clearDraft(editId, "stock");
                         }}
+                        className="w-16 rounded border border-black/[.15] bg-transparent px-2 py-1 text-right text-sm tabular-nums focus:border-black/40 focus:outline-none dark:border-white/[.2] dark:focus:border-white/50"
+                      />
+                    </td>
+                    <td className="px-2 py-2 text-right">
+                      <input
+                        type="number"
+                        title="Adds to the current stock on save -- e.g. a delivery of 2 on top of 5 becomes 7"
+                        placeholder="0"
+                        value={addStockDrafts[editId] ?? ""}
+                        disabled={pendingId === editId}
+                        onChange={(e) =>
+                          setAddStockDrafts((prev) => ({ ...prev, [editId]: e.target.value }))
+                        }
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") e.currentTarget.blur();
+                        }}
+                        onBlur={() => applyAddStock(editId, p, v, linked, currentStock ?? 0)}
                         className="w-16 rounded border border-black/[.15] bg-transparent px-2 py-1 text-right text-sm tabular-nums focus:border-black/40 focus:outline-none dark:border-white/[.2] dark:focus:border-white/50"
                       />
                     </td>
@@ -1186,7 +1408,7 @@ export default function WebsiteProductsPanel({
               })}
               {filtered.length === 0 && (
                 <tr>
-                  <td colSpan={7} className="px-6 py-8 text-center text-sm text-zinc-500">
+                  <td colSpan={13} className="px-6 py-8 text-center text-sm text-zinc-500">
                     {q ? "No products match your search." : "No website products yet."}
                   </td>
                 </tr>

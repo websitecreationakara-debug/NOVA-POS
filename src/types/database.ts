@@ -73,6 +73,9 @@ export type Product = {
   // manageable in Stock -- for raw materials/packaging used only as a
   // recipe ingredient, not sold on their own.
   is_ingredient: boolean;
+  // Grams one unit of this product (e.g. one "pcs") weighs -- lets Cost
+  // Control Set lines convert Scale to kg/g. null = unknown.
+  weight_grams: number | null;
 };
 
 export type RecipeItem = {
@@ -138,6 +141,56 @@ export type ProductSiteLink = {
   variation_id: string;
   matched_name: string | null;
   match_confidence: "exact" | "loose";
+  created_at: string;
+};
+
+// Manually-entered purchase-cost breakdown for one storefront item (Stock >
+// Website product table), independent of whether it has a linked POS
+// product yet -- see migration 0027. Purchase Cost and Total are derived in
+// the app (never stored): Purchase Cost = (original_cost + total_cost_10pct)
+// / 2, Total = Purchase Cost + extra_money.
+export type WebsiteProductPurchaseCost = {
+  id: string;
+  site: "bosba-premium-foods" | "bosba-drink-snack" | "sora-sake";
+  site_product_id: string;
+  // "" for a simple site product; a variation's own id for one size/flavor
+  // of a "variable" product -- mirrors product_site_links.variation_id.
+  variation_id: string;
+  original_cost: number | null;
+  total_cost_10pct: number | null;
+  extra_money: number | null;
+  updated_at: string;
+};
+
+// Marketing > Cost Control: a bundle of existing Stock products sold/costed
+// as one unit (e.g. a gift box). Total Cost and Margin % are always derived
+// from `SetItem`s + suggested_sell_price -- never stored -- see
+// lib/costControl.ts.
+export type SetStatus = "draft" | "active";
+
+export type ProductSet = {
+  id: string;
+  brand_id: string;
+  code: string;
+  name: string;
+  suggested_sell_price: number | null;
+  status: SetStatus;
+  created_at: string;
+  updated_at: string;
+};
+
+// One line item (an existing product + amount) inside a Set. unit/unit_cost
+// are a snapshot from the product at add-time (or last refresh), editable
+// independently so a later catalog change doesn't silently reprice an
+// already-built set.
+export type SetItem = {
+  id: string;
+  set_id: string;
+  product_id: string;
+  amount: number;
+  unit: string;
+  unit_cost: number | null;
+  sort_order: number;
   created_at: string;
 };
 
@@ -274,8 +327,8 @@ export type Database = {
       >;
       products: Table<
         Product,
-        Omit<Product, "id" | "created_at" | "updated_at" | "cost_price" | "is_ingredient"> &
-          Partial<Pick<Product, "id" | "cost_price" | "is_ingredient">>,
+        Omit<Product, "id" | "created_at" | "updated_at" | "cost_price" | "is_ingredient" | "weight_grams"> &
+          Partial<Pick<Product, "id" | "cost_price" | "is_ingredient" | "weight_grams">>,
         [
           {
             foreignKeyName: "products_brand_id_fkey";
@@ -356,6 +409,54 @@ export type Database = {
         [
           {
             foreignKeyName: "product_site_links_product_id_fkey";
+            columns: ["product_id"];
+            isOneToOne: false;
+            referencedRelation: "products";
+            referencedColumns: ["id"];
+          },
+        ]
+      >;
+      website_product_purchase_costs: Table<
+        WebsiteProductPurchaseCost,
+        Omit<
+          WebsiteProductPurchaseCost,
+          "id" | "updated_at" | "original_cost" | "total_cost_10pct" | "extra_money"
+        > &
+          Partial<
+            Pick<
+              WebsiteProductPurchaseCost,
+              "id" | "updated_at" | "original_cost" | "total_cost_10pct" | "extra_money"
+            >
+          >
+      >;
+      sets: Table<
+        ProductSet,
+        Omit<ProductSet, "id" | "created_at" | "updated_at" | "status" | "suggested_sell_price"> &
+          Partial<Pick<ProductSet, "id" | "created_at" | "updated_at" | "status" | "suggested_sell_price">>,
+        [
+          {
+            foreignKeyName: "sets_brand_id_fkey";
+            columns: ["brand_id"];
+            isOneToOne: false;
+            referencedRelation: "brands";
+            referencedColumns: ["id"];
+          },
+        ]
+      >;
+      set_items: Table<
+        SetItem,
+        Omit<SetItem, "id" | "created_at" | "sort_order" | "unit_cost"> &
+          Partial<Pick<SetItem, "id" | "created_at" | "sort_order" | "unit_cost">>,
+        [
+          {
+            foreignKeyName: "set_items_set_id_fkey";
+            columns: ["set_id"];
+            isOneToOne: false;
+            referencedRelation: "sets";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "set_items_product_id_fkey";
             columns: ["product_id"];
             isOneToOne: false;
             referencedRelation: "products";

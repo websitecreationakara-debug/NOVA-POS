@@ -179,14 +179,13 @@ function unwrap<T>(payload: unknown, keys: ("data" | "products" | "product")[]):
   return payload as T;
 }
 
-// Stock is an admin view, so include drafts where the catalog supports it.
-export async function listWebsiteProducts(
-  catalogId: WebsiteCatalogId
+// One page of listWebsiteProducts -- factored out so the paged and unpaged
+// paths below share the same request/unwrap/validate logic.
+async function fetchProductsPage(
+  catalogId: WebsiteCatalogId,
+  query: string
 ): Promise<WebsiteProduct[]> {
-  const { listAllParam } = getCatalog(catalogId);
-  // Always send the credential: some catalogs (sorasake.wine) require auth on
-  // every request, others use it only to widen the list to include drafts.
-  const payload = await request<unknown>(catalogId, listAllParam ? `?${listAllParam}` : "", {
+  const payload = await request<unknown>(catalogId, query ? `?${query}` : "", {
     headers: authHeaders(catalogId),
   });
   const products = unwrap<WebsiteProduct[]>(payload, ["data", "products"]);
@@ -194,6 +193,29 @@ export async function listWebsiteProducts(
     throw new Error(
       `Website products API returned an unexpected shape (expected an array or { products: [] }).`
     );
+  }
+  return products;
+}
+
+// Stock is an admin view, so include drafts where the catalog supports it.
+export async function listWebsiteProducts(
+  catalogId: WebsiteCatalogId
+): Promise<WebsiteProduct[]> {
+  const { listAllParam, listPageSize } = getCatalog(catalogId);
+  // Always send the credential: some catalogs (sorasake.wine) require auth on
+  // every request, others use it only to widen the list to include drafts.
+  let products: WebsiteProduct[];
+  if (listPageSize) {
+    // Page through instead of one big request -- see listPageSize's comment.
+    products = [];
+    for (let offset = 0; ; offset += listPageSize) {
+      const base = listAllParam ? `${listAllParam}&` : "";
+      const page = await fetchProductsPage(catalogId, `${base}limit=${listPageSize}&offset=${offset}`);
+      products.push(...page);
+      if (page.length < listPageSize) break;
+    }
+  } else {
+    products = await fetchProductsPage(catalogId, listAllParam ?? "");
   }
   return products.map((p) => absolutizeMedia(catalogId, p));
 }
