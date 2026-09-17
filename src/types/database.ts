@@ -146,9 +146,10 @@ export type ProductSiteLink = {
 
 // Manually-entered purchase-cost breakdown for one storefront item (Stock >
 // Website product table), independent of whether it has a linked POS
-// product yet -- see migration 0027. Purchase Cost and Total are derived in
-// the app (never stored): Purchase Cost = (original_cost + total_cost_10pct)
-// / 2, Total = Purchase Cost + extra_money.
+// product yet -- see migration 0027. Purchase Cost is derived in the app
+// (never stored): Purchase Cost = (original_cost + total_cost_10pct) / 2.
+// Total is derived too (Purchase Cost + extra_money) unless total_override
+// is set, in which case it wins outright -- see migration 0032.
 export type WebsiteProductPurchaseCost = {
   id: string;
   site: "bosba-premium-foods" | "bosba-drink-snack" | "sora-sake";
@@ -159,6 +160,7 @@ export type WebsiteProductPurchaseCost = {
   original_cost: number | null;
   total_cost_10pct: number | null;
   extra_money: number | null;
+  total_override: number | null;
   updated_at: string;
 };
 
@@ -177,6 +179,14 @@ export type ProductSet = {
   status: SetStatus;
   created_at: string;
   updated_at: string;
+  // Pricing model manual inputs -- see lib/costControl.ts for the derived
+  // fields (After MU$, Cost/Purchase, Total Cost, Recommend, Sale Price,
+  // %Off, Mark Up%, Gross Profit, Profit Status) computed from these plus
+  // the set's ingredient Set Cost (computeSetTotalCost).
+  target_markup_pct: number | null;
+  labor_cost: number | null;
+  competitor_name: string | null;
+  competitor_base_price: number | null;
 };
 
 // One line item (an existing product + amount) inside a Set. unit/unit_cost
@@ -420,19 +430,43 @@ export type Database = {
         WebsiteProductPurchaseCost,
         Omit<
           WebsiteProductPurchaseCost,
-          "id" | "updated_at" | "original_cost" | "total_cost_10pct" | "extra_money"
+          "id" | "updated_at" | "original_cost" | "total_cost_10pct" | "extra_money" | "total_override"
         > &
           Partial<
             Pick<
               WebsiteProductPurchaseCost,
-              "id" | "updated_at" | "original_cost" | "total_cost_10pct" | "extra_money"
+              "id" | "updated_at" | "original_cost" | "total_cost_10pct" | "extra_money" | "total_override"
             >
           >
       >;
       sets: Table<
         ProductSet,
-        Omit<ProductSet, "id" | "created_at" | "updated_at" | "status" | "suggested_sell_price"> &
-          Partial<Pick<ProductSet, "id" | "created_at" | "updated_at" | "status" | "suggested_sell_price">>,
+        Omit<
+          ProductSet,
+          | "id"
+          | "created_at"
+          | "updated_at"
+          | "status"
+          | "suggested_sell_price"
+          | "target_markup_pct"
+          | "labor_cost"
+          | "competitor_name"
+          | "competitor_base_price"
+        > &
+          Partial<
+            Pick<
+              ProductSet,
+              | "id"
+              | "created_at"
+              | "updated_at"
+              | "status"
+              | "suggested_sell_price"
+              | "target_markup_pct"
+              | "labor_cost"
+              | "competitor_name"
+              | "competitor_base_price"
+            >
+          >,
         [
           {
             foreignKeyName: "sets_brand_id_fkey";

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   computeLineTotal,
   computeMargin,
+  computeSetPricing,
   computeSetTotalCost,
   computeUnitCostForScale,
   countItemsMissingCost,
@@ -154,6 +155,102 @@ describe("computeUnitCostForScale", () => {
 
   it("passes a non-weight scale through even when weight is unknown", () => {
     expect(computeUnitCostForScale(31.5, null, "box")).toBe(31.5);
+  });
+});
+
+describe("computeSetPricing", () => {
+  // Two rows straight from the user's own pricing sheet -- every derived
+  // field checked against its actual values.
+  it("matches the sheet's 'Sea Urchin Uni Set 100g' row (A1)", () => {
+    const pricing = computeSetPricing({
+      setCost: 21.47,
+      targetMarkupPct: 25,
+      laborCost: 1,
+      competitorBasePrice: 31.5,
+    });
+    expect(pricing.afterMarkup).toBe(26.84);
+    expect(pricing.costPurchase).toBe(3.15);
+    expect(pricing.totalCost).toBe(25.62);
+    expect(pricing.recommend).toBe(30.99);
+    expect(pricing.salePrice).toBe(28.35);
+    expect(pricing.percentOff).toBe(10);
+    expect(pricing.markupPct).toBeCloseTo(22.95, 1);
+    expect(pricing.grossProfit).toBe(5.88);
+    expect(pricing.profitStatus).toBe("Okay");
+  });
+
+  it("matches the sheet's 'Sea Urchin Uni Set 200g' row (A2), where the base price is over $50", () => {
+    const pricing = computeSetPricing({
+      setCost: 41.26,
+      targetMarkupPct: 25,
+      laborCost: 3,
+      competitorBasePrice: 59,
+    });
+    expect(pricing.afterMarkup).toBe(51.58);
+    expect(pricing.costPurchase).toBe(4.13);
+    expect(pricing.totalCost).toBe(48.39);
+    expect(pricing.recommend).toBe(58.71);
+    expect(pricing.salePrice).toBe(54.87);
+    expect(pricing.percentOff).toBe(7);
+    expect(pricing.markupPct).toBeCloseTo(21.93, 1);
+    expect(pricing.grossProfit).toBe(10.61);
+    expect(pricing.profitStatus).toBe("Good");
+  });
+
+  it("is all null when nothing is entered", () => {
+    const pricing = computeSetPricing({
+      setCost: null,
+      targetMarkupPct: null,
+      laborCost: null,
+      competitorBasePrice: null,
+    });
+    expect(pricing).toEqual({
+      afterMarkup: null,
+      costPurchase: null,
+      totalCost: null,
+      recommend: null,
+      salePrice: null,
+      percentOff: null,
+      markupPct: null,
+      grossProfit: null,
+      profitStatus: null,
+    });
+  });
+
+  it("Total Cost/Recommend treat a still-missing Cost/Purchase or Labor Cost as $0, not unknown", () => {
+    // No Base Price yet -> Cost/Purchase unknown, but Total Cost still
+    // resolves from Set Cost + Labor Cost alone (mirrors the sheet's plain
+    // "+", where a blank cell acts as 0).
+    const pricing = computeSetPricing({
+      setCost: 20,
+      targetMarkupPct: null,
+      laborCost: 2,
+      competitorBasePrice: null,
+    });
+    expect(pricing.costPurchase).toBeNull();
+    expect(pricing.totalCost).toBe(22);
+    expect(pricing.afterMarkup).toBeNull();
+    expect(pricing.recommend).toBeNull();
+  });
+
+  it("buckets Profit Status by Gross Profit thresholds", () => {
+    // competitorBasePrice=100 (>$50 -> Cost/Purchase is a flat $7) with
+    // laborCost=0 lets Set Cost alone dial in an exact Gross Profit
+    // (Gross Profit = 100 - Set Cost - 7 = 93 - Set Cost) for each bucket.
+    const statusForGrossProfit = (grossProfit: number) =>
+      computeSetPricing({
+        setCost: 93 - grossProfit,
+        targetMarkupPct: 0,
+        laborCost: 0,
+        competitorBasePrice: 100,
+      }).profitStatus;
+    expect(statusForGrossProfit(20)).toBe("Great");
+    expect(statusForGrossProfit(12)).toBe("Nice");
+    expect(statusForGrossProfit(8)).toBe("Good");
+    expect(statusForGrossProfit(4)).toBe("Okay");
+    expect(statusForGrossProfit(2)).toBe("Check");
+    expect(statusForGrossProfit(1)).toBeNull();
+    expect(statusForGrossProfit(0)).toBeNull();
   });
 });
 

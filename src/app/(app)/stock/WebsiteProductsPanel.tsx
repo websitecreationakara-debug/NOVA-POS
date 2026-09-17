@@ -33,6 +33,8 @@ import {
   deleteWebsiteProductAction,
   deleteWebsiteProductVariationAction,
   listWebsiteProductsAction,
+  setSimpleProductPriceAction,
+  setSimpleProductStockAction,
   setVariationPriceAction,
   setVariationStockAction,
   setWebsitePurchaseCostAction,
@@ -234,10 +236,11 @@ export default function WebsiteProductsPanel({
   // already is, then the box clears back to empty/0 rather than sitting at
   // the new total (see applyAddStock).
   const [addStockDrafts, setAddStockDrafts] = useState<Record<string, string>>({});
-  // Original Cost / Total Cost 10% / Extra Money -- purely manual inputs
-  // (Purchase Cost and Total are always derived, see derivePurchaseCost).
+  // Original Cost / Total Cost 10% / Extra Money / Total -- purely manual
+  // inputs (Purchase Cost is always derived; Total is too unless its own
+  // override is set -- see derivePurchaseCost).
   const [costDrafts, setCostDrafts] = useState<
-    Record<string, { original?: string; total10?: string; extra?: string }>
+    Record<string, { original?: string; total10?: string; extra?: string; total?: string }>
   >({});
 
   const posByEntryKey = useMemo(() => {
@@ -505,6 +508,57 @@ export default function WebsiteProductsPanel({
     });
   }
 
+  // Same as patchVariationPrice/Stock but for a simple (non-variable)
+  // product's own price/stock -- links it to a POS product the same way a
+  // "variable" product's size does (see setSimpleProductPriceAction), so it
+  // can be found in Cost Control's Set item search afterward.
+  function patchSimpleProductPrice(product: WebsiteProduct, linked: ProductWithStock | null, price: number) {
+    setPendingId(product.id);
+    startTransition(async () => {
+      try {
+        await setSimpleProductPriceAction({
+          catalogId,
+          siteProductId: product.id,
+          title: product.title,
+          imageUrl: product.image_url,
+          alreadyLinked: linked != null,
+          seedStock: product.stock,
+          price,
+        });
+        setPendingId(null);
+        notify(`Price updated — ${product.title}`);
+        router.refresh();
+      } catch (e) {
+        notify(e instanceof Error ? e.message : "Failed to update price", "err");
+        setPendingId(null);
+      }
+    });
+  }
+
+  function patchSimpleProductStock(product: WebsiteProduct, linked: ProductWithStock | null, stock: number) {
+    setPendingId(product.id);
+    startTransition(async () => {
+      try {
+        await setSimpleProductStockAction({
+          catalogId,
+          siteProductId: product.id,
+          title: product.title,
+          imageUrl: product.image_url,
+          alreadyLinked: linked != null,
+          seedPrice: linked?.price ?? product.price,
+          currentStock: linked?.stock_quantity ?? 0,
+          stock,
+        });
+        setPendingId(null);
+        notify(`Stock updated — ${product.title}`);
+        router.refresh();
+      } catch (e) {
+        notify(e instanceof Error ? e.message : "Failed to update stock", "err");
+        setPendingId(null);
+      }
+    });
+  }
+
   // "Add Stock" column: adds the typed quantity to whatever's currently on
   // hand (e.g. a new delivery of 2 on top of an existing 5 -> 7) instead of
   // replacing it -- the usual way stock actually gets restocked. The box
@@ -528,10 +582,10 @@ export default function WebsiteProductsPanel({
     if (!raw || Number.isNaN(amount) || amount === 0) return;
     const newStock = (currentStock ?? 0) + amount;
     if (v) patchVariationStock(p, v, linked, newStock);
-    else patch(p.id, { stock: newStock }, "Stock updated");
+    else patchSimpleProductStock(p, linked, newStock);
   }
 
-  // Original Cost / Total Cost 10% / Extra Money -- each box saves
+  // Original Cost / Total Cost 10% / Extra Money / Total -- each box saves
   // independently on blur, same as Price/Stock. Purely an internal
   // purchasing record kept in POS's own database (see
   // lib/websiteProducts/purchaseCosts.ts); never sent to the storefront.
@@ -539,7 +593,7 @@ export default function WebsiteProductsPanel({
     costKey: string,
     siteProductId: string,
     variationId: string,
-    field: "original" | "total10" | "extra",
+    field: "original" | "total10" | "extra" | "total",
     currentValue: number | null
   ) {
     const raw = costDrafts[costKey]?.[field];
@@ -562,7 +616,13 @@ export default function WebsiteProductsPanel({
     }
 
     const dbField =
-      field === "original" ? "original_cost" : field === "total10" ? "total_cost_10pct" : "extra_money";
+      field === "original"
+        ? "original_cost"
+        : field === "total10"
+          ? "total_cost_10pct"
+          : field === "extra"
+            ? "extra_money"
+            : "total_override";
     startTransition(async () => {
       try {
         await setWebsitePurchaseCostAction(catalogId, siteProductId, variationId, { [dbField]: value });
@@ -1138,13 +1198,15 @@ export default function WebsiteProductsPanel({
             </thead>
             <tbody>
               {paged.map(({ product: p, variation: v, key }) => {
-                // The POS product linked to this size, if anyone has already
-                // sold it or edited it here before -- null means editing will
-                // create one on the fly (see patchVariationPrice/Stock).
-                const linked = v ? (posByEntryKey.get(posEntryKey(p.id, v.id)) ?? null) : null;
+                // The POS product linked to this item (size or simple
+                // product), if anyone has already sold it or edited it here
+                // before -- null means editing will create one on the fly
+                // (see patchVariationPrice/Stock and
+                // patchSimpleProductPrice/Stock).
+                const linked = posByEntryKey.get(posEntryKey(p.id, v ? v.id : "")) ?? null;
                 const editId = v ? v.id : p.id;
-                const currentPrice = v ? (linked?.price ?? v.price) : p.price;
-                const currentStock = v ? (linked?.stock_quantity ?? v.stock ?? 0) : p.stock;
+                const currentPrice = linked?.price ?? (v ? v.price : p.price);
+                const currentStock = linked?.stock_quantity ?? (v ? (v.stock ?? 0) : p.stock);
                 const priceValue = drafts[editId]?.price ?? String(currentPrice);
                 const stockValue = drafts[editId]?.stock ?? String(currentStock ?? 0);
                 const imageUrl = v?.image_url ?? p.image_url;
@@ -1165,6 +1227,9 @@ export default function WebsiteProductsPanel({
                 const extraValue =
                   costDrafts[costKey]?.extra ??
                   (savedCosts.extraMoney === null ? "" : String(savedCosts.extraMoney));
+                const totalValue =
+                  costDrafts[costKey]?.total ??
+                  (savedCosts.totalOverride === null ? "" : String(savedCosts.totalOverride));
                 return (
                   <tr
                     key={key}
@@ -1294,8 +1359,31 @@ export default function WebsiteProductsPanel({
                         />
                       </label>
                     </td>
-                    <td className="border-r border-black/[.08] bg-black/[.015] px-2 py-2 text-right font-medium tabular-nums text-zinc-500 dark:border-white/[.145] dark:bg-white/[.02]">
-                      {total === null ? "—" : formatMoney(total)}
+                    <td className="border-r border-black/[.08] bg-black/[.015] px-2 py-2 text-right dark:border-white/[.145] dark:bg-white/[.02]">
+                      <label
+                        title="Manual override -- wins over Purchase Cost + Extra Money, and works even when Original Cost / Total Cost 10% aren't filled in"
+                        className="inline-flex w-16 items-center gap-1 rounded border border-black/[.15] px-2 py-1 text-sm font-medium tabular-nums focus-within:border-black/40 dark:border-white/[.2] dark:focus-within:border-white/50"
+                      >
+                        <span className="select-none text-zinc-400">$</span>
+                        <input
+                          type="number"
+                          min={0}
+                          step="0.01"
+                          placeholder={savedCosts.totalOverride === null && total !== null ? total.toFixed(2) : "—"}
+                          value={totalValue}
+                          onChange={(e) =>
+                            setCostDrafts((prev) => ({
+                              ...prev,
+                              [costKey]: { ...prev[costKey], total: e.target.value },
+                            }))
+                          }
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") e.currentTarget.blur();
+                          }}
+                          onBlur={() => saveCostField(costKey, p.id, v ? v.id : "", "total", savedCosts.totalOverride)}
+                          className="w-full min-w-0 bg-transparent text-right outline-none"
+                        />
+                      </label>
                     </td>
                     <td className="px-2 py-2 text-right">
                       <label
@@ -1314,7 +1402,7 @@ export default function WebsiteProductsPanel({
                             const price = Number(e.target.value);
                             if (!Number.isNaN(price) && price !== currentPrice) {
                               if (v) patchVariationPrice(p, v, linked, price);
-                              else patch(p.id, { price }, "Price updated");
+                              else patchSimpleProductPrice(p, linked, price);
                             }
                             clearDraft(editId, "price");
                           }}
@@ -1334,7 +1422,7 @@ export default function WebsiteProductsPanel({
                           const stock = Number(e.target.value);
                           if (!Number.isNaN(stock) && stock !== (currentStock ?? 0)) {
                             if (v) patchVariationStock(p, v, linked, stock);
-                            else patch(p.id, { stock }, "Stock updated");
+                            else patchSimpleProductStock(p, linked, stock);
                           }
                           clearDraft(editId, "stock");
                         }}
