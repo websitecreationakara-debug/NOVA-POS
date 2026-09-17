@@ -3,7 +3,14 @@
 import { revalidatePath } from "next/cache";
 import { supabaseAdmin } from "@/lib/supabase/server";
 import { requireMarketingAccess } from "./actions";
-import { computeLineTotal, computeMargin, computeSetTotalCost, countItemsMissingCost } from "@/lib/costControl";
+import {
+  computeLineTotal,
+  computeMargin,
+  computeSetPricing,
+  computeSetTotalCost,
+  countItemsMissingCost,
+  type SetPricing,
+} from "@/lib/costControl";
 import { getEffectiveProductCost } from "@/lib/websiteProducts/purchaseCosts";
 import type { SetStatus } from "@/types/database";
 
@@ -18,6 +25,13 @@ export type SetSummary = {
   suggestedSellPrice: number | null;
   marginPct: number | null;
   updatedAt: string;
+  // Pricing model manual inputs (see migration 0031) plus every derived
+  // field, computed fresh from these + totalCost (this set's "Set Cost").
+  targetMarkupPct: number | null;
+  laborCost: number | null;
+  competitorName: string | null;
+  competitorBasePrice: number | null;
+  pricing: SetPricing;
 };
 
 type SetItemCostRow = { amount: number; unit_cost: number | null };
@@ -36,6 +50,12 @@ export async function listSetsAction(brandId: string): Promise<SetSummary[]> {
     const itemCosts = items.map((i) => ({ amount: i.amount, unitCost: i.unit_cost }));
     const totalCost = computeSetTotalCost(itemCosts);
     const { marginPct } = computeMargin(totalCost, s.suggested_sell_price);
+    const pricing = computeSetPricing({
+      setCost: totalCost,
+      targetMarkupPct: s.target_markup_pct,
+      laborCost: s.labor_cost,
+      competitorBasePrice: s.competitor_base_price,
+    });
     return {
       id: s.id,
       code: s.code,
@@ -47,6 +67,11 @@ export async function listSetsAction(brandId: string): Promise<SetSummary[]> {
       suggestedSellPrice: s.suggested_sell_price,
       marginPct,
       updatedAt: s.updated_at,
+      targetMarkupPct: s.target_markup_pct,
+      laborCost: s.labor_cost,
+      competitorName: s.competitor_name,
+      competitorBasePrice: s.competitor_base_price,
+      pricing,
     };
   });
 }
@@ -86,6 +111,11 @@ export type SetDetail = {
   totalCost: number | null;
   itemsMissingCost: number;
   marginPct: number | null;
+  targetMarkupPct: number | null;
+  laborCost: number | null;
+  competitorName: string | null;
+  competitorBasePrice: number | null;
+  pricing: SetPricing;
 };
 
 type SetItemDetailRow = {
@@ -129,6 +159,12 @@ export async function getSetAction(setId: string): Promise<SetDetail> {
   const itemCosts = items.map((i) => ({ amount: i.amount, unitCost: i.unitCost }));
   const totalCost = computeSetTotalCost(itemCosts);
   const { marginPct } = computeMargin(totalCost, set.suggested_sell_price);
+  const pricing = computeSetPricing({
+    setCost: totalCost,
+    targetMarkupPct: set.target_markup_pct,
+    laborCost: set.labor_cost,
+    competitorBasePrice: set.competitor_base_price,
+  });
 
   return {
     id: set.id,
@@ -141,6 +177,11 @@ export async function getSetAction(setId: string): Promise<SetDetail> {
     totalCost,
     itemsMissingCost: countItemsMissingCost(itemCosts),
     marginPct,
+    targetMarkupPct: set.target_markup_pct,
+    laborCost: set.labor_cost,
+    competitorName: set.competitor_name,
+    competitorBasePrice: set.competitor_base_price,
+    pricing,
   };
 }
 
@@ -176,6 +217,10 @@ export async function updateSetAction(
     name: string;
     status: SetStatus;
     suggestedSellPrice: number | null;
+    targetMarkupPct: number | null;
+    laborCost: number | null;
+    competitorName: string | null;
+    competitorBasePrice: number | null;
   }>
 ): Promise<void> {
   await requireMarketingAccess();
@@ -185,6 +230,10 @@ export async function updateSetAction(
     name?: string;
     status?: SetStatus;
     suggested_sell_price?: number | null;
+    target_markup_pct?: number | null;
+    labor_cost?: number | null;
+    competitor_name?: string | null;
+    competitor_base_price?: number | null;
   } = { updated_at: new Date().toISOString() };
   if (input.code !== undefined) {
     const code = input.code.trim();
@@ -198,6 +247,10 @@ export async function updateSetAction(
   }
   if (input.status !== undefined) fields.status = input.status;
   if (input.suggestedSellPrice !== undefined) fields.suggested_sell_price = input.suggestedSellPrice;
+  if (input.targetMarkupPct !== undefined) fields.target_markup_pct = input.targetMarkupPct;
+  if (input.laborCost !== undefined) fields.labor_cost = input.laborCost;
+  if (input.competitorName !== undefined) fields.competitor_name = input.competitorName?.trim() || null;
+  if (input.competitorBasePrice !== undefined) fields.competitor_base_price = input.competitorBasePrice;
 
   const { error } = await supabaseAdmin.from("sets").update(fields).eq("id", setId);
   if (error) {
@@ -231,7 +284,9 @@ export async function duplicateSetAction(
 
   const { data: original, error: fetchErr } = await supabaseAdmin
     .from("sets")
-    .select("brand_id, suggested_sell_price, set_items(product_id, amount, unit, unit_cost, sort_order)")
+    .select(
+      "brand_id, suggested_sell_price, target_markup_pct, labor_cost, competitor_name, competitor_base_price, set_items(product_id, amount, unit, unit_cost, sort_order)"
+    )
     .eq("id", setId)
     .single();
   if (fetchErr || !original) throw new Error(fetchErr?.message ?? "Set not found");
@@ -243,6 +298,10 @@ export async function duplicateSetAction(
       code,
       name,
       suggested_sell_price: original.suggested_sell_price,
+      target_markup_pct: original.target_markup_pct,
+      labor_cost: original.labor_cost,
+      competitor_name: original.competitor_name,
+      competitor_base_price: original.competitor_base_price,
     })
     .select("id")
     .single();
@@ -321,6 +380,87 @@ export async function addSetItemAction(input: {
 
   await supabaseAdmin.from("sets").update({ updated_at: new Date().toISOString() }).eq("id", input.setId);
   revalidatePath("/marketing");
+}
+
+// "Manual" set items -- extras that aren't really Stock-tracked (garnish,
+// sauce, fried garlic, ...) but still need a per-unit cost. Creates a real,
+// lightweight product (brand-scoped, no image/category/storefront link) with
+// the given cost_price, then adds it to this set. Because it's a real
+// product it's reusable -- it shows up in the Items search for any set in
+// this brand from now on, exactly like a Stock product does.
+export async function addManualSetItemAction(input: {
+  setId: string;
+  brandId: string;
+  name: string;
+  amount: number;
+  unitCost: number;
+}): Promise<void> {
+  await requireMarketingAccess();
+  const name = input.name.trim();
+  if (!name) throw new Error("Name is required");
+  if (Number.isNaN(input.amount) || input.amount <= 0) {
+    throw new Error("Amount must be greater than zero");
+  }
+  if (Number.isNaN(input.unitCost) || input.unitCost < 0) {
+    throw new Error("Price cannot be negative");
+  }
+
+  const { data: product, error: productErr } = await supabaseAdmin
+    .from("products")
+    .insert({
+      brand_id: input.brandId,
+      category_id: null,
+      name,
+      sku: null,
+      price: 0,
+      cost_price: input.unitCost,
+      unit: "pcs",
+      image_url: null,
+      is_active: true,
+    })
+    .select("id, unit")
+    .single();
+  if (productErr || !product) throw productErr ?? new Error("Failed to create item");
+
+  const { count } = await supabaseAdmin
+    .from("set_items")
+    .select("id", { count: "exact", head: true })
+    .eq("set_id", input.setId);
+
+  const { error } = await supabaseAdmin.from("set_items").insert({
+    set_id: input.setId,
+    product_id: product.id,
+    amount: input.amount,
+    unit: product.unit,
+    unit_cost: input.unitCost,
+    sort_order: count ?? 0,
+  });
+  if (error) throw new Error(error.message);
+
+  await supabaseAdmin.from("sets").update({ updated_at: new Date().toISOString() }).eq("id", input.setId);
+  revalidatePath("/marketing");
+  revalidatePath("/stock");
+}
+
+// A set line's Unit Cost can drift from its product's price over time (the
+// user's own words: "the price some time it increase or decrease"). Called
+// alongside updateSetItemAction (which already updates the line's own
+// unit_cost) to also update the underlying product's cost_price, so the new
+// price is reusable -- the next time this same item is added to any set,
+// addSetItemAction's getEffectiveProductCost picks up the update. Only
+// meaningful for a non-weight-scale line (see CostControlClient) -- a
+// weight-scale line's Unit Cost is derived instead (computeUnitCostForScale).
+export async function syncManualItemProductCostAction(productId: string, unitCost: number): Promise<void> {
+  await requireMarketingAccess();
+  if (Number.isNaN(unitCost) || unitCost < 0) {
+    throw new Error("Price cannot be negative");
+  }
+
+  const { error } = await supabaseAdmin.from("products").update({ cost_price: unitCost }).eq("id", productId);
+  if (error) throw new Error(error.message);
+
+  revalidatePath("/marketing");
+  revalidatePath("/stock");
 }
 
 export async function updateSetItemAction(

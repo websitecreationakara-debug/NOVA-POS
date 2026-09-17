@@ -8,11 +8,13 @@ import type { Brand } from "@/types/database";
 import type { ProductWithStock } from "@/lib/supabase/queries";
 import { computeLineTotal, computeSetTotalCost, computeUnitCostForScale, productWeightGrams } from "@/lib/costControl";
 import {
+  addManualSetItemAction,
   addSetItemAction,
   createSetAction,
   deleteSetAction,
   duplicateSetAction,
   removeSetItemAction,
+  syncManualItemProductCostAction,
   updateSetAction,
   updateSetItemAction,
   type SetDetail,
@@ -22,6 +24,73 @@ import {
 
 function formatMoney(n: number | null): string {
   return n === null ? "—" : `$${n.toFixed(2)}`;
+}
+
+function formatPercent(n: number | null): string {
+  return n === null ? "—" : `${n.toFixed(1)}%`;
+}
+
+// Matches the sheet's color-coded Profit Status column (P).
+const PROFIT_STATUS_STYLES: Record<string, string> = {
+  Great: "bg-emerald-600 text-white",
+  Nice: "bg-green-100 text-green-800 dark:bg-green-900/40 dark:text-green-300",
+  Good: "bg-blue-100 text-blue-800 dark:bg-blue-900/40 dark:text-blue-300",
+  Okay: "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300",
+  Check: "bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-300",
+};
+
+// A number input with a fixed $ prefix or % suffix overlaid inside the box
+// (e.g. inline pricing-model cells) -- the affix is decorative only, never
+// part of the input's actual value.
+function AffixNumberInput({
+  value,
+  onChange,
+  onBlur,
+  prefix,
+  suffix,
+  widthClass,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  onBlur: (e: React.FocusEvent<HTMLInputElement>) => void;
+  prefix?: string;
+  suffix?: string;
+  widthClass: string;
+}) {
+  return (
+    <div className={`relative inline-block ${widthClass}`}>
+      {prefix && (
+        <span className="pointer-events-none absolute left-1.5 top-1/2 -translate-y-1/2 text-sm text-zinc-500">
+          {prefix}
+        </span>
+      )}
+      <input
+        type="number"
+        step="0.01"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
+        onBlur={onBlur}
+        className={`w-full rounded border border-black/[.15] bg-transparent py-1 text-right text-sm tabular-nums dark:border-white/[.2] ${
+          prefix ? "pl-4" : "pl-1.5"
+        } ${suffix ? "pr-4" : "pr-1.5"}`}
+      />
+      {suffix && (
+        <span className="pointer-events-none absolute right-1.5 top-1/2 -translate-y-1/2 text-sm text-zinc-500">
+          {suffix}
+        </span>
+      )}
+    </div>
+  );
+}
+
+function ProfitStatusBadge({ status }: { status: string | null }) {
+  if (status === null) return <span>—</span>;
+  return (
+    <span className={`rounded px-1.5 py-0.5 text-xs font-medium ${PROFIT_STATUS_STYLES[status] ?? ""}`}>
+      {status}
+    </span>
+  );
 }
 
 const inputClass =
@@ -79,12 +148,23 @@ export default function CostControlClient({
 
 // ---------- Sets Overview ----------
 
+type SetRowDraft = {
+  targetMarkupPct?: string;
+  laborCost?: string;
+  competitorName?: string;
+  competitorBasePrice?: string;
+};
+
 function SetsOverview({ brandId, sets }: { brandId: string; sets: SetSummary[] }) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<SetSummary | null>(null);
   const [duplicating, setDuplicating] = useState<SetSummary | null>(null);
+
+  // Pricing model manual inputs are edited inline, right in this table --
+  // same save-on-blur pattern as the set detail page's other fields.
+  const [rowDrafts, setRowDrafts] = useState<Record<string, SetRowDraft>>({});
 
   function openSet(id: string) {
     router.push(`/marketing?tab=cost-control&brand=${brandId}&set=${id}`);
@@ -103,6 +183,44 @@ function SetsOverview({ brandId, sets }: { brandId: string; sets: SetSummary[] }
         setConfirmDelete(null);
       } catch (e) {
         setError(e instanceof Error ? e.message : "Failed to delete set");
+      }
+    });
+  }
+
+  function saveTextField(setId: string, field: "competitorName", raw: string, current: string | null) {
+    const trimmed = raw.trim();
+    const value = trimmed === "" ? null : trimmed;
+    if (value === current) return;
+    setError(null);
+    startTransition(async () => {
+      try {
+        await updateSetAction(setId, { [field]: value });
+        router.refresh();
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Failed to save");
+      }
+    });
+  }
+
+  function saveNumberField(
+    setId: string,
+    field: "targetMarkupPct" | "laborCost" | "competitorBasePrice",
+    raw: string,
+    current: number | null
+  ) {
+    const trimmed = raw.trim();
+    const value = trimmed === "" ? null : parseFloat(trimmed);
+    if (value !== null && Number.isNaN(value)) return;
+    if (value === current) return;
+    setError(null);
+    startTransition(async () => {
+      try {
+        if (field === "targetMarkupPct") await updateSetAction(setId, { targetMarkupPct: value });
+        else if (field === "laborCost") await updateSetAction(setId, { laborCost: value });
+        else await updateSetAction(setId, { competitorBasePrice: value });
+        router.refresh();
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Failed to save");
       }
     });
   }
@@ -126,38 +244,97 @@ function SetsOverview({ brandId, sets }: { brandId: string; sets: SetSummary[] }
       <div className="mt-4 overflow-x-auto">
         <table className="w-full text-left text-sm">
           <thead>
-            <tr className="border-b border-black/[.08] text-xs text-zinc-500 dark:border-white/[.145]">
-              <th className="py-2 pr-3 font-medium">Set ID</th>
-              <th className="py-2 pr-3 font-medium">Name</th>
-              <th className="py-2 pr-3 text-right font-medium">Items</th>
-              <th className="py-2 pr-3 text-right font-medium">Total Cost</th>
-              <th className="py-2 pr-3 text-right font-medium">Suggested Price</th>
-              <th className="py-2 pr-3 text-right font-medium">Margin %</th>
-              <th className="py-2 pr-3 font-medium">Status</th>
-              <th className="py-2 text-right font-medium">Actions</th>
+            <tr className="border-b border-black/[.08] text-xs whitespace-nowrap text-zinc-500 dark:border-white/[.145]">
+              <th className="py-2.5 pr-5 font-medium">Set ID</th>
+              <th className="py-2.5 pr-5 font-medium">Name</th>
+              <th className="py-2.5 pr-5 text-right font-medium">Items</th>
+              <th className="py-2.5 pr-5 text-right font-medium">Set Cost</th>
+              <th className="py-2.5 pr-5 text-right font-medium">Target MU%</th>
+              <th className="py-2.5 pr-5 text-right font-medium">After MU$</th>
+              <th className="py-2.5 pr-5 text-right font-medium">Cost/Purchase</th>
+              <th className="py-2.5 pr-5 text-right font-medium">Labor Cost</th>
+              <th className="py-2.5 pr-5 text-right font-medium">Total Cost</th>
+              <th className="py-2.5 pr-5 text-right font-medium">Recommend</th>
+              <th className="py-2.5 pr-5 font-medium">Competitor</th>
+              <th className="py-2.5 pr-5 text-right font-medium">Base Price</th>
+              <th className="py-2.5 pr-5 text-right font-medium">%Off</th>
+              <th className="py-2.5 pr-5 text-right font-medium">Sale Price</th>
+              <th className="py-2.5 pr-5 text-right font-medium">Mark Up%</th>
+              <th className="py-2.5 pr-5 text-right font-medium">Gross Profit</th>
+              <th className="py-2.5 pr-5 font-medium">Profit Status</th>
+              <th className="py-2.5 pr-5 font-medium">Status</th>
+              <th className="py-2.5 text-right font-medium">Actions</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-black/[.06] dark:divide-white/[.08]">
             {sets.map((s) => (
-              <tr key={s.id} className="hover:bg-black/[.02] dark:hover:bg-white/[.03]">
-                <td className="py-2 pr-3">
-                  <button
-                    type="button"
-                    onClick={() => openSet(s.id)}
-                    className="font-medium text-brand hover:underline"
-                  >
-                    {s.code}
-                  </button>
+              <tr
+                key={s.id}
+                onClick={() => openSet(s.id)}
+                className="cursor-pointer whitespace-nowrap hover:bg-black/[.02] dark:hover:bg-white/[.03]"
+              >
+                <td className="py-3 pr-5">
+                  <span className="font-medium text-brand">{s.code}</span>
                 </td>
-                <td className="py-2 pr-3">{s.name}</td>
-                <td className="py-2 pr-3 text-right tabular-nums">{s.itemCount}</td>
-                <td className="py-2 pr-3 text-right tabular-nums">{formatMoney(s.totalCost)}</td>
-                <td className="py-2 pr-3 text-right tabular-nums">{formatMoney(s.suggestedSellPrice)}</td>
-                <td className="py-2 pr-3 text-right tabular-nums">
-                  {s.marginPct === null ? "—" : `${s.marginPct.toFixed(1)}%`}
+                <td className="min-w-[10rem] py-3 pr-5" title={s.name}>
+                  {s.name}
                 </td>
-                <td className="py-2 pr-3 capitalize">{s.status}</td>
-                <td className="py-2 text-right">
+                <td className="py-3 pr-5 text-right tabular-nums">{s.itemCount}</td>
+                <td className="py-3 pr-5 text-right tabular-nums">{formatMoney(s.totalCost)}</td>
+                <td className="py-2 pr-5 text-right" onClick={(e) => e.stopPropagation()}>
+                  <AffixNumberInput
+                    widthClass="w-16"
+                    suffix="%"
+                    value={rowDrafts[s.id]?.targetMarkupPct ?? (s.targetMarkupPct === null ? "" : String(s.targetMarkupPct))}
+                    onChange={(v) => setRowDrafts((prev) => ({ ...prev, [s.id]: { ...prev[s.id], targetMarkupPct: v } }))}
+                    onBlur={(e) => saveNumberField(s.id, "targetMarkupPct", e.target.value, s.targetMarkupPct)}
+                  />
+                </td>
+                <td className="py-3 pr-5 text-right tabular-nums">{formatMoney(s.pricing.afterMarkup)}</td>
+                <td className="py-3 pr-5 text-right tabular-nums">{formatMoney(s.pricing.costPurchase)}</td>
+                <td className="py-2 pr-5 text-right" onClick={(e) => e.stopPropagation()}>
+                  <AffixNumberInput
+                    widthClass="w-16"
+                    prefix="$"
+                    value={rowDrafts[s.id]?.laborCost ?? (s.laborCost === null ? "" : String(s.laborCost))}
+                    onChange={(v) => setRowDrafts((prev) => ({ ...prev, [s.id]: { ...prev[s.id], laborCost: v } }))}
+                    onBlur={(e) => saveNumberField(s.id, "laborCost", e.target.value, s.laborCost)}
+                  />
+                </td>
+                <td className="py-3 pr-5 text-right tabular-nums">{formatMoney(s.pricing.totalCost)}</td>
+                <td className="py-3 pr-5 text-right tabular-nums">{formatMoney(s.pricing.recommend)}</td>
+                <td className="py-2 pr-5" onClick={(e) => e.stopPropagation()}>
+                  <input
+                    type="text"
+                    value={rowDrafts[s.id]?.competitorName ?? s.competitorName ?? ""}
+                    onChange={(e) =>
+                      setRowDrafts((prev) => ({ ...prev, [s.id]: { ...prev[s.id], competitorName: e.target.value } }))
+                    }
+                    onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
+                    onBlur={(e) => saveTextField(s.id, "competitorName", e.target.value, s.competitorName)}
+                    className="w-28 rounded border border-black/[.15] bg-transparent px-1.5 py-1 text-sm dark:border-white/[.2]"
+                  />
+                </td>
+                <td className="py-2 pr-5 text-right" onClick={(e) => e.stopPropagation()}>
+                  <AffixNumberInput
+                    widthClass="w-20"
+                    prefix="$"
+                    value={
+                      rowDrafts[s.id]?.competitorBasePrice ?? (s.competitorBasePrice === null ? "" : String(s.competitorBasePrice))
+                    }
+                    onChange={(v) => setRowDrafts((prev) => ({ ...prev, [s.id]: { ...prev[s.id], competitorBasePrice: v } }))}
+                    onBlur={(e) => saveNumberField(s.id, "competitorBasePrice", e.target.value, s.competitorBasePrice)}
+                  />
+                </td>
+                <td className="py-3 pr-5 text-right tabular-nums">{formatPercent(s.pricing.percentOff)}</td>
+                <td className="py-3 pr-5 text-right tabular-nums">{formatMoney(s.pricing.salePrice)}</td>
+                <td className="py-3 pr-5 text-right tabular-nums">{formatPercent(s.pricing.markupPct)}</td>
+                <td className="py-3 pr-5 text-right tabular-nums">{formatMoney(s.pricing.grossProfit)}</td>
+                <td className="py-3 pr-5">
+                  <ProfitStatusBadge status={s.pricing.profitStatus} />
+                </td>
+                <td className="py-3 pr-5 capitalize">{s.status}</td>
+                <td className="py-3 text-right" onClick={(e) => e.stopPropagation()}>
                   <div className="flex items-center justify-end gap-1">
                     <button
                       type="button"
@@ -189,7 +366,7 @@ function SetsOverview({ brandId, sets }: { brandId: string; sets: SetSummary[] }
             ))}
             {sets.length === 0 && (
               <tr>
-                <td colSpan={8} className="py-8 text-center text-sm text-zinc-500">
+                <td colSpan={19} className="py-8 text-center text-sm text-zinc-500">
                   No sets yet for this business.
                 </td>
               </tr>
@@ -400,6 +577,45 @@ function SetEditor({
   const [pendingProductId, setPendingProductId] = useState<string | null>(null);
   const [amountDraft, setAmountDraft] = useState("");
 
+  // "+ Add manual item" -- for extras that aren't really Stock-tracked
+  // (Sauce, Fried Garlic, Vegetable, ...) but still need a per-unit cost.
+  // See addManualSetItemAction.
+  const [showManualAdd, setShowManualAdd] = useState(false);
+  const [manualName, setManualName] = useState("");
+  const [manualPrice, setManualPrice] = useState("");
+  const [manualAmount, setManualAmount] = useState("1");
+
+  function submitManualItem() {
+    const name = manualName.trim();
+    const price = parseFloat(manualPrice);
+    const amount = parseFloat(manualAmount);
+    if (!name) {
+      setError("Enter a name");
+      return;
+    }
+    if (Number.isNaN(price) || price < 0) {
+      setError("Enter a valid price");
+      return;
+    }
+    if (Number.isNaN(amount) || amount <= 0) {
+      setError("Enter an amount greater than zero");
+      return;
+    }
+    setError(null);
+    startTransition(async () => {
+      try {
+        await addManualSetItemAction({ setId: set.id, brandId, name, amount, unitCost: price });
+        setShowManualAdd(false);
+        setManualName("");
+        setManualPrice("");
+        setManualAmount("1");
+        router.refresh();
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Failed to add item");
+      }
+    });
+  }
+
   // Per-row edit drafts
   const [itemDrafts, setItemDrafts] = useState<Record<string, { amount?: string; unit?: string; unitCost?: string }>>({});
   const [confirmRemove, setConfirmRemove] = useState<string | null>(null);
@@ -416,13 +632,14 @@ function SetEditor({
     });
   }
 
+  // Every match in Stock for this brand, not just the first few -- the
+  // dropdown scrolls (see its max-h-64 overflow-y-auto below) instead of
+  // silently hiding matches past a hard cap.
   const inSetIds = new Set(set.items.map((i) => i.productId));
   const matches =
     query.trim().length === 0
       ? []
-      : products
-          .filter((p) => !inSetIds.has(p.id) && p.name.toLowerCase().includes(query.trim().toLowerCase()))
-          .slice(0, 8);
+      : products.filter((p) => !inSetIds.has(p.id) && p.name.toLowerCase().includes(query.trim().toLowerCase()));
   const pendingProduct = products.find((p) => p.id === pendingProductId) ?? null;
 
   function pickProduct(p: ProductWithStock) {
@@ -557,16 +774,31 @@ function SetEditor({
     const entries = Object.entries(itemDrafts);
     startTransition(async () => {
       try {
-        await Promise.all(
-          entries.map(([itemId, draft]) => {
-            const fields: Parameters<typeof updateSetItemAction>[1] = {};
-            if (draft.amount !== undefined) fields.amount = parseFloat(draft.amount);
-            if (draft.unit !== undefined) fields.unit = draft.unit.trim();
-            if (draft.unitCost !== undefined)
-              fields.unitCost = draft.unitCost.trim() === "" ? null : parseFloat(draft.unitCost);
-            return updateSetItemAction(itemId, fields);
-          })
-        );
+        const calls = entries.flatMap(([itemId, draft]) => {
+          const fields: Parameters<typeof updateSetItemAction>[1] = {};
+          if (draft.amount !== undefined) fields.amount = parseFloat(draft.amount);
+          if (draft.unit !== undefined) fields.unit = draft.unit.trim();
+          if (draft.unitCost !== undefined)
+            fields.unitCost = draft.unitCost.trim() === "" ? null : parseFloat(draft.unitCost);
+          const out = [updateSetItemAction(itemId, fields)];
+          // A hand-typed Unit Cost (only offered for a non-weight-scale line
+          // -- see the table below) also updates the line's product so the
+          // new price is reusable next time it's added anywhere. Skipped for
+          // a weight-scale line, where unitCost instead comes from
+          // changeScale's own computeUnitCostForScale -- never a manual
+          // price the user meant to make permanent.
+          if (draft.unitCost !== undefined && draft.unitCost.trim() !== "") {
+            const item = set.items.find((i) => i.id === itemId);
+            const weightGrams = item
+              ? productWeightGrams(item.productUnit, item.productName, item.productWeightGrams)
+              : null;
+            if (item && weightGrams === null) {
+              out.push(syncManualItemProductCostAction(item.productId, parseFloat(draft.unitCost)));
+            }
+          }
+          return out;
+        });
+        await Promise.all(calls);
         setItemDrafts({});
         router.push(`/marketing?tab=cost-control&brand=${brandId}`);
       } catch (e) {
@@ -636,7 +868,69 @@ function SetEditor({
       </div>
 
       <div className="rounded-lg border border-black/[.08] p-4 dark:border-white/[.145]">
-        <h2 className="font-medium">Items</h2>
+        <div className="flex flex-wrap items-center gap-3">
+          <h2 className="font-medium">Items</h2>
+          <button
+            type="button"
+            onClick={() => setShowManualAdd((v) => !v)}
+            className="ml-auto text-xs font-medium text-brand hover:underline"
+          >
+            {showManualAdd ? "Cancel" : "+ Add manual item"}
+          </button>
+        </div>
+
+        {showManualAdd && (
+          <div className="mt-3 flex flex-wrap items-end gap-3 rounded border border-black/[.15] p-3 dark:border-white/[.2]">
+            <label className="flex flex-col gap-1">
+              <span className="text-xs font-medium text-zinc-500">Name</span>
+              <input
+                type="text"
+                placeholder="e.g. Fried Garlic"
+                value={manualName}
+                onChange={(e) => setManualName(e.target.value)}
+                className={`w-44 ${inputClass}`}
+              />
+            </label>
+            <label className="flex flex-col gap-1">
+              <span className="text-xs font-medium text-zinc-500">Price / unit</span>
+              <div className="flex items-center gap-1 rounded border border-black/[.15] px-2.5 py-1.5 dark:border-white/[.2]">
+                <span className="select-none text-sm text-zinc-400">$</span>
+                <input
+                  type="number"
+                  min={0}
+                  step="0.01"
+                  placeholder="0.58"
+                  value={manualPrice}
+                  onChange={(e) => setManualPrice(e.target.value)}
+                  className="w-20 min-w-0 border-0 bg-transparent p-0 text-sm outline-none"
+                />
+              </div>
+            </label>
+            <label className="flex flex-col gap-1">
+              <span className="text-xs font-medium text-zinc-500">Amount</span>
+              <input
+                type="number"
+                min={0}
+                step="0.01"
+                value={manualAmount}
+                onChange={(e) => setManualAmount(e.target.value)}
+                className={`w-20 ${inputClass}`}
+              />
+            </label>
+            <button
+              type="button"
+              disabled={isPending}
+              onClick={submitManualItem}
+              className="rounded bg-brand px-3 py-1.5 text-sm font-medium text-black hover:brightness-95 disabled:opacity-50"
+            >
+              Add
+            </button>
+            <span className="text-xs text-zinc-500">
+              For extras that aren&apos;t in Stock (sauce, garlic, etc.) — creates a reusable item you can search for
+              and add to any set, and re-price later.
+            </span>
+          </div>
+        )}
 
         <div className="relative mt-3 max-w-md">
           <input
@@ -650,7 +944,7 @@ function SetEditor({
             className={`w-full ${inputClass}`}
           />
           {matches.length > 0 && !pendingProduct && (
-            <div className="absolute z-10 mt-1 w-full rounded border border-black/[.15] bg-card shadow-lg dark:border-white/[.2]">
+            <div className="absolute z-10 mt-1 max-h-64 w-full overflow-y-auto rounded border border-black/[.15] bg-card shadow-lg dark:border-white/[.2]">
               {matches.map((p) => (
                 <button
                   key={p.id}
@@ -814,13 +1108,30 @@ function SetEditor({
                             )}
                           </select>
                         </td>
-                        <td className="py-2 pr-3 text-right tabular-nums" title="Auto-calculated from Stock">
+                        <td className="py-2 pr-3 text-right tabular-nums">
                           {weightGramsForRow !== null && item.baseCostPerUnit !== null ? (
-                            <span className="text-zinc-500">
+                            <span className="text-zinc-500" title="Auto-calculated from Stock">
                               {formatMoney(item.baseCostPerUnit)} / {weightGramsForRow}g
                             </span>
                           ) : (
-                            formatMoney(liveUnitCost)
+                            <label className="inline-flex w-20 items-center gap-1 rounded border border-black/[.15] px-2 py-1 text-sm dark:border-white/[.2]">
+                              <span className="select-none text-zinc-400">$</span>
+                              <input
+                                type="number"
+                                min={0}
+                                step="0.01"
+                                title="Updates this item's price for every set it's used in"
+                                value={unitCostValue}
+                                onChange={(e) =>
+                                  setItemDrafts((prev) => ({
+                                    ...prev,
+                                    [item.id]: { ...prev[item.id], unitCost: e.target.value },
+                                  }))
+                                }
+                                onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
+                                className="w-full min-w-0 bg-transparent text-right outline-none"
+                              />
+                            </label>
                           )}
                         </td>
                         <td className="py-2 pr-3 text-right tabular-nums">{formatMoney(liveLineTotal)}</td>

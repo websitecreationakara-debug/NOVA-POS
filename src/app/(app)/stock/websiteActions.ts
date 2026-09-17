@@ -113,6 +113,7 @@ export async function setWebsitePurchaseCostAction(
     original_cost: number | null;
     total_cost_10pct: number | null;
     extra_money: number | null;
+    total_override: number | null;
   }>
 ): Promise<void> {
   await requireStockAccess();
@@ -215,6 +216,69 @@ export async function setVariationStockAction(input: {
   // ensurePosProductForSiteProduct seeds stock directly at creation time (to
   // the target value already) -- only need an explicit adjustment if the
   // link already existed.
+  if (input.alreadyLinked) {
+    const delta = input.stock - input.currentStock;
+    if (delta !== 0) {
+      await adjustStockAction({ productId: linked.id, delta, reason: "Stock page edit" });
+    }
+  }
+}
+
+// Same as setVariationPriceAction/setVariationStockAction but for a simple
+// (non-variable) product's own price/stock -- these used to only patch the
+// storefront listing, so a simple product with no sales/manual link yet
+// never got a POS product created for it and could never show up in a Cost
+// Control Set's product search. variationId "" is the same composite-key
+// convention a simple product's own link already uses (see
+// ensurePosProductForSiteProduct).
+export async function setSimpleProductPriceAction(input: {
+  catalogId: WebsiteCatalogId;
+  siteProductId: string;
+  title: string;
+  imageUrl: string | null;
+  alreadyLinked: boolean;
+  seedStock: number | null;
+  price: number;
+}): Promise<void> {
+  await requireStockAccess();
+  await updateWebsiteProduct(input.catalogId, input.siteProductId, { price: input.price });
+
+  const linked = await ensurePosProductForSiteProduct({
+    catalogId: input.catalogId,
+    siteProductId: input.siteProductId,
+    variationId: "",
+    title: input.title,
+    price: input.price,
+    imageUrl: input.imageUrl,
+    stock: input.seedStock,
+  });
+  if (input.alreadyLinked) {
+    await setProductPriceAction({ productId: linked.id, price: input.price });
+  }
+}
+
+export async function setSimpleProductStockAction(input: {
+  catalogId: WebsiteCatalogId;
+  siteProductId: string;
+  title: string;
+  imageUrl: string | null;
+  alreadyLinked: boolean;
+  seedPrice: number;
+  currentStock: number;
+  stock: number;
+}): Promise<void> {
+  await requireStockAccess();
+  await updateWebsiteProduct(input.catalogId, input.siteProductId, { stock: input.stock });
+
+  const linked = await ensurePosProductForSiteProduct({
+    catalogId: input.catalogId,
+    siteProductId: input.siteProductId,
+    variationId: "",
+    title: input.title,
+    price: input.seedPrice,
+    imageUrl: input.imageUrl,
+    stock: input.stock,
+  });
   if (input.alreadyLinked) {
     const delta = input.stock - input.currentStock;
     if (delta !== 0) {

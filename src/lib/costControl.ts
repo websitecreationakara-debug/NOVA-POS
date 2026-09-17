@@ -120,6 +120,108 @@ export function computeUnitCostForScale(
   return baseCostPerUnit;
 }
 
+// ---------- Set pricing model (Sets list) ----------
+// Ports the user's existing pricing spreadsheet formulas verbatim (column
+// letters below match that sheet). Set Cost (C) is the existing ingredient
+// total from Items (computeSetTotalCost) -- not stored here. Target MU%,
+// Labor Cost, and Base Price (D, G, K) are the only manually entered
+// inputs; everything else derives from them plus Set Cost. Base Price is
+// the seller's own price for the set (not scraped from a competitor) --
+// "Competitor" is just an optional note on who it was benchmarked against.
+
+export type SetPricingInputs = {
+  setCost: number | null;
+  targetMarkupPct: number | null;
+  laborCost: number | null;
+  competitorBasePrice: number | null;
+};
+
+export type SetPricing = {
+  afterMarkup: number | null;
+  costPurchase: number | null;
+  totalCost: number | null;
+  recommend: number | null;
+  salePrice: number | null;
+  percentOff: number | null;
+  markupPct: number | null;
+  grossProfit: number | null;
+  profitStatus: string | null;
+};
+
+// E = C + C*D. null the moment either input is missing (matches the sheet's
+// own (C="")+(D="") guard).
+function computeAfterMarkup(setCost: number | null, targetMarkupPct: number | null): number | null {
+  if (setCost === null || targetMarkupPct === null) return null;
+  return round2(setCost + setCost * (targetMarkupPct / 100));
+}
+
+// F = K*10% (K<=$50) or K*7% (K>$50) -- a purchase/processing fee scaled off
+// Base Price, not off Set Cost. null when there's no Base Price to base it
+// on.
+function computeCostPurchase(competitorBasePrice: number | null): number | null {
+  if (competitorBasePrice === null) return null;
+  return round2(competitorBasePrice * (competitorBasePrice <= 50 ? 0.1 : 0.07));
+}
+
+// M = K - F. Sale Price only exists once there's a Base Price (F is itself
+// derived from K, so it's never null here when K isn't).
+function computeSalePrice(competitorBasePrice: number | null, costPurchase: number | null): number | null {
+  if (competitorBasePrice === null || costPurchase === null) return null;
+  return round2(competitorBasePrice - costPurchase);
+}
+
+// L = (K - M) / K, as a percentage point (10 = 10%), matching marginPct's
+// convention elsewhere in this file.
+function computePercentOff(competitorBasePrice: number | null, salePrice: number | null): number | null {
+  if (competitorBasePrice === null || salePrice === null || competitorBasePrice === 0) return null;
+  return round2(((competitorBasePrice - salePrice) / competitorBasePrice) * 100);
+}
+
+export function computeSetPricing(inputs: SetPricingInputs): SetPricing {
+  const { setCost, targetMarkupPct, laborCost, competitorBasePrice } = inputs;
+  const afterMarkup = computeAfterMarkup(setCost, targetMarkupPct);
+  const costPurchase = computeCostPurchase(competitorBasePrice);
+
+  // H = C + F + G. The sheet only blanks this on a missing Set ID (never in
+  // practice) -- a still-missing Cost/Purchase or Labor Cost contributes $0
+  // rather than making the whole total unknown (mirrors the sheet's plain
+  // "+", where Google Sheets treats a blank cell as 0 in arithmetic).
+  const totalCost = setCost === null ? null : round2(setCost + (costPurchase ?? 0) + (laborCost ?? 0));
+
+  // I = E + N(F) + N(G) -- same "blank contributes $0" rule, explicit here
+  // via N() in the sheet.
+  const recommend = afterMarkup === null ? null : round2(afterMarkup + (costPurchase ?? 0) + (laborCost ?? 0));
+
+  const salePrice = computeSalePrice(competitorBasePrice, costPurchase);
+  const percentOff = computePercentOff(competitorBasePrice, salePrice);
+
+  // N = K/H - 1, as a percentage point.
+  const markupPct =
+    competitorBasePrice === null || totalCost === null || totalCost === 0
+      ? null
+      : round2((competitorBasePrice / totalCost - 1) * 100);
+
+  // O = K - H.
+  const grossProfit =
+    competitorBasePrice === null || totalCost === null ? null : round2(competitorBasePrice - totalCost);
+
+  const profitStatus = computeProfitStatus(grossProfit);
+
+  return { afterMarkup, costPurchase, totalCost, recommend, salePrice, percentOff, markupPct, grossProfit, profitStatus };
+}
+
+// P: buckets Gross Profit into the sheet's labels. null (blank) below $2 or
+// when Gross Profit itself is unknown/exactly 0.
+function computeProfitStatus(grossProfit: number | null): string | null {
+  if (grossProfit === null || grossProfit === 0) return null;
+  if (grossProfit >= 20) return "Great";
+  if (grossProfit >= 12) return "Nice";
+  if (grossProfit >= 8) return "Good";
+  if (grossProfit >= 4) return "Okay";
+  if (grossProfit >= 2) return "Check";
+  return null;
+}
+
 // Suggests a sell price hitting a target margin % off cost, e.g. a 30%
 // target margin on a $10 cost -> sells for $10 / (1 - 0.30) = $14.29. null
 // when the cost is unknown or the target is 100%+ (mathematically undefined

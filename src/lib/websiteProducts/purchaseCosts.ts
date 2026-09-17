@@ -2,18 +2,23 @@ import { supabaseAdmin } from "@/lib/supabase/server";
 import type { ProductSiteLink } from "@/types/database";
 
 // Manually-entered purchase-cost inputs for one storefront item -- see
-// migration 0027 (website_product_purchase_costs). Purchase Cost and Total
-// are always derived (see derivePurchaseCost), never stored.
+// migration 0027 (website_product_purchase_costs) and 0032
+// (total_override). Purchase Cost is always derived (see
+// derivePurchaseCost); Total is derived too unless totalOverride is set --
+// some products never get an Original Cost / Total Cost 10%, so Total needs
+// to be enterable on its own.
 export type PurchaseCostFields = {
   originalCost: number | null;
   totalCost10pct: number | null;
   extraMoney: number | null;
+  totalOverride: number | null;
 };
 
 export const EMPTY_PURCHASE_COSTS: PurchaseCostFields = {
   originalCost: null,
   totalCost10pct: null,
   extraMoney: null,
+  totalOverride: null,
 };
 
 function round2(n: number): number {
@@ -21,19 +26,21 @@ function round2(n: number): number {
 }
 
 // Purchase Cost = average of Original Cost and Total Cost 10% (both manual
-// inputs); Total = Purchase Cost + Extra Money. Null (not 0) the moment an
-// input it depends on is missing, so an incomplete row reads as "not entered
-// yet" rather than a wrong number.
+// inputs); Total = Purchase Cost + Extra Money, unless totalOverride is set,
+// in which case it wins outright -- lets Total be entered even when Original
+// Cost / Total Cost 10% never get filled in for a product. Null (not 0) the
+// moment an input it depends on is missing, so an incomplete row reads as
+// "not entered yet" rather than a wrong number.
 export function derivePurchaseCost(f: PurchaseCostFields): {
   purchaseCost: number | null;
   total: number | null;
 } {
-  const { originalCost, totalCost10pct, extraMoney } = f;
-  if (originalCost === null || totalCost10pct === null) {
-    return { purchaseCost: null, total: null };
-  }
-  const purchaseCost = round2((originalCost + totalCost10pct) / 2);
-  const total = extraMoney === null ? purchaseCost : round2(purchaseCost + extraMoney);
+  const { originalCost, totalCost10pct, extraMoney, totalOverride } = f;
+  const purchaseCost =
+    originalCost === null || totalCost10pct === null ? null : round2((originalCost + totalCost10pct) / 2);
+  const derivedTotal =
+    purchaseCost === null ? null : extraMoney === null ? purchaseCost : round2(purchaseCost + extraMoney);
+  const total = totalOverride ?? derivedTotal;
   return { purchaseCost, total };
 }
 
@@ -49,7 +56,7 @@ export async function getWebsitePurchaseCosts(
 ): Promise<Record<string, PurchaseCostFields>> {
   const { data, error } = await supabaseAdmin
     .from("website_product_purchase_costs")
-    .select("site_product_id, variation_id, original_cost, total_cost_10pct, extra_money")
+    .select("site_product_id, variation_id, original_cost, total_cost_10pct, extra_money, total_override")
     .eq("site", site);
   if (error) throw error;
 
@@ -59,6 +66,7 @@ export async function getWebsitePurchaseCosts(
       originalCost: row.original_cost,
       totalCost10pct: row.total_cost_10pct,
       extraMoney: row.extra_money,
+      totalOverride: row.total_override,
     };
   }
   return out;
@@ -86,7 +94,7 @@ export async function getEffectiveProductCost(productId: string): Promise<number
 
   const { data: costRow } = await supabaseAdmin
     .from("website_product_purchase_costs")
-    .select("original_cost, total_cost_10pct, extra_money")
+    .select("original_cost, total_cost_10pct, extra_money, total_override")
     .eq("site", link.site)
     .eq("site_product_id", link.site_product_id)
     .eq("variation_id", link.variation_id)
@@ -97,13 +105,15 @@ export async function getEffectiveProductCost(productId: string): Promise<number
     originalCost: costRow.original_cost,
     totalCost10pct: costRow.total_cost_10pct,
     extraMoney: costRow.extra_money,
+    totalOverride: costRow.total_override,
   });
   return total ?? product.cost_price;
 }
 
 // Upserts only the fields provided -- e.g. `{ original_cost: 5 }` leaves an
-// existing row's total_cost_10pct/extra_money untouched (PostgREST's upsert
-// only SETs the columns present in the payload on conflict).
+// existing row's total_cost_10pct/extra_money/total_override untouched
+// (PostgREST's upsert only SETs the columns present in the payload on
+// conflict).
 export async function setWebsitePurchaseCost(
   site: ProductSiteLink["site"],
   siteProductId: string,
@@ -112,6 +122,7 @@ export async function setWebsitePurchaseCost(
     original_cost: number | null;
     total_cost_10pct: number | null;
     extra_money: number | null;
+    total_override: number | null;
   }>
 ): Promise<void> {
   const { error } = await supabaseAdmin.from("website_product_purchase_costs").upsert(
