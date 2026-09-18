@@ -1,7 +1,8 @@
 import { supabaseAdmin } from "@/lib/supabase/server";
-import { configuredCatalogs } from "@/lib/websiteProducts/catalogs";
+import { catalogForBrandSlug, configuredCatalogs } from "@/lib/websiteProducts/catalogs";
 import { listWebsiteProducts } from "@/lib/websiteProducts/client";
 import { countLowStock } from "@/lib/websiteProducts/stock";
+import type { WebsiteCatalogId } from "@/lib/websiteProducts/types";
 import { formatInvoiceNumber, invoiceMonthStamp, invoiceMonthStartIso } from "@/lib/invoiceNumber";
 import { ALL_PAYMENT_METHODS, type PaymentMethod } from "@/lib/paymentMethods";
 import { aggregatePartialCogs, aggregateStrictCogs, computeGrossMargin } from "@/lib/cogs";
@@ -656,10 +657,9 @@ export async function getCogsSummary(
 
   let adjustmentsQuery = supabaseAdmin
     .from("stock_adjustments")
-    .select("category, cost_impact, created_at, products!inner(brand_id)")
+    .select("category, cost_impact, delta, created_at, products!inner(brand_id, price)")
     .gte("created_at", `${fromDate}T00:00:00.000Z`)
-    .lte("created_at", `${toDate}T23:59:59.999Z`)
-    .not("cost_impact", "is", null);
+    .lte("created_at", `${toDate}T23:59:59.999Z`);
   if (brandId !== ALL_BUSINESSES_ID) adjustmentsQuery = adjustmentsQuery.eq("products.brand_id", brandId);
 
   const [{ data: items, error: itemsError }, { data: adjustments, error: adjError }] = await Promise.all([
@@ -671,15 +671,214 @@ export async function getCogsSummary(
 
   const { totalCogs, hasUnknownCost } = aggregatePartialCogs((items ?? []).map((i) => i.cogs));
 
+  type AdjustmentRow = {
+    category: string;
+    cost_impact: number | null;
+    delta: number;
+    products: { brand_id: string; price: number } | null;
+  };
+
   let wasteCost = 0;
   let promotionCost = 0;
-  for (const a of adjustments ?? []) {
-    const impact = a.cost_impact ?? 0;
+  // Same current-price fallback as getWasteLog's display -- an adjustment
+  // logged before a cost price ever existed otherwise sits at $0 forever,
+  // even though the log right below this card shows a real dollar figure
+  // for it.
+  for (const a of (adjustments ?? []) as AdjustmentRow[]) {
+    const impact =
+      a.cost_impact ?? (a.delta < 0 && a.products ? round2(a.products.price * Math.abs(a.delta)) : 0);
     if (a.category === "waste") wasteCost += impact;
     else if (a.category === "promotion") promotionCost += impact;
   }
 
   return { totalCogs, hasUnknownCost, wasteCost: round2(wasteCost), promotionCost: round2(promotionCost) };
+}
+
+export type WasteLogEntry = {
+  id: string;
+  productName: string;
+  // Units wasted, always positive for display -- stock_adjustments stores it
+  // as a negative delta.
+  quantity: number;
+  reason: string;
+  // The per-unit cost snapshotted at the time (derived from costImpact /
+  // quantity -- stock_adjustments only stores the total, not the unit price
+  // it was computed from). null exactly when costImpact is null.
+  unitCost: number | null;
+  // quantity * unitCost. null when the product had no cost price recorded at
+  // the time -- matches wasteCost above counting it as $0, not "unknown".
+  costImpact: number | null;
+  createdAt: string;
+};
+
+// Backs the Waste stat card's expandable list -- every logged waste entry
+// (not just the ones with a cost_impact, unlike wasteCost's sum above) so
+// staff can see what actually left the shelf even before its cost price was
+// set.
+export async function getWasteLog(
+  brandId: string,
+  fromDate: string,
+  toDate: string
+): Promise<WasteLogEntry[]> {
+  let query = supabaseAdmin
+    .from("stock_adjustments")
+    .select("id, delta, reason, cost_impact, created_at, products!inner(name, brand_id, price)")
+    .eq("category", "waste")
+    .gte("created_at", `${fromDate}T00:00:00.000Z`)
+    .lte("created_at", `${toDate}T23:59:59.999Z`)
+    .order("created_at", { ascending: false });
+  if (brandId !== ALL_BUSINESSES_ID) query = query.eq("products.brand_id", brandId);
+
+  const { data, error } = await query;
+  if (error) throw error;
+
+  type Row = {
+    id: string;
+    delta: number;
+    reason: string | null;
+    cost_impact: number | null;
+    created_at: string;
+    products: { name: string; brand_id: string; price: number } | null;
+  };
+
+  return ((data ?? []) as Row[]).map((r) => {
+    const quantity = Math.abs(r.delta);
+    // Entries logged before a cost price ever existed snapshotted null --
+    // show the product's current selling price for those instead of a bare
+    // "—", same fallback adjustStockAction now uses for new entries. Only
+    // the display falls back like this; a later real cost price still wins
+    // for the Waste $ total (getCogsSummary), which reads the stored
+    // cost_impact directly.
+    const unitCost =
+      r.cost_impact !== null && quantity !== 0 ? round2(r.cost_impact / quantity) : (r.products?.price ?? null);
+    const costImpact = r.cost_impact ?? (unitCost === null ? null : round2(unitCost * quantity));
+    return {
+      id: r.id,
+      productName: r.products?.name ?? "—",
+      quantity,
+      reason: r.reason ?? "Waste",
+      unitCost,
+      costImpact,
+      createdAt: r.created_at,
+    };
+  });
+}
+
+// A single sellable unit (a plain POS product, or one size/flavor of a
+// website product) that a Stock-wide product picker can offer -- used by
+// Accountance's "Add waste item" (logs waste against it) and Cost Control's
+// Set item search (adds it as a set_items row). `website` is set whenever
+// the item comes from (or is matched to) one of the 3 storefront catalogs --
+// acting on one patches that site's own stock too, same two-way sync the
+// Stock page's price/stock edits already do (see
+// setSimpleProductStockAction/setVariationStockAction). `pos` is set
+// whenever a POS product already exists for it (plain products always have
+// one; a website item only once someone has edited/sold it, or added it to
+// a Set, before) -- absent, picking it creates that link on the fly.
+export type StockPickerItem = {
+  key: string;
+  name: string;
+  unit: string;
+  // For display only -- null means the website item is still unlimited
+  // stock and has never been tracked as a real count.
+  displayStock: number | null;
+  costPrice: number | null;
+  pos: { productId: string; currentStock: number } | null;
+  website: {
+    catalogId: WebsiteCatalogId;
+    siteProductId: string;
+    variationId: string | null;
+    siteStock: number | null;
+    price: number;
+    imageUrl: string | null;
+  } | null;
+};
+
+// Combines the brand's POS product list with its live storefront catalog (if
+// it has one) into one flat pickable list -- see StockPickerItem's comment
+// for why each entry carries what it does. Falls back to POS-only products
+// if the storefront is unreachable, same as the rest of this app's "never
+// let a website fetch failure block Stock/Sales" convention.
+export async function getStockPickerItems(brandId: string, brandSlug: string): Promise<StockPickerItem[]> {
+  const [{ products: posProducts }, catalog] = await Promise.all([
+    getCatalogForBrand(brandId),
+    Promise.resolve(catalogForBrandSlug(brandSlug)),
+  ]);
+
+  const items: StockPickerItem[] = [];
+  const usedPosKeys = new Set<string>();
+
+  if (catalog) {
+    try {
+      const siteProducts = await listWebsiteProducts(catalog.id);
+      for (const wp of siteProducts) {
+        const isVariable =
+          (wp.type === "variable" || wp.type === "variant") && (wp.variations?.length ?? 0) > 0;
+        const entries = isVariable
+          ? wp.variations!.map((v) => ({
+              variationId: v.id as string | null,
+              stock: v.stock,
+              price: v.price,
+              imageUrl: v.image_url ?? wp.image_url,
+              label: [wp.title, v.weight || v.flavor].filter(Boolean).join(" "),
+            }))
+          : [
+              {
+                variationId: null as string | null,
+                stock: wp.stock,
+                price: wp.price,
+                imageUrl: wp.image_url,
+                label: wp.title,
+              },
+            ];
+        for (const e of entries) {
+          const posKey = `${wp.id}::${e.variationId ?? ""}`;
+          const linked =
+            posProducts.find(
+              (p) =>
+                p.site_link &&
+                p.site_link.site_product_id === wp.id &&
+                (p.site_link.variation_id || "") === (e.variationId ?? "")
+            ) ?? null;
+          if (linked) usedPosKeys.add(posKey);
+          items.push({
+            key: `site:${posKey}`,
+            name: e.label,
+            unit: "pcs",
+            displayStock: linked ? linked.stock_quantity : e.stock,
+            costPrice: linked?.cost_price ?? null,
+            pos: linked ? { productId: linked.id, currentStock: linked.stock_quantity } : null,
+            website: {
+              catalogId: catalog.id,
+              siteProductId: wp.id,
+              variationId: e.variationId,
+              siteStock: e.stock,
+              price: e.price,
+              imageUrl: e.imageUrl,
+            },
+          });
+        }
+      }
+    } catch {
+      // Storefront unreachable -- fall through to POS-only products below.
+    }
+  }
+
+  for (const p of posProducts) {
+    const key = p.site_link ? `${p.site_link.site_product_id}::${p.site_link.variation_id || ""}` : null;
+    if (key && usedPosKeys.has(key)) continue; // already represented above, with its website link
+    items.push({
+      key: `pos:${p.id}`,
+      name: p.name,
+      unit: p.unit,
+      displayStock: p.stock_quantity,
+      costPrice: p.cost_price,
+      pos: { productId: p.id, currentStock: p.stock_quantity },
+      website: null,
+    });
+  }
+
+  return items;
 }
 
 export type MarginReportRow = {

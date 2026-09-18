@@ -1,11 +1,11 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { Copy, Pencil, Plus, Trash2 } from "lucide-react";
 import type { Brand } from "@/types/database";
-import type { ProductWithStock } from "@/lib/supabase/queries";
+import type { StockPickerItem } from "@/lib/supabase/queries";
 import { computeLineTotal, computeSetTotalCost, computeUnitCostForScale, productWeightGrams } from "@/lib/costControl";
 import {
   addManualSetItemAction,
@@ -13,6 +13,7 @@ import {
   createSetAction,
   deleteSetAction,
   duplicateSetAction,
+  linkStockPickerItemAction,
   removeSetItemAction,
   syncManualItemProductCostAction,
   updateSetAction,
@@ -107,14 +108,14 @@ export default function CostControlClient({
   brands,
   currentBrand,
   sets,
-  products,
+  items,
   activeSet,
   isBuilderOpen,
 }: {
   brands: Brand[];
   currentBrand: Brand;
   sets: SetSummary[];
-  products: ProductWithStock[];
+  items: StockPickerItem[];
   activeSet: SetDetail | null;
   isBuilderOpen: boolean;
 }) {
@@ -138,7 +139,7 @@ export default function CostControlClient({
       </div>
 
       {isBuilderOpen ? (
-        <SetBuilder brandId={currentBrand.id} products={products} activeSet={activeSet} />
+        <SetBuilder brandId={currentBrand.id} items={items} activeSet={activeSet} />
       ) : (
         <SetsOverview brandId={currentBrand.id} sets={sets} />
       )}
@@ -474,11 +475,11 @@ function DuplicateSetDialog({ set, onClose }: { set: SetSummary; onClose: () => 
 
 function SetBuilder({
   brandId,
-  products,
+  items,
   activeSet,
 }: {
   brandId: string;
-  products: ProductWithStock[];
+  items: StockPickerItem[];
   activeSet: SetDetail | null;
 }) {
   const router = useRouter();
@@ -552,21 +553,43 @@ function SetBuilder({
     );
   }
 
-  return <SetEditor brandId={brandId} products={products} set={activeSet} />;
+  return <SetEditor brandId={brandId} items={items} set={activeSet} />;
 }
 
 function SetEditor({
   brandId,
-  products,
+  items,
   set,
 }: {
   brandId: string;
-  products: ProductWithStock[];
+  items: StockPickerItem[];
   set: SetDetail;
 }) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
+
+  // A product's cost can change from somewhere else entirely (Stock's
+  // Purchase Cost Total, Margin Report's Unit Cost) -- see
+  // syncSetItemCostsForProduct. Poll while this page is visible so that
+  // shows up here without anyone needing to hit refresh, same
+  // interval/visibility pattern as the Website Products panel's own
+  // background poll. Paused while a save here is in flight so a refresh
+  // never lands mid-mutation.
+  useEffect(() => {
+    if (isPending) return;
+    const tick = () => {
+      if (document.visibilityState === "visible") router.refresh();
+    };
+    const timer = setInterval(tick, 15_000);
+    document.addEventListener("visibilitychange", tick);
+    window.addEventListener("focus", tick);
+    return () => {
+      clearInterval(timer);
+      document.removeEventListener("visibilitychange", tick);
+      window.removeEventListener("focus", tick);
+    };
+  }, [isPending, router]);
 
   // Header fields -- each saves independently on blur.
   const [codeDraft, setCodeDraft] = useState(set.code);
@@ -574,7 +597,7 @@ function SetEditor({
 
   // Add-product search
   const [query, setQuery] = useState("");
-  const [pendingProductId, setPendingProductId] = useState<string | null>(null);
+  const [pendingKey, setPendingKey] = useState<string | null>(null);
   const [amountDraft, setAmountDraft] = useState("");
 
   // "+ Add manual item" -- for extras that aren't really Stock-tracked
@@ -632,24 +655,28 @@ function SetEditor({
     });
   }
 
-  // Every match in Stock for this brand, not just the first few -- the
-  // dropdown scrolls (see its max-h-64 overflow-y-auto below) instead of
-  // silently hiding matches past a hard cap.
+  // Every match across Stock's POS products and its live storefront catalog
+  // for this brand, not just the first few -- the dropdown scrolls (see its
+  // max-h-64 overflow-y-auto below) instead of silently hiding matches past
+  // a hard cap. A website item already in the set is filtered out via its
+  // linked POS id; an unlinked one can't be in the set yet by definition.
   const inSetIds = new Set(set.items.map((i) => i.productId));
   const matches =
     query.trim().length === 0
       ? []
-      : products.filter((p) => !inSetIds.has(p.id) && p.name.toLowerCase().includes(query.trim().toLowerCase()));
-  const pendingProduct = products.find((p) => p.id === pendingProductId) ?? null;
+      : items.filter(
+          (p) => !(p.pos && inSetIds.has(p.pos.productId)) && p.name.toLowerCase().includes(query.trim().toLowerCase())
+        );
+  const pendingItem = items.find((p) => p.key === pendingKey) ?? null;
 
-  function pickProduct(p: ProductWithStock) {
-    setPendingProductId(p.id);
+  function pickProduct(p: StockPickerItem) {
+    setPendingKey(p.key);
     setQuery(p.name);
     setAmountDraft("");
   }
 
   function confirmAdd() {
-    if (!pendingProduct) return;
+    if (!pendingItem) return;
     const amount = parseFloat(amountDraft);
     if (Number.isNaN(amount) || amount <= 0) {
       setError("Enter an amount greater than zero");
@@ -658,8 +685,24 @@ function SetEditor({
     setError(null);
     startTransition(async () => {
       try {
-        await addSetItemAction({ setId: set.id, productId: pendingProduct.id, amount });
-        setPendingProductId(null);
+        // Not linked to POS yet (a website catalog item nobody has edited
+        // or sold before) -- create that link on the fly first, same as the
+        // first price/stock edit on Stock already does.
+        const productId = pendingItem.pos
+          ? pendingItem.pos.productId
+          : (
+              await linkStockPickerItemAction({
+                catalogId: pendingItem.website!.catalogId,
+                siteProductId: pendingItem.website!.siteProductId,
+                variationId: pendingItem.website!.variationId,
+                title: pendingItem.name,
+                price: pendingItem.website!.price,
+                imageUrl: pendingItem.website!.imageUrl,
+                stock: pendingItem.website!.siteStock,
+              })
+            ).productId;
+        await addSetItemAction({ setId: set.id, productId, amount });
+        setPendingKey(null);
         setQuery("");
         setAmountDraft("");
         router.refresh();
@@ -939,22 +982,25 @@ function SetEditor({
             value={query}
             onChange={(e) => {
               setQuery(e.target.value);
-              setPendingProductId(null);
+              setPendingKey(null);
             }}
             className={`w-full ${inputClass}`}
           />
-          {matches.length > 0 && !pendingProduct && (
+          {matches.length > 0 && !pendingItem && (
             <div className="absolute z-10 mt-1 max-h-64 w-full overflow-y-auto rounded border border-black/[.15] bg-card shadow-lg dark:border-white/[.2]">
               {matches.map((p) => (
                 <button
-                  key={p.id}
+                  key={p.key}
                   type="button"
                   onClick={() => pickProduct(p)}
                   className="flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-sm hover:bg-black/[.05] dark:hover:bg-white/[.08]"
                 >
-                  <span>{p.name}</span>
+                  <span>
+                    {p.name}
+                    {!p.pos && <span className="ml-1.5 text-xs text-amber-600 dark:text-amber-400">not in Stock yet</span>}
+                  </span>
                   <span className="text-xs text-zinc-500">
-                    {p.unit} · {p.cost_price === null ? "no cost" : `$${p.cost_price.toFixed(2)}`}
+                    {p.unit} · {p.costPrice === null ? "no cost" : `$${p.costPrice.toFixed(2)}`}
                   </span>
                 </button>
               ))}
@@ -962,12 +1008,12 @@ function SetEditor({
           )}
         </div>
 
-        {pendingProduct && (
+        {pendingItem && (
           <div className="mt-3 flex flex-wrap items-center gap-3 rounded border border-black/[.15] px-3 py-2 dark:border-white/[.2]">
-            <span className="font-medium">{pendingProduct.name}</span>
+            <span className="font-medium">{pendingItem.name}</span>
             <span className="text-xs text-zinc-500">
-              Unit: {pendingProduct.unit} · Cost:{" "}
-              {pendingProduct.cost_price === null ? "unknown" : formatMoney(pendingProduct.cost_price)}
+              Unit: {pendingItem.unit} · Cost:{" "}
+              {pendingItem.costPrice === null ? "unknown" : formatMoney(pendingItem.costPrice)}
             </span>
             <input
               type="number"
@@ -980,7 +1026,7 @@ function SetEditor({
               onKeyDown={(e) => {
                 if (e.key === "Enter") confirmAdd();
                 if (e.key === "Escape") {
-                  setPendingProductId(null);
+                  setPendingKey(null);
                   setQuery("");
                 }
               }}
@@ -997,7 +1043,7 @@ function SetEditor({
             <button
               type="button"
               onClick={() => {
-                setPendingProductId(null);
+                setPendingKey(null);
                 setQuery("");
               }}
               className="text-xs text-zinc-500"

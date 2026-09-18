@@ -5,6 +5,7 @@ import { supabaseAdmin } from "@/lib/supabase/server";
 import { pushStockToSites, searchSiteProducts, linkProductToSite, type SiteProductCandidate } from "@/lib/site-sync";
 import { requireStockAccess } from "@/lib/stockAccess";
 import { computeLineCogs, computeRecipeUnitCost } from "@/lib/cogs";
+import { getEffectiveProductCost, syncSetItemCostsForProduct } from "@/lib/websiteProducts/purchaseCosts";
 import type { ProductSiteLink, StockAdjustmentCategory } from "@/types/database";
 
 // Order lines never had a cost recorded because cost tracking didn't exist
@@ -65,9 +66,28 @@ export async function adjustStockAction(input: {
   delta: number;
   reason?: string;
   category?: StockAdjustmentCategory;
+  // Backdates the logged stock_adjustments row (ISO timestamp) -- e.g.
+  // Accountance's "Add waste item" form lets someone log today a waste event
+  // that actually happened on an earlier day. Omit for "now" (the default).
+  createdAt?: string;
 }): Promise<{ quantity: number }> {
-  const { productId, delta, reason, category } = input;
+  const { productId, delta, reason, category, createdAt } = input;
   const user = await requireStockAccess();
+
+  // Falls back to a website item's Purchase Cost Total (Stock page), then to
+  // the product's own cost_price -- see getEffectiveProductCost. If neither
+  // was ever recorded, falls back once more to the product's regular selling
+  // price so waste/promotion still gets *some* dollar value instead of
+  // always snapshotting $0 for an item nobody ever entered a cost for.
+  let costPriceOverride = await getEffectiveProductCost(productId).catch(() => null);
+  if (costPriceOverride === null) {
+    const { data: product } = await supabaseAdmin
+      .from("products")
+      .select("price")
+      .eq("id", productId)
+      .single();
+    costPriceOverride = product?.price ?? null;
+  }
 
   const { data, error } = await supabaseAdmin.rpc("adjust_stock", {
     p_product_id: productId,
@@ -75,6 +95,8 @@ export async function adjustStockAction(input: {
     p_reason: reason ?? null,
     p_created_by: user?.id ?? null,
     p_category: category ?? "other",
+    p_cost_price_override: costPriceOverride,
+    p_created_at: createdAt ?? null,
   });
 
   if (error || data === null) {
@@ -216,9 +238,15 @@ export async function setProductCostAction(input: {
 
   if (costPrice !== null) await backfillOrderItemCogs(productId);
 
+  // A Set item's Unit Cost only wins over this when the product also has a
+  // fully-entered Purchase Cost Total (see getEffectiveProductCost) --
+  // otherwise this new cost_price is exactly what should show there now.
+  await syncSetItemCostsForProduct(productId);
+
   revalidatePath("/stock");
   revalidatePath("/sales");
   revalidatePath("/accountance");
+  revalidatePath("/marketing");
 }
 
 // null clears the weight back to "unknown" -- Cost Control Set lines can't

@@ -11,8 +11,28 @@ import {
   countItemsMissingCost,
   type SetPricing,
 } from "@/lib/costControl";
-import { getEffectiveProductCost } from "@/lib/websiteProducts/purchaseCosts";
+import { getEffectiveProductCost, syncSetItemCostsForProduct } from "@/lib/websiteProducts/purchaseCosts";
+import { ensurePosProductForSiteProduct } from "@/app/(app)/sales/websiteActions";
+import type { WebsiteCatalogId } from "@/lib/websiteProducts/types";
 import type { SetStatus } from "@/types/database";
+
+// Cost Control's Set item search (see getStockPickerItems) can surface a
+// website catalog item that has no POS product yet -- this creates that
+// link on the fly, same as the first price/stock edit on Stock already
+// does, so addSetItemAction below has a real productId to attach to.
+export async function linkStockPickerItemAction(input: {
+  catalogId: WebsiteCatalogId;
+  siteProductId: string;
+  variationId: string | null;
+  title: string;
+  price: number;
+  imageUrl: string | null;
+  stock: number | null;
+}): Promise<{ productId: string }> {
+  await requireMarketingAccess();
+  const linked = await ensurePosProductForSiteProduct(input);
+  return { productId: linked.id };
+}
 
 export type SetSummary = {
   id: string;
@@ -445,11 +465,12 @@ export async function addManualSetItemAction(input: {
 // A set line's Unit Cost can drift from its product's price over time (the
 // user's own words: "the price some time it increase or decrease"). Called
 // alongside updateSetItemAction (which already updates the line's own
-// unit_cost) to also update the underlying product's cost_price, so the new
-// price is reusable -- the next time this same item is added to any set,
-// addSetItemAction's getEffectiveProductCost picks up the update. Only
-// meaningful for a non-weight-scale line (see CostControlClient) -- a
-// weight-scale line's Unit Cost is derived instead (computeUnitCostForScale).
+// unit_cost) to also update the underlying product's cost_price -- then
+// pushes that new cost into every *other* set using this same item too (see
+// syncSetItemCostsForProduct), so it's not just the next new addition that
+// picks it up. Only meaningful for a non-weight-scale line (see
+// CostControlClient) -- a weight-scale line's Unit Cost is derived instead
+// (computeUnitCostForScale).
 export async function syncManualItemProductCostAction(productId: string, unitCost: number): Promise<void> {
   await requireMarketingAccess();
   if (Number.isNaN(unitCost) || unitCost < 0) {
@@ -458,6 +479,8 @@ export async function syncManualItemProductCostAction(productId: string, unitCos
 
   const { error } = await supabaseAdmin.from("products").update({ cost_price: unitCost }).eq("id", productId);
   if (error) throw new Error(error.message);
+
+  await syncSetItemCostsForProduct(productId);
 
   revalidatePath("/marketing");
   revalidatePath("/stock");

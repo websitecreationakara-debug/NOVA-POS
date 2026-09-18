@@ -719,7 +719,13 @@ export default function WebsiteProductsPanel({
   // price/stock are meaningless at the parent level (always 0/null) -- then
   // search/filter over the resulting rows.
   const q = search.trim().toLowerCase();
-  const allEntries = toEntries(products ?? []);
+  // A-Z by name -- the storefront API returns products in its own arbitrary
+  // (usually creation) order, not alphabetical. Stable sort keeps a
+  // "variable" product's own sizes in their existing relative order since
+  // they all share the same title.
+  const allEntries = toEntries(products ?? []).sort((a, b) =>
+    a.product.title.localeCompare(b.product.title, undefined, { sensitivity: "base" })
+  );
   // null stock means unlimited -- never out of stock or low, same as the
   // Sales grid's "Stock untracked" treatment.
   const lowStockCount = allEntries.filter(({ product: p, variation: v }) => {
@@ -1202,7 +1208,7 @@ export default function WebsiteProductsPanel({
                   Purchase Cost
                 </th>
                 <th className="w-20 bg-black/[.015] px-2 py-2 text-right font-medium dark:bg-white/[.02]">
-                  Extra Money
+                  Extra Cost
                 </th>
                 <th className="w-20 border-r border-black/[.08] bg-black/[.015] px-2 py-2 text-right font-medium dark:border-white/[.145] dark:bg-white/[.02]">
                   Total
@@ -1384,7 +1390,7 @@ export default function WebsiteProductsPanel({
                     </td>
                     <td className="border-r border-black/[.08] bg-black/[.015] px-2 py-2 text-right dark:border-white/[.145] dark:bg-white/[.02]">
                       <label
-                        title="Manual override -- wins over Purchase Cost + Extra Money, and works even when Original Cost / Total Cost 10% aren't filled in"
+                        title="Manual override -- wins over Purchase Cost + Extra Cost, and works even when Original Cost / Total Cost 10% aren't filled in"
                         className="inline-flex w-16 items-center gap-1 rounded border border-black/[.15] px-2 py-1 text-sm font-medium tabular-nums focus-within:border-black/40 dark:border-white/[.2] dark:focus-within:border-white/50"
                       >
                         <span className="select-none text-zinc-400">$</span>

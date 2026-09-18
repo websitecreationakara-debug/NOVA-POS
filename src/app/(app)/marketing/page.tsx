@@ -1,4 +1,4 @@
-import { getBrands, getCatalogForBrand } from "@/lib/supabase/queries";
+import { getBrands, getStockPickerItems } from "@/lib/supabase/queries";
 import { listCustomersAction, listPromotionsAction } from "./actions";
 import { getSetAction, listSetsAction } from "./costControlActions";
 import MarketingClient from "./MarketingClient";
@@ -24,9 +24,9 @@ export default async function MarketingPage({
     const currentBrand = brands.find((b) => b.id === brandId) ?? brands[0];
     const activeSetId = setParam && setParam !== "new" ? setParam : null;
 
-    const [sets, { products }, activeSet] = await Promise.all([
+    const [sets, pickerItems, activeSet] = await Promise.all([
       listSetsAction(currentBrand.id),
-      getCatalogForBrand(currentBrand.id),
+      getStockPickerItems(currentBrand.id, currentBrand.slug),
       activeSetId ? getSetAction(activeSetId) : Promise.resolve(null),
     ]);
 
@@ -35,7 +35,7 @@ export default async function MarketingPage({
         brands={brands}
         currentBrand={currentBrand}
         sets={sets}
-        products={products.filter((p) => p.is_active)}
+        items={pickerItems}
         activeSet={activeSet}
         isBuilderOpen={!!setParam}
       />

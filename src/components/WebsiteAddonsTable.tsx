@@ -57,9 +57,14 @@ export default function WebsiteAddonsTable({
   const [imageError, setImageError] = useState<string | null>(null);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(25);
-  const pageCount = Math.max(1, Math.ceil(addons.length / pageSize));
+  // A-Z by title, same as the product table above -- the storefront API
+  // otherwise returns these in their own arbitrary order.
+  const sortedAddons = [...addons].sort((a, b) =>
+    a.title.localeCompare(b.title, undefined, { sensitivity: "base" })
+  );
+  const pageCount = Math.max(1, Math.ceil(sortedAddons.length / pageSize));
   const currentPage = Math.min(page, pageCount);
-  const paged = addons.slice((currentPage - 1) * pageSize, currentPage * pageSize);
+  const paged = sortedAddons.slice((currentPage - 1) * pageSize, currentPage * pageSize);
 
   function handleImagePick(file: File | null) {
     if (!file) return;

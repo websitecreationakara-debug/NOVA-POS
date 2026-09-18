@@ -2,13 +2,15 @@
 
 import { useEffect, useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { Check, ChevronLeft, ChevronRight, Pencil, TriangleAlert, X } from "lucide-react";
+import { Check, ChevronDown, ChevronLeft, ChevronRight, Pencil, Trash2, TriangleAlert, X } from "lucide-react";
 import type { Brand, CashReconciliation, Expense, Order } from "@/types/database";
 import {
   ALL_BUSINESSES_ID,
   type CogsSummary,
   type DailySalesSummary,
   type MarginReportRow,
+  type StockPickerItem,
+  type WasteLogEntry,
 } from "@/lib/supabase/queries";
 import { PAYMENT_METHOD_LABELS, type PaymentMethod } from "@/lib/paymentMethods";
 import { addExpenseAction, saveReconciliationAction, updateExpenseAction } from "./actions";
@@ -16,6 +18,9 @@ import { setProductCostAction, setProductPriceAction } from "../stock/actions";
 import { exportAccountancePdf } from "@/lib/exportAccountancePdf";
 import DeleteExpenseDialog from "@/components/DeleteExpenseDialog";
 import BulkAddCostPriceModal from "@/components/BulkAddCostPriceModal";
+import AddWasteItemModal from "@/components/AddWasteItemModal";
+import EditWasteLogModal from "@/components/EditWasteLogModal";
+import DeleteWasteLogDialog from "@/components/DeleteWasteLogDialog";
 import type { AccountanceTab } from "./page";
 
 type RangeMode = "day" | "week" | "month" | "quarter" | "year";
@@ -63,6 +68,8 @@ export default function AccountanceClient({
   expenses,
   cogsSummary,
   marginReport,
+  wasteItems,
+  wasteLog,
 }: {
   brands: Brand[];
   currentBrand: Brand;
@@ -80,6 +87,8 @@ export default function AccountanceClient({
   expenses: Expense[];
   cogsSummary: CogsSummary;
   marginReport: MarginReportRow[];
+  wasteItems: StockPickerItem[];
+  wasteLog: WasteLogEntry[];
 }) {
   const router = useRouter();
   const [countedCash, setCountedCash] = useState(
@@ -287,6 +296,10 @@ export default function AccountanceClient({
   // reads cleanly instead of every row carrying two empty boxes.
   const [editingMarginId, setEditingMarginId] = useState<string | null>(null);
   const [bulkCostModalOpen, setBulkCostModalOpen] = useState(false);
+  const [wasteModalOpen, setWasteModalOpen] = useState(false);
+  const [wasteLogOpen, setWasteLogOpen] = useState(false);
+  const [editingWaste, setEditingWaste] = useState<WasteLogEntry | null>(null);
+  const [confirmDeleteWaste, setConfirmDeleteWaste] = useState<WasteLogEntry | null>(null);
 
   function startMarginEdit(productId: string) {
     setError(null);
@@ -1066,6 +1079,21 @@ export default function AccountanceClient({
                 complete them.
               </p>
             )}
+            <div className="flex items-center justify-between gap-3">
+              <p className="text-xs text-zinc-500">
+                {currentBrand.id === ALL_BUSINESSES_ID
+                  ? "Switch to a single business to log waste."
+                  : "Spoiled, damaged, or expired stock -- logs a stock adjustment and counts toward Waste below."}
+              </p>
+              <button
+                type="button"
+                onClick={() => setWasteModalOpen(true)}
+                disabled={currentBrand.id === ALL_BUSINESSES_ID}
+                className="shrink-0 rounded-full bg-brand px-3 py-1.5 text-sm font-medium text-black hover:brightness-95 disabled:opacity-40"
+              >
+                + Add waste item
+              </button>
+            </div>
             <div className="grid grid-cols-2 gap-4 lg:grid-cols-5">
               <div className="rounded-lg border border-black/[.08] p-4 dark:border-white/[.145]">
                 <div className="text-xs text-zinc-500">Total COGS</div>
@@ -1081,15 +1109,99 @@ export default function AccountanceClient({
                   {summary.total === 0 ? "—" : `${((grossProfit / summary.total) * 100).toFixed(1)}%`}
                 </div>
               </div>
-              <div className="rounded-lg border border-black/[.08] p-4 dark:border-white/[.145]">
-                <div className="text-xs text-zinc-500">Waste</div>
+              <button
+                type="button"
+                onClick={() => setWasteLogOpen((v) => !v)}
+                className="rounded-lg border border-black/[.08] p-4 text-left transition-colors hover:bg-black/[.02] dark:border-white/[.145] dark:hover:bg-white/[.04]"
+              >
+                <div className="flex items-center justify-between gap-2 text-xs text-zinc-500">
+                  <span>Waste ({wasteLog.length})</span>
+                  <ChevronDown
+                    className={`size-3.5 shrink-0 transition-transform ${wasteLogOpen ? "rotate-180" : ""}`}
+                  />
+                </div>
                 <div className="mt-1 text-xl font-semibold">{formatMoney(cogsSummary.wasteCost)}</div>
-              </div>
+              </button>
               <div className="rounded-lg border border-black/[.08] p-4 dark:border-white/[.145]">
                 <div className="text-xs text-zinc-500">Promotions</div>
                 <div className="mt-1 text-xl font-semibold">{formatMoney(cogsSummary.promotionCost)}</div>
               </div>
             </div>
+
+            {wasteLogOpen && (
+              <section className="rounded-lg border border-black/[.08] p-4 dark:border-white/[.145]">
+                <h2 className="font-medium">Waste log</h2>
+                <p className="mt-1 text-xs text-zinc-500">{rangeLabel}</p>
+                <div className="mt-4 overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b border-black/[.08] text-left text-xs text-zinc-500 dark:border-white/[.145]">
+                        <th className="py-2 pr-3 font-medium">Date</th>
+                        <th className="py-2 pr-3 font-medium">Product</th>
+                        <th className="py-2 pr-3 text-right font-medium">Qty wasted</th>
+                        <th className="py-2 pr-3 font-medium">Note</th>
+                        <th className="py-2 pr-3 text-right font-medium">Price</th>
+                        <th className="py-2 pr-3 text-right font-medium">Total Cost</th>
+                        <th className="py-2 text-right font-medium">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-black/[.06] dark:divide-white/[.08]">
+                      {wasteLog.map((w) => (
+                        <tr key={w.id}>
+                          <td className="py-2 pr-3 text-zinc-500">
+                            {new Date(w.createdAt).toLocaleDateString()}
+                          </td>
+                          <td className="py-2 pr-3">{w.productName}</td>
+                          <td className="py-2 pr-3 text-right">{w.quantity}</td>
+                          <td className="py-2 pr-3 text-zinc-500">{w.reason}</td>
+                          <td className="py-2 pr-3 text-right">
+                            {w.unitCost === null ? (
+                              <span className="text-zinc-400">—</span>
+                            ) : (
+                              formatMoney(w.unitCost)
+                            )}
+                          </td>
+                          <td className="py-2 pr-3 text-right">
+                            {w.costImpact === null ? (
+                              <span className="text-zinc-400">— no cost price</span>
+                            ) : (
+                              formatMoney(w.costImpact)
+                            )}
+                          </td>
+                          <td className="py-2 text-right">
+                            <div className="flex items-center justify-end gap-1">
+                              <button
+                                type="button"
+                                title="Edit"
+                                onClick={() => setEditingWaste(w)}
+                                className="rounded p-1 text-zinc-500 hover:bg-black/[.06] dark:hover:bg-white/[.1]"
+                              >
+                                <Pencil className="size-3.5" />
+                              </button>
+                              <button
+                                type="button"
+                                title="Delete"
+                                onClick={() => setConfirmDeleteWaste(w)}
+                                className="rounded p-1 text-zinc-500 hover:bg-red-100 hover:text-red-600 dark:hover:bg-red-900/40"
+                              >
+                                <Trash2 className="size-3.5" />
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                      {wasteLog.length === 0 && (
+                        <tr>
+                          <td colSpan={7} className="py-6 text-center text-zinc-500">
+                            No waste logged for this range.
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </section>
+            )}
 
             <section className="rounded-lg border border-black/[.08] p-4 dark:border-white/[.145]">
               <h2 className="font-medium">Margin Report</h2>
@@ -1294,6 +1406,23 @@ export default function AccountanceClient({
 
       {bulkCostModalOpen && (
         <BulkAddCostPriceModal rows={missingCostRows} onClose={() => setBulkCostModalOpen(false)} />
+      )}
+
+      {wasteModalOpen && (
+        <AddWasteItemModal items={wasteItems} defaultDate={fromDate} onClose={() => setWasteModalOpen(false)} />
+      )}
+
+      {editingWaste && (
+        <EditWasteLogModal entry={editingWaste} onClose={() => setEditingWaste(null)} />
+      )}
+
+      {confirmDeleteWaste && (
+        <DeleteWasteLogDialog
+          entryId={confirmDeleteWaste.id}
+          productName={confirmDeleteWaste.productName}
+          quantity={confirmDeleteWaste.quantity}
+          onClose={() => setConfirmDeleteWaste(null)}
+        />
       )}
     </div>
   );
