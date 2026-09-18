@@ -263,7 +263,7 @@ export async function listWebsiteAddons(catalogId: WebsiteCatalogId): Promise<We
 export async function updateWebsiteAddon(
   catalogId: WebsiteCatalogId,
   id: string,
-  input: { price?: number; stock?: number | null }
+  input: { price?: number; stock?: number | null; status?: WebsiteAddon["status"] }
 ): Promise<WebsiteAddon> {
   const baseUrl = addonsBaseUrl(catalogId);
   const payload = await request<unknown>(catalogId, `/${id}`, {
