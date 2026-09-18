@@ -1,6 +1,6 @@
 import { supabaseAdmin } from "@/lib/supabase/server";
 import { catalogForBrandSlug, configuredCatalogs } from "@/lib/websiteProducts/catalogs";
-import { listWebsiteProducts } from "@/lib/websiteProducts/client";
+import { listWebsiteAddons, listWebsiteProducts } from "@/lib/websiteProducts/client";
 import { countLowStock } from "@/lib/websiteProducts/stock";
 import type { WebsiteCatalogId } from "@/lib/websiteProducts/types";
 import { formatInvoiceNumber, invoiceMonthStamp, invoiceMonthStartIso } from "@/lib/invoiceNumber";
@@ -764,17 +764,23 @@ export async function getWasteLog(
   });
 }
 
-// A single sellable unit (a plain POS product, or one size/flavor of a
-// website product) that a Stock-wide product picker can offer -- used by
-// Accountance's "Add waste item" (logs waste against it) and Cost Control's
-// Set item search (adds it as a set_items row). `website` is set whenever
-// the item comes from (or is matched to) one of the 3 storefront catalogs --
-// acting on one patches that site's own stock too, same two-way sync the
-// Stock page's price/stock edits already do (see
-// setSimpleProductStockAction/setVariationStockAction). `pos` is set
-// whenever a POS product already exists for it (plain products always have
-// one; a website item only once someone has edited/sold it, or added it to
-// a Set, before) -- absent, picking it creates that link on the fly.
+// A single sellable unit (a plain POS product, one size/flavor of a website
+// product, or a storefront add-on) that a Stock-wide product picker can
+// offer -- used by Accountance's "Add waste item" (logs waste against it)
+// and Cost Control's Set item search (adds it as a set_items row).
+// `website` is set whenever the item comes from (or is matched to) one of
+// the 3 storefront catalogs' own product list -- acting on one patches that
+// site's own stock too, same two-way sync the Stock page's price/stock
+// edits already do (see setSimpleProductStockAction/setVariationStockAction).
+// `addon` is set for a catalog's separate add-on table instead -- linking one
+// only ever creates the POS-side record (see ensurePosProductForSiteProduct);
+// nothing writes back to the storefront's add-on endpoint through this path,
+// so callers that DO push stock back out to a site (Waste logging) should
+// leave addon entries out of their list rather than picking them. `pos` is
+// set whenever a POS product already exists for it (plain products always
+// have one; a website item/add-on only once someone has edited/sold it, or
+// added it to a Set, before) -- absent, picking it creates that link on the
+// fly.
 export type StockPickerItem = {
   key: string;
   name: string;
@@ -792,6 +798,13 @@ export type StockPickerItem = {
     price: number;
     imageUrl: string | null;
   } | null;
+  addon: {
+    catalogId: WebsiteCatalogId;
+    addonId: string;
+    stock: number | null;
+    price: number;
+    imageUrl: string | null;
+  } | null;
 };
 
 // Combines the brand's POS product list with its live storefront catalog (if
@@ -799,7 +812,14 @@ export type StockPickerItem = {
 // for why each entry carries what it does. Falls back to POS-only products
 // if the storefront is unreachable, same as the rest of this app's "never
 // let a website fetch failure block Stock/Sales" convention.
-export async function getStockPickerItems(brandId: string, brandSlug: string): Promise<StockPickerItem[]> {
+// `includeAddons` is opt-in (default false) -- see StockPickerItem's comment
+// on why a caller that pushes stock back out to the storefront must not
+// enable it.
+export async function getStockPickerItems(
+  brandId: string,
+  brandSlug: string,
+  options?: { includeAddons?: boolean }
+): Promise<StockPickerItem[]> {
   const [{ products: posProducts }, catalog] = await Promise.all([
     getCatalogForBrand(brandId),
     Promise.resolve(catalogForBrandSlug(brandSlug)),
@@ -856,11 +876,38 @@ export async function getStockPickerItems(brandId: string, brandSlug: string): P
               price: e.price,
               imageUrl: e.imageUrl,
             },
+            addon: null,
           });
         }
       }
     } catch {
       // Storefront unreachable -- fall through to POS-only products below.
+    }
+
+    if (options?.includeAddons) {
+      try {
+        const addons = await listWebsiteAddons(catalog.id);
+        for (const a of addons) {
+          const addonKey = `${a.id}::`;
+          const linked =
+            posProducts.find(
+              (p) => p.site_link && p.site_link.site_product_id === a.id && (p.site_link.variation_id || "") === ""
+            ) ?? null;
+          if (linked) usedPosKeys.add(addonKey);
+          items.push({
+            key: `addon:${a.id}`,
+            name: a.title,
+            unit: "pcs",
+            displayStock: linked ? linked.stock_quantity : a.stock,
+            costPrice: linked?.cost_price ?? null,
+            pos: linked ? { productId: linked.id, currentStock: linked.stock_quantity } : null,
+            website: null,
+            addon: { catalogId: catalog.id, addonId: a.id, stock: a.stock, price: a.price, imageUrl: a.image_url },
+          });
+        }
+      } catch {
+        // Storefront unreachable -- fall through to POS-only products below.
+      }
     }
   }
 
@@ -875,6 +922,7 @@ export async function getStockPickerItems(brandId: string, brandSlug: string): P
       costPrice: p.cost_price,
       pos: { productId: p.id, currentStock: p.stock_quantity },
       website: null,
+      addon: null,
     });
   }
 

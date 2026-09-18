@@ -26,7 +26,7 @@ export default async function MarketingPage({
 
     const [sets, pickerItems, activeSet] = await Promise.all([
       listSetsAction(currentBrand.id),
-      getStockPickerItems(currentBrand.id, currentBrand.slug),
+      getStockPickerItems(currentBrand.id, currentBrand.slug, { includeAddons: true }),
       activeSetId ? getSetAction(activeSetId) : Promise.resolve(null),
     ]);
 

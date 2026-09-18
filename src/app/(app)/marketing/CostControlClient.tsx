@@ -685,22 +685,36 @@ function SetEditor({
     setError(null);
     startTransition(async () => {
       try {
-        // Not linked to POS yet (a website catalog item nobody has edited
-        // or sold before) -- create that link on the fly first, same as the
-        // first price/stock edit on Stock already does.
-        const productId = pendingItem.pos
-          ? pendingItem.pos.productId
-          : (
-              await linkStockPickerItemAction({
-                catalogId: pendingItem.website!.catalogId,
-                siteProductId: pendingItem.website!.siteProductId,
-                variationId: pendingItem.website!.variationId,
-                title: pendingItem.name,
-                price: pendingItem.website!.price,
-                imageUrl: pendingItem.website!.imageUrl,
-                stock: pendingItem.website!.siteStock,
-              })
-            ).productId;
+        // Not linked to POS yet (a website catalog item or add-on nobody
+        // has edited or sold before) -- create that link on the fly first,
+        // same as the first price/stock edit on Stock already does.
+        let productId = pendingItem.pos?.productId;
+        if (!productId && pendingItem.website) {
+          productId = (
+            await linkStockPickerItemAction({
+              catalogId: pendingItem.website.catalogId,
+              siteProductId: pendingItem.website.siteProductId,
+              variationId: pendingItem.website.variationId,
+              title: pendingItem.name,
+              price: pendingItem.website.price,
+              imageUrl: pendingItem.website.imageUrl,
+              stock: pendingItem.website.siteStock,
+            })
+          ).productId;
+        } else if (!productId && pendingItem.addon) {
+          productId = (
+            await linkStockPickerItemAction({
+              catalogId: pendingItem.addon.catalogId,
+              siteProductId: pendingItem.addon.addonId,
+              variationId: null,
+              title: pendingItem.name,
+              price: pendingItem.addon.price,
+              imageUrl: pendingItem.addon.imageUrl,
+              stock: pendingItem.addon.stock,
+            })
+          ).productId;
+        }
+        if (!productId) throw new Error("Cannot add this product");
         await addSetItemAction({ setId: set.id, productId, amount });
         setPendingKey(null);
         setQuery("");
@@ -997,7 +1011,12 @@ function SetEditor({
                 >
                   <span>
                     {p.name}
-                    {!p.pos && <span className="ml-1.5 text-xs text-amber-600 dark:text-amber-400">not in Stock yet</span>}
+                    {p.addon && (
+                      <span className="ml-1.5 text-xs text-amber-600 dark:text-amber-400">Addon</span>
+                    )}
+                    {!p.pos && (
+                      <span className="ml-1.5 text-xs text-amber-600 dark:text-amber-400">not in Stock yet</span>
+                    )}
                   </span>
                   <span className="text-xs text-zinc-500">
                     {p.unit} · {p.costPrice === null ? "no cost" : `$${p.costPrice.toFixed(2)}`}
