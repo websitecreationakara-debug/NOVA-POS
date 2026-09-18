@@ -492,7 +492,7 @@ export default function WebsiteProductsPanel({
     product: WebsiteProduct,
     variation: WebsiteProductVariation,
     linked: ProductWithStock | null,
-    stock: number
+    stock: number | null
   ) {
     setPendingId(variation.id);
     startTransition(async () => {
@@ -545,7 +545,11 @@ export default function WebsiteProductsPanel({
     });
   }
 
-  function patchSimpleProductStock(product: WebsiteProduct, linked: ProductWithStock | null, stock: number) {
+  function patchSimpleProductStock(
+    product: WebsiteProduct,
+    linked: ProductWithStock | null,
+    stock: number | null
+  ) {
     setPendingId(product.id);
     startTransition(async () => {
       try {
@@ -580,7 +584,7 @@ export default function WebsiteProductsPanel({
     p: WebsiteProduct,
     v: WebsiteProductVariation | null,
     linked: ProductWithStock | null,
-    currentStock: number
+    currentStock: number | null
   ) {
     const raw = addStockDrafts[editId];
     const amount = parseFloat(raw ?? "");
@@ -590,6 +594,8 @@ export default function WebsiteProductsPanel({
       return next;
     });
     if (!raw || Number.isNaN(amount) || amount === 0) return;
+    // Unlimited (null) has nothing to add on top of -- adding stock to one
+    // starts tracking it from 0, same as a brand-new delivery.
     const newStock = (currentStock ?? 0) + amount;
     if (v) patchVariationStock(p, v, linked, newStock);
     else patchSimpleProductStock(p, linked, newStock);
@@ -714,13 +720,15 @@ export default function WebsiteProductsPanel({
   // search/filter over the resulting rows.
   const q = search.trim().toLowerCase();
   const allEntries = toEntries(products ?? []);
+  // null stock means unlimited -- never out of stock or low, same as the
+  // Sales grid's "Stock untracked" treatment.
   const lowStockCount = allEntries.filter(({ product: p, variation: v }) => {
-    const s = (v ? v.stock : p.stock) ?? 0;
-    return s > 0 && s <= 5;
+    const s = v ? v.stock : p.stock;
+    return s !== null && s > 0 && s <= 5;
   }).length;
   const outOfStockCount = allEntries.filter(({ product: p, variation: v }) => {
-    const s = (v ? v.stock : p.stock) ?? 0;
-    return s <= 0;
+    const s = v ? v.stock : p.stock;
+    return s !== null && s <= 0;
   }).length;
 
   const filtered = allEntries.filter(({ product: p, variation: v }) => {
@@ -733,8 +741,8 @@ export default function WebsiteProductsPanel({
         (p.taste_notes ?? "").toLowerCase().includes(q)) &&
       (!categoryFilter ||
         (categoryFilter === "__none__" ? !p.category_id : p.category_id === categoryFilter)) &&
-      (!outOfStockOnly || (stock ?? 0) <= 0) &&
-      (!lowStockOnly || ((stock ?? 0) > 0 && (stock ?? 0) <= 5))
+      (!outOfStockOnly || (stock !== null && stock <= 0)) &&
+      (!lowStockOnly || (stock !== null && stock > 0 && stock <= 5))
     );
   });
   const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize));
@@ -1216,9 +1224,14 @@ export default function WebsiteProductsPanel({
                 const linked = posByEntryKey.get(posEntryKey(p.id, v ? v.id : "")) ?? null;
                 const editId = v ? v.id : p.id;
                 const currentPrice = linked?.price ?? (v ? v.price : p.price);
-                const currentStock = linked?.stock_quantity ?? (v ? (v.stock ?? 0) : p.stock);
+                // The storefront's own stock is the source of truth for
+                // "unlimited" (null) -- once it's tracked (non-null), prefer
+                // POS's own linked count the same way price does.
+                const siteStock = v ? v.stock : p.stock;
+                const currentStock = siteStock === null ? null : (linked?.stock_quantity ?? siteStock);
                 const priceValue = drafts[editId]?.price ?? String(currentPrice);
-                const stockValue = drafts[editId]?.stock ?? String(currentStock ?? 0);
+                const stockValue =
+                  drafts[editId]?.stock ?? (currentStock === null ? "" : String(currentStock));
                 const imageUrl = v?.image_url ?? p.image_url;
                 const weight = v?.weight ?? p.weight;
                 // A size's own price/stock is POS's tracked value for it (see
@@ -1424,13 +1437,15 @@ export default function WebsiteProductsPanel({
                       <input
                         type="number"
                         min={0}
-                        title={editTitle}
+                        placeholder="—"
+                        title={editTitle ?? "Blank = unlimited stock"}
                         value={stockValue}
                         disabled={pendingId === editId}
                         onChange={(e) => setDraft(editId, "stock", e.target.value)}
                         onBlur={(e) => {
-                          const stock = Number(e.target.value);
-                          if (!Number.isNaN(stock) && stock !== (currentStock ?? 0)) {
+                          const raw = e.target.value.trim();
+                          const stock = raw === "" ? null : Number(raw);
+                          if ((stock === null || !Number.isNaN(stock)) && stock !== currentStock) {
                             if (v) patchVariationStock(p, v, linked, stock);
                             else patchSimpleProductStock(p, linked, stock);
                           }
@@ -1442,7 +1457,11 @@ export default function WebsiteProductsPanel({
                     <td className="px-2 py-2 text-right">
                       <input
                         type="number"
-                        title="Adds to the current stock on save -- e.g. a delivery of 2 on top of 5 becomes 7"
+                        title={
+                          currentStock === null
+                            ? "Unlimited stock -- adding starts tracking it from 0"
+                            : "Adds to the current stock on save -- e.g. a delivery of 2 on top of 5 becomes 7"
+                        }
                         placeholder="0"
                         value={addStockDrafts[editId] ?? ""}
                         disabled={pendingId === editId}
@@ -1452,7 +1471,7 @@ export default function WebsiteProductsPanel({
                         onKeyDown={(e) => {
                           if (e.key === "Enter") e.currentTarget.blur();
                         }}
-                        onBlur={() => applyAddStock(editId, p, v, linked, currentStock ?? 0)}
+                        onBlur={() => applyAddStock(editId, p, v, linked, currentStock)}
                         className="w-16 rounded border border-black/[.15] bg-transparent px-2 py-1 text-right text-sm tabular-nums focus:border-black/40 focus:outline-none dark:border-white/[.2] dark:focus:border-white/50"
                       />
                     </td>

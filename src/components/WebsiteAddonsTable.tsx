@@ -2,7 +2,7 @@
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { Check, ChevronLeft, ChevronRight, Trash2, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, Trash2 } from "lucide-react";
 import type { WebsiteAddon, WebsiteAddonWrite, WebsiteCatalogId } from "@/lib/websiteProducts/types";
 import {
   createWebsiteAddonAction,
@@ -10,10 +10,6 @@ import {
   uploadWebsiteImageAction,
 } from "@/app/(app)/stock/websiteActions";
 import DeleteWebsiteAddonDialog from "@/components/DeleteWebsiteAddonDialog";
-
-function formatMoney(n: number) {
-  return `$${n.toFixed(2)}`;
-}
 
 const fieldInputClass =
   "rounded border border-black/[.15] bg-transparent px-2.5 py-1.5 text-sm outline-none focus:border-black/40 dark:border-white/[.2] dark:focus:border-white/50";
@@ -44,12 +40,16 @@ export default function WebsiteAddonsTable({
   addons: WebsiteAddon[];
 }) {
   const router = useRouter();
-  const [isPending, startTransition] = useTransition();
+  const [, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
-  const [editingId, setEditingId] = useState<string | null>(null);
+  const [pendingId, setPendingId] = useState<string | null>(null);
   const [confirmDeleteAddon, setConfirmDeleteAddon] = useState<WebsiteAddon | null>(null);
-  const [priceDraft, setPriceDraft] = useState("");
-  const [stockDraft, setStockDraft] = useState("");
+  // Always-editable Price/Stock cells (blur-to-save), same pattern as the
+  // product table above -- no separate click-to-edit step.
+  const [drafts, setDrafts] = useState<Record<string, { price?: string; stock?: string }>>({});
+  // "Add Stock": a quantity being *received*, added to the current stock on
+  // blur then cleared back to empty -- see the product table's addStockDrafts.
+  const [addStockDrafts, setAddStockDrafts] = useState<Record<string, string>>({});
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState<WebsiteAddonWrite>(emptyForm);
   const [formError, setFormError] = useState<string | null>(null);
@@ -111,44 +111,86 @@ export default function WebsiteAddonsTable({
     });
   }
 
-  function startEdit(a: WebsiteAddon) {
-    setError(null);
-    setEditingId(a.id);
-    setPriceDraft(String(a.price));
-    setStockDraft(a.stock === null ? "" : String(a.stock));
+  function setDraft(id: string, field: "price" | "stock", value: string) {
+    setDrafts((prev) => ({ ...prev, [id]: { ...prev[id], [field]: value } }));
   }
 
-  function cancelEdit() {
-    setEditingId(null);
+  function clearDraft(id: string, field: "price" | "stock") {
+    setDrafts((prev) => {
+      const rowDraft = { ...(prev[id] ?? {}) };
+      delete rowDraft[field];
+      const next = { ...prev };
+      if (Object.keys(rowDraft).length === 0) delete next[id];
+      else next[id] = rowDraft;
+      return next;
+    });
   }
 
-  function save(a: WebsiteAddon) {
-    const price = parseFloat(priceDraft);
-    if (Number.isNaN(price) || price < 0) {
-      setError("Price must be a non-negative number");
-      return;
-    }
-    const trimmedStock = stockDraft.trim();
-    const stock = trimmedStock === "" ? null : parseFloat(trimmedStock);
-    if (stock !== null && (Number.isNaN(stock) || stock < 0)) {
-      setError("Stock must be a non-negative number, or blank for untracked");
-      return;
-    }
-    const input: { price?: number; stock?: number | null } = {};
-    if (price !== a.price) input.price = price;
-    if (stock !== a.stock) input.stock = stock;
-    if (Object.keys(input).length === 0) {
-      setEditingId(null);
-      return;
-    }
+  function saveField(a: WebsiteAddon, input: { price?: number; stock?: number | null }) {
     setError(null);
+    setPendingId(a.id);
     startTransition(async () => {
       try {
         await updateWebsiteAddonAction(catalogId, a.id, input);
         router.refresh();
-        setEditingId(null);
       } catch (e) {
         setError(e instanceof Error ? e.message : "Failed to save");
+      } finally {
+        setPendingId(null);
+      }
+    });
+  }
+
+  function savePrice(a: WebsiteAddon, raw: string) {
+    clearDraft(a.id, "price");
+    const price = parseFloat(raw);
+    if (Number.isNaN(price) || price < 0) {
+      setError("Price must be a non-negative number");
+      return;
+    }
+    if (price === a.price) return;
+    saveField(a, { price });
+  }
+
+  function saveStock(a: WebsiteAddon, raw: string) {
+    clearDraft(a.id, "stock");
+    const trimmed = raw.trim();
+    const stock = trimmed === "" ? null : parseFloat(trimmed);
+    if (stock !== null && (Number.isNaN(stock) || stock < 0)) {
+      setError("Stock must be a non-negative number, or blank for unlimited stock");
+      return;
+    }
+    if (stock === a.stock) return;
+    saveField(a, { stock });
+  }
+
+  function applyAddStock(a: WebsiteAddon) {
+    const raw = addStockDrafts[a.id];
+    setAddStockDrafts((prev) => {
+      const next = { ...prev };
+      delete next[a.id];
+      return next;
+    });
+    if (raw === undefined || raw.trim() === "") return;
+    const add = Number(raw);
+    if (Number.isNaN(add) || add === 0) return;
+    // Unlimited (null) has nothing to add on top of -- adding stock to one
+    // starts tracking it from 0, same as a brand-new delivery.
+    saveField(a, { stock: Math.max(0, (a.stock ?? 0) + add) });
+  }
+
+  function toggleStatus(a: WebsiteAddon) {
+    const status: WebsiteAddonWrite["status"] = a.status === "published" ? "draft" : "published";
+    setError(null);
+    setPendingId(a.id);
+    startTransition(async () => {
+      try {
+        await updateWebsiteAddonAction(catalogId, a.id, { status });
+        router.refresh();
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Failed to update status");
+      } finally {
+        setPendingId(null);
       }
     });
   }
@@ -211,12 +253,12 @@ export default function WebsiteAddonsTable({
             </label>
             <label className="flex flex-col gap-1">
               <span className="text-xs font-medium text-zinc-500">
-                Stock<span className="ml-1 font-normal text-zinc-400">— blank = untracked</span>
+                Stock<span className="ml-1 font-normal text-zinc-400">— blank = unlimited stock</span>
               </span>
               <input
                 type="number"
                 min={0}
-                placeholder="untracked"
+                placeholder="—"
                 value={form.stock ?? ""}
                 onChange={(e) =>
                   setForm((f) => ({
@@ -328,15 +370,18 @@ export default function WebsiteAddonsTable({
           <tr className="border-b border-black/[.08] text-left text-xs text-zinc-500 dark:border-white/[.145]">
             <th className="w-14 px-3 py-2 pl-6 font-medium">Image</th>
             <th className="px-3 py-2 font-medium">Addon</th>
-            <th className="w-28 px-3 py-2 text-right font-medium">Price</th>
+            <th className="w-24 px-3 py-2 text-right font-medium">Price</th>
             <th className="w-20 px-3 py-2 text-right font-medium">Stock</th>
+            <th className="w-20 px-3 py-2 text-right font-medium">Add Stock</th>
             <th className="w-32 px-3 py-2 font-medium">Status</th>
             <th className="w-16 px-3 py-2 text-right font-medium">Actions</th>
           </tr>
         </thead>
         <tbody>
           {paged.map((a) => {
-            const editing = editingId === a.id;
+            const priceValue = drafts[a.id]?.price ?? String(a.price);
+            const stockValue = drafts[a.id]?.stock ?? (a.stock === null ? "" : String(a.stock));
+            const busy = pendingId === a.id;
             return (
               <tr key={a.id} className="border-b border-black/[.06] align-top dark:border-white/[.08]">
                 <td className="px-3 py-2 pl-6">
@@ -355,107 +400,99 @@ export default function WebsiteAddonsTable({
                   <div className="font-medium">{a.title}</div>
                   {a.description && <div className="text-xs text-zinc-400">{a.description}</div>}
                 </td>
-                {editing ? (
-                  <>
-                    <td className="px-3 py-2 text-right">
-                      <label className="inline-flex w-24 items-center gap-1 rounded border border-black/[.15] px-2 py-1 text-sm focus-within:border-black/40 dark:border-white/[.2] dark:focus-within:border-white/50">
-                        <span className="select-none text-zinc-400">$</span>
-                        <input
-                          autoFocus
-                          type="number"
-                          min={0}
-                          step="0.01"
-                          value={priceDraft}
-                          onChange={(e) => setPriceDraft(e.target.value)}
-                          onKeyDown={(e) => {
-                            if (e.key === "Enter") save(a);
-                            if (e.key === "Escape") cancelEdit();
-                          }}
-                          className="w-full bg-transparent text-right outline-none"
-                        />
-                      </label>
-                    </td>
-                    <td className="px-3 py-2 text-right">
-                      <input
-                        type="number"
-                        min={0}
-                        step="1"
-                        placeholder="untracked"
-                        value={stockDraft}
-                        onChange={(e) => setStockDraft(e.target.value)}
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter") save(a);
-                          if (e.key === "Escape") cancelEdit();
-                        }}
-                        className="w-20 rounded border border-black/[.15] bg-transparent px-2 py-1 text-right text-sm dark:border-white/[.2]"
-                      />
-                    </td>
-                    <td className="px-3 py-2 capitalize">{a.status}</td>
-                    <td className="px-3 py-2 text-right">
-                      <div className="flex items-center justify-end gap-1">
-                        <button
-                          type="button"
-                          title="Save"
-                          disabled={isPending}
-                          onClick={() => save(a)}
-                          className="rounded p-1 text-green-600 hover:bg-green-100 dark:hover:bg-green-900/40"
-                        >
-                          <Check className="size-3.5" />
-                        </button>
-                        <button
-                          type="button"
-                          title="Cancel"
-                          onClick={cancelEdit}
-                          className="rounded p-1 text-zinc-500 hover:bg-black/[.06] dark:hover:bg-white/[.1]"
-                        >
-                          <X className="size-3.5" />
-                        </button>
-                      </div>
-                    </td>
-                  </>
-                ) : (
-                  <>
-                    <td className="px-3 py-2 text-right">
-                      <button
-                        type="button"
-                        onClick={() => startEdit(a)}
-                        className="rounded px-1 py-0.5 hover:bg-black/[.05] dark:hover:bg-white/[.08]"
-                      >
-                        {formatMoney(a.price)}
-                      </button>
-                    </td>
-                    <td className="px-3 py-2 text-right">
-                      <button
-                        type="button"
-                        onClick={() => startEdit(a)}
-                        className="rounded px-1 py-0.5 hover:bg-black/[.05] dark:hover:bg-white/[.08]"
-                      >
-                        {a.stock === null ? "—" : a.stock}
-                      </button>
-                    </td>
-                    <td className="px-3 py-2 capitalize">{a.status}</td>
-                    <td className="px-3 py-2 text-right">
-                      <button
-                        type="button"
-                        title="Delete"
-                        onClick={() => {
-                          setError(null);
-                          setEditingId(null);
-                          setConfirmDeleteAddon(a);
-                        }}
-                        className="rounded p-1 text-zinc-500 hover:bg-red-100 hover:text-red-600 dark:hover:bg-red-900/40"
-                      >
-                        <Trash2 className="size-3.5" />
-                      </button>
-                    </td>
-                  </>
-                )}
+                <td className="px-3 py-2 text-right">
+                  <label className="inline-flex w-20 items-center gap-1 rounded border border-black/[.15] px-2 py-1 text-sm focus-within:border-black/40 dark:border-white/[.2] dark:focus-within:border-white/50">
+                    <span className="select-none text-zinc-400">$</span>
+                    <input
+                      type="number"
+                      min={0}
+                      step="0.01"
+                      value={priceValue}
+                      disabled={busy}
+                      onChange={(e) => setDraft(a.id, "price", e.target.value)}
+                      onBlur={(e) => savePrice(a, e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") e.currentTarget.blur();
+                      }}
+                      className="w-full min-w-0 border-0 bg-transparent p-0 text-right tabular-nums outline-none"
+                    />
+                  </label>
+                </td>
+                <td className="px-3 py-2 text-right">
+                  <input
+                    type="number"
+                    min={0}
+                    placeholder="—"
+                    title="Blank = unlimited stock"
+                    value={stockValue}
+                    disabled={busy}
+                    onChange={(e) => setDraft(a.id, "stock", e.target.value)}
+                    onBlur={(e) => saveStock(a, e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") e.currentTarget.blur();
+                    }}
+                    className="w-16 rounded border border-black/[.15] bg-transparent px-2 py-1 text-right text-sm tabular-nums focus:border-black/40 focus:outline-none dark:border-white/[.2] dark:focus:border-white/50"
+                  />
+                </td>
+                <td className="px-3 py-2 text-right">
+                  <input
+                    type="number"
+                    title={
+                      a.stock === null
+                        ? "Unlimited stock -- adding starts tracking it from 0"
+                        : "Adds to the current stock on save -- e.g. a delivery of 2 on top of 5 becomes 7"
+                    }
+                    placeholder="0"
+                    value={addStockDrafts[a.id] ?? ""}
+                    disabled={busy}
+                    onChange={(e) => setAddStockDrafts((prev) => ({ ...prev, [a.id]: e.target.value }))}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") e.currentTarget.blur();
+                    }}
+                    onBlur={() => applyAddStock(a)}
+                    className="w-16 rounded border border-black/[.15] bg-transparent px-2 py-1 text-right text-sm tabular-nums focus:border-black/40 focus:outline-none disabled:opacity-40 dark:border-white/[.2] dark:focus:border-white/50"
+                  />
+                </td>
+                <td className="px-3 py-2">
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={() => toggleStatus(a)}
+                    title="Click to toggle Published / Draft"
+                    className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold transition-colors disabled:opacity-50 ${
+                      a.status === "published"
+                        ? "bg-emerald-500/10 text-emerald-600 hover:bg-emerald-500/20 dark:text-emerald-400"
+                        : "bg-zinc-500/10 text-zinc-500 hover:bg-zinc-500/20 dark:text-zinc-400"
+                    }`}
+                  >
+                    <span
+                      className={`size-1.5 rounded-full ${
+                        a.status === "published" ? "bg-emerald-500" : "bg-zinc-400"
+                      }`}
+                    />
+                    {a.status === "published" ? "Published" : "Draft"}
+                  </button>
+                </td>
+                <td className="px-3 py-2 text-right">
+                  <button
+                    type="button"
+                    title="Delete"
+                    disabled={busy}
+                    onClick={() => {
+                      setError(null);
+                      setConfirmDeleteAddon(a);
+                    }}
+                    className="rounded p-1 text-zinc-500 hover:bg-red-100 hover:text-red-600 disabled:opacity-40 dark:hover:bg-red-900/40"
+                  >
+                    <Trash2 className="size-3.5" />
+                  </button>
+                </td>
               </tr>
             );
           })}
           {paged.length === 0 && (
             <tr>
-              <td colSpan={6} className="px-6 py-8 text-center text-sm text-zinc-500">
+              <td colSpan={7} className="px-6 py-8 text-center text-sm text-zinc-500">
                 No add-ons.
               </td>
             </tr>

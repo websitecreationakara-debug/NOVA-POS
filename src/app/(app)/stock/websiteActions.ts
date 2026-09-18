@@ -83,7 +83,7 @@ export async function createWebsiteAddonAction(
 export async function updateWebsiteAddonAction(
   catalogId: WebsiteCatalogId,
   id: string,
-  input: { price?: number; stock?: number | null }
+  input: { price?: number; stock?: number | null; status?: WebsiteAddon["status"] }
 ): Promise<WebsiteAddon> {
   await requireStockAccess();
   const addon = await updateWebsiteAddon(catalogId, id, input);
@@ -197,7 +197,10 @@ export async function setVariationStockAction(input: {
   // The POS product's stock right now (0 if not yet linked) -- used to turn
   // the typed absolute value into the delta adjustStockAction expects.
   currentStock: number;
-  stock: number;
+  // null = unlimited stock -- written straight to the storefront with no POS
+  // delta (nothing meaningful to decrement toward), same as an add-on's
+  // blank Stock box.
+  stock: number | null;
 }): Promise<void> {
   await requireStockAccess();
   await updateWebsiteProductVariation(input.catalogId, input.siteProductId, input.variationId, {
@@ -216,7 +219,7 @@ export async function setVariationStockAction(input: {
   // ensurePosProductForSiteProduct seeds stock directly at creation time (to
   // the target value already) -- only need an explicit adjustment if the
   // link already existed.
-  if (input.alreadyLinked) {
+  if (input.alreadyLinked && input.stock !== null) {
     const delta = input.stock - input.currentStock;
     if (delta !== 0) {
       await adjustStockAction({ productId: linked.id, delta, reason: "Stock page edit" });
@@ -265,7 +268,8 @@ export async function setSimpleProductStockAction(input: {
   alreadyLinked: boolean;
   seedPrice: number;
   currentStock: number;
-  stock: number;
+  // null = unlimited stock -- see setVariationStockAction's comment.
+  stock: number | null;
 }): Promise<void> {
   await requireStockAccess();
   await updateWebsiteProduct(input.catalogId, input.siteProductId, { stock: input.stock });
@@ -279,7 +283,7 @@ export async function setSimpleProductStockAction(input: {
     imageUrl: input.imageUrl,
     stock: input.stock,
   });
-  if (input.alreadyLinked) {
+  if (input.alreadyLinked && input.stock !== null) {
     const delta = input.stock - input.currentStock;
     if (delta !== 0) {
       await adjustStockAction({ productId: linked.id, delta, reason: "Stock page edit" });
