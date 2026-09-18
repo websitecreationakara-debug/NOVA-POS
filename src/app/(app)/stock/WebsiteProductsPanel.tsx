@@ -268,6 +268,16 @@ export default function WebsiteProductsPanel({
     return [...byId].map(([id, label]) => ({ id, label }));
   }, [catalogId, products]);
 
+  // Filter pills only show categories with a real name -- an unmapped
+  // category_id (no entry in catalogs.ts) still needs to stay selectable in
+  // the Category picker above, but clutters this row as "Unnamed category
+  // (xxxxxxxx…)" pills, so it's dropped here. Those products remain visible
+  // under "All".
+  const namedCategoryOptions = useMemo(
+    () => categoryOptions.filter((c) => !c.label.startsWith("Unnamed category (")),
+    [categoryOptions]
+  );
+
   // Refs so the polling loop can read current state without re-subscribing.
   const signatureRef = useRef<string>(initialProducts ? catalogSignature(initialProducts) : "");
   const busyRef = useRef(false);
@@ -930,7 +940,7 @@ export default function WebsiteProductsPanel({
         >
           All
         </button>
-        {categoryOptions.map((c) => (
+        {namedCategoryOptions.map((c) => (
           <button
             key={c.id}
             type="button"
