@@ -273,11 +273,12 @@ export default function OrdersTable({
               {paged.map((o) => (
                 <tr
                   key={o.id}
-                  className={`border-b border-border hover:bg-muted ${
+                  onClick={() => router.push(`/orders/${o.id}`)}
+                  className={`cursor-pointer border-b border-border hover:bg-muted ${
                     selected.has(o.id) ? "bg-brand/5" : ""
                   }`}
                 >
-                  <td className="py-2">
+                  <td className="py-2" onClick={(e) => e.stopPropagation()}>
                     <input
                       type="checkbox"
                       aria-label={`Select ${o.invoiceNumber ?? o.id}`}
@@ -289,6 +290,7 @@ export default function OrdersTable({
                   <td className="py-2 pr-4">
                     <Link
                       href={`/orders/${o.id}`}
+                      onClick={(e) => e.stopPropagation()}
                       className="font-semibold text-brand hover:underline"
                     >
                       {o.invoiceNumber ?? `#${o.id.slice(0, 8)}`}
@@ -298,7 +300,7 @@ export default function OrdersTable({
                   <td className="py-2 pr-4">{o.customerName || "—"}</td>
                   <td className="py-2 pr-4 text-muted-foreground">{o.customerPhone || "—"}</td>
                   <td className="py-2 pr-4 text-right tabular-nums">{formatMoney(o.total)}</td>
-                  <td className="py-2 pr-4">
+                  <td className="py-2 pr-4" onClick={(e) => e.stopPropagation()}>
                     {/* key includes the status so a bulk change (which updates
                         the server prop after router.refresh) remounts this with
                         the fresh value rather than keeping stale local state. */}
@@ -332,7 +334,7 @@ export default function OrdersTable({
                         );
                       })()}
                   </td>
-                  <td className="py-2">
+                  <td className="py-2" onClick={(e) => e.stopPropagation()}>
                     <OrderRowMenu orderId={o.id} />
                   </td>
                 </tr>
