@@ -110,6 +110,17 @@ export async function getEffectiveProductCost(productId: string): Promise<number
   return total ?? product.cost_price;
 }
 
+// Pushes a product's current effective cost (see getEffectiveProductCost)
+// into every Set line item that uses it, so a change to Stock's Purchase
+// Cost Total (or a plain cost price edit) shows up in Cost Control's Unit
+// Cost / Line Total immediately -- not just the next time someone happens to
+// re-add or re-price that line by hand. Best-effort: called after the real
+// cost change already succeeded, so a hiccup here shouldn't fail that.
+export async function syncSetItemCostsForProduct(productId: string): Promise<void> {
+  const unitCost = await getEffectiveProductCost(productId).catch(() => null);
+  await supabaseAdmin.from("set_items").update({ unit_cost: unitCost }).eq("product_id", productId);
+}
+
 // Upserts only the fields provided -- e.g. `{ original_cost: 5 }` leaves an
 // existing row's total_cost_10pct/extra_money/total_override untouched
 // (PostgREST's upsert only SETs the columns present in the payload on

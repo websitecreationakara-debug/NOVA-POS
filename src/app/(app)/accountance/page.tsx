@@ -6,6 +6,8 @@ import {
   getExpensesForDateRange,
   getMarginReport,
   getReconciliation,
+  getStockPickerItems,
+  getWasteLog,
 } from "@/lib/supabase/queries";
 import type { Brand } from "@/types/database";
 import AccountanceClient from "./AccountanceClient";
@@ -183,6 +185,20 @@ export default async function AccountancePage({
           getMarginReport(currentBrand.id, fromDate, toDate),
         ]);
 
+  // Only the COGS tab needs either of these -- skip the extra queries for
+  // every other tab. The "+ Add waste item" picker also needs one real
+  // brand's product list (waste is logged against one brand's actual stock),
+  // but the log itself reads fine for "All Businesses" too.
+  const [wasteItems, wasteLog] =
+    tab === "cogs"
+      ? await Promise.all([
+          currentBrand.id !== ALL_BUSINESSES_ID
+            ? getStockPickerItems(currentBrand.id, currentBrand.slug)
+            : Promise.resolve([]),
+          getWasteLog(currentBrand.id, fromDate, toDate),
+        ])
+      : [[], []];
+
   return (
     <AccountanceClient
       brands={brands}
@@ -201,6 +217,8 @@ export default async function AccountancePage({
       expenses={expenses}
       cogsSummary={cogsSummary}
       marginReport={marginReport}
+      wasteItems={wasteItems}
+      wasteLog={wasteLog}
     />
   );
 }

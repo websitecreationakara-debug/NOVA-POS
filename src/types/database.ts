@@ -378,7 +378,16 @@ export type Database = {
       stock_adjustments: Table<
         StockAdjustment,
         Omit<StockAdjustment, "id" | "created_at" | "category" | "cost_impact"> &
-          Partial<Pick<StockAdjustment, "id" | "category" | "cost_impact">>
+          Partial<Pick<StockAdjustment, "id" | "category" | "cost_impact">>,
+        [
+          {
+            foreignKeyName: "stock_adjustments_product_id_fkey";
+            columns: ["product_id"];
+            isOneToOne: false;
+            referencedRelation: "products";
+            referencedColumns: ["id"];
+          },
+        ]
       >;
       recipe_items: Table<
         RecipeItem,
