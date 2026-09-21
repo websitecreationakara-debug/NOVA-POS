@@ -10,6 +10,7 @@ import {
   RefreshCw,
   Trash2,
   TriangleAlert,
+  X,
 } from "lucide-react";
 import type { ProductWithStock } from "@/lib/supabase/queries";
 import Dropdown from "@/components/Dropdown";
@@ -193,6 +194,8 @@ export default function WebsiteProductsPanel({
   const [imageError, setImageError] = useState<string | null>(null);
   const [pendingId, setPendingId] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+  // Set when a row's thumbnail is clicked, so a full-size preview can be shown.
+  const [previewImage, setPreviewImage] = useState<{ url: string; title: string } | null>(null);
   const [, startTransition] = useTransition();
 
   // A brief bottom-right toast confirming a save (price/stock/status/delete) or
@@ -268,15 +271,23 @@ export default function WebsiteProductsPanel({
     return [...byId].map(([id, label]) => ({ id, label }));
   }, [catalogId, products]);
 
-  // Filter pills only show categories with a real name -- an unmapped
-  // category_id (no entry in catalogs.ts) still needs to stay selectable in
-  // the Category picker above, but clutters this row as "Unnamed category
-  // (xxxxxxxx…)" pills, so it's dropped here. Those products remain visible
-  // under "All".
-  const namedCategoryOptions = useMemo(
-    () => categoryOptions.filter((c) => !c.label.startsWith("Unnamed category (")),
-    [categoryOptions]
-  );
+  // Filter pills mirror the storefront live, not catalogs.ts: a *named*
+  // category shows here only while at least one polled product still
+  // references it, so one the site empties out disappears on its own -- no
+  // hand-editing catalogs.ts needed for removals. Unnamed categories (no
+  // entry in catalogs.ts) are left out of this row entirely -- an "Unnamed
+  // category (xxxxxxxx…)" pill isn't useful to filter by; those products
+  // stay reachable under "All" until the id is given a real label in
+  // catalogs.ts.
+  const liveCategoryOptions = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const p of products ?? []) {
+      if (p.category_id) counts.set(p.category_id, (counts.get(p.category_id) ?? 0) + 1);
+    }
+    return categoryOptions.filter(
+      (c) => !c.label.startsWith("Unnamed category (") && (counts.get(c.id) ?? 0) > 0
+    );
+  }, [categoryOptions, products]);
 
   // Refs so the polling loop can read current state without re-subscribing.
   const signatureRef = useRef<string>(initialProducts ? catalogSignature(initialProducts) : "");
@@ -954,7 +965,7 @@ export default function WebsiteProductsPanel({
         >
           All
         </button>
-        {namedCategoryOptions.map((c) => (
+        {liveCategoryOptions.map((c) => (
           <button
             key={c.id}
             type="button"
@@ -1276,16 +1287,20 @@ export default function WebsiteProductsPanel({
                       />
                     </td>
                     <td className="px-3 py-2">
-                      <div className="h-10 w-10 shrink-0 overflow-hidden rounded border border-black/[.1] bg-zinc-100 dark:border-white/[.15] dark:bg-zinc-800">
-                        {imageUrl ? (
-                          // eslint-disable-next-line @next/next/no-img-element
+                      {imageUrl ? (
+                        <button
+                          type="button"
+                          onClick={() => setPreviewImage({ url: imageUrl, title: p.title })}
+                          className="block h-10 w-10 shrink-0 overflow-hidden rounded border border-black/[.1] bg-zinc-100 dark:border-white/[.15] dark:bg-zinc-800"
+                        >
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
                           <img src={imageUrl} alt="" className="h-full w-full object-cover" />
-                        ) : (
-                          <div className="flex h-full w-full items-center justify-center text-[9px] text-zinc-400">
-                            No img
-                          </div>
-                        )}
-                      </div>
+                        </button>
+                      ) : (
+                        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded border border-black/[.1] bg-zinc-100 text-[9px] text-zinc-400 dark:border-white/[.15] dark:bg-zinc-800">
+                          No img
+                        </div>
+                      )}
                     </td>
                     <td className="min-w-[14rem] px-3 py-2">
                       {/* Editable name. Keyed by p.id (not editId) so the sibling
@@ -1697,6 +1712,37 @@ export default function WebsiteProductsPanel({
                 {bulkBusy ? "Deleting…" : "Delete all"}
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {previewImage && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4"
+          onClick={() => setPreviewImage(null)}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label={previewImage.title}
+            className="relative max-h-[85vh] max-w-[85vw]"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <button
+              type="button"
+              onClick={() => setPreviewImage(null)}
+              aria-label="Close"
+              className="absolute -top-3 -right-3 flex h-8 w-8 items-center justify-center rounded-full bg-white text-black shadow-lg hover:bg-zinc-100"
+            >
+              <X className="h-4 w-4" />
+            </button>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={previewImage.url}
+              alt={previewImage.title}
+              className="max-h-[85vh] max-w-[85vw] rounded-lg object-contain shadow-2xl"
+            />
+            <p className="mt-2 text-center text-sm font-medium text-white">{previewImage.title}</p>
           </div>
         </div>
       )}

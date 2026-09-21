@@ -187,6 +187,9 @@ export type ProductSet = {
   labor_cost: number | null;
   competitor_name: string | null;
   competitor_base_price: number | null;
+  // The `products` row this Set is sellable as once Active -- see
+  // activateSetListing in costControlActions.ts. null until first activated.
+  linked_product_id: string | null;
 };
 
 // One line item (an existing product + amount) inside a Set. unit/unit_cost
@@ -461,6 +464,7 @@ export type Database = {
           | "labor_cost"
           | "competitor_name"
           | "competitor_base_price"
+          | "linked_product_id"
         > &
           Partial<
             Pick<
@@ -474,6 +478,7 @@ export type Database = {
               | "labor_cost"
               | "competitor_name"
               | "competitor_base_price"
+              | "linked_product_id"
             >
           >,
         [
@@ -482,6 +487,13 @@ export type Database = {
             columns: ["brand_id"];
             isOneToOne: false;
             referencedRelation: "brands";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "sets_linked_product_id_fkey";
+            columns: ["linked_product_id"];
+            isOneToOne: false;
+            referencedRelation: "products";
             referencedColumns: ["id"];
           },
         ]

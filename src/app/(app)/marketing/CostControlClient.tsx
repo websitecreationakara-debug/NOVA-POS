@@ -4,7 +4,7 @@ import { useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { Copy, Pencil, Plus, Trash2 } from "lucide-react";
-import type { Brand } from "@/types/database";
+import type { Brand, SetStatus } from "@/types/database";
 import type { StockPickerItem } from "@/lib/supabase/queries";
 import { computeLineTotal, computeSetTotalCost, computeUnitCostForScale, productWeightGrams } from "@/lib/costControl";
 import {
@@ -226,6 +226,23 @@ function SetsOverview({ brandId, sets }: { brandId: string; sets: SetSummary[] }
     });
   }
 
+  // One click, right from the list -- flips Draft<->Active without opening
+  // the set editor. This is what pushes/pulls the Set's Stock + website
+  // listing (see activateSetListing/deactivateSetListing), so a failure here
+  // (e.g. its website is unreachable) surfaces as the row's own error instead
+  // of silently leaving the toggle stuck.
+  function toggleStatus(id: string, current: SetStatus) {
+    setError(null);
+    startTransition(async () => {
+      try {
+        await updateSetAction(id, { status: current === "active" ? "draft" : "active" });
+        router.refresh();
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Failed to update status");
+      }
+    });
+  }
+
   return (
     <section className="mt-6 rounded-lg border border-black/[.08] p-4 dark:border-white/[.145]">
       <div className="flex flex-wrap items-center gap-3">
@@ -334,7 +351,21 @@ function SetsOverview({ brandId, sets }: { brandId: string; sets: SetSummary[] }
                 <td className="py-3 pr-5">
                   <ProfitStatusBadge status={s.pricing.profitStatus} />
                 </td>
-                <td className="py-3 pr-5 capitalize">{s.status}</td>
+                <td className="py-3 pr-5" onClick={(e) => e.stopPropagation()}>
+                  <button
+                    type="button"
+                    disabled={isPending}
+                    onClick={() => toggleStatus(s.id, s.status)}
+                    title={`Click to mark ${s.status === "active" ? "Draft" : "Active"}`}
+                    className={`rounded-full px-2.5 py-1 text-xs font-medium capitalize transition-colors disabled:opacity-50 ${
+                      s.status === "active"
+                        ? "bg-emerald-100 text-emerald-700 hover:bg-emerald-200 dark:bg-emerald-900/40 dark:text-emerald-300"
+                        : "bg-zinc-100 text-zinc-600 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-300"
+                    }`}
+                  >
+                    {s.status}
+                  </button>
+                </td>
                 <td className="py-3 text-right" onClick={(e) => e.stopPropagation()}>
                   <div className="flex items-center justify-end gap-1">
                     <button
