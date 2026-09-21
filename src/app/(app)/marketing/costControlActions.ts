@@ -14,7 +14,7 @@ import {
 import { getEffectiveProductCost, syncSetItemCostsForProduct } from "@/lib/websiteProducts/purchaseCosts";
 import { ensurePosProductForSiteProduct } from "@/app/(app)/sales/websiteActions";
 import { catalogForBrandSlug } from "@/lib/websiteProducts/catalogs";
-import { createWebsiteProduct, updateWebsiteProduct } from "@/lib/websiteProducts/client";
+import { createWebsiteProduct, deleteWebsiteProduct, updateWebsiteProduct } from "@/lib/websiteProducts/client";
 import type { WebsiteCatalogId } from "@/lib/websiteProducts/types";
 import type { ProductSiteLink, SetStatus } from "@/types/database";
 
@@ -288,7 +288,27 @@ async function pushSetToWebsite(brandId: string, productId: string, title: strin
   }
 
   const created = await createWebsiteProduct(catalog.id, { title, price, status: "draft" });
-  await supabaseAdmin.from("product_site_links").upsert(
+
+  // The storefront calls POS's own /api/product-sync webhook the instant it
+  // sees a new product appear on it -- including this one -- which can beat
+  // us here and plant its own throwaway POS product + link for the same
+  // site_product_id first. Check for that before writing: if it won the
+  // race, remember its product_id so it can be deactivated below instead of
+  // being left behind as a duplicate.
+  const { data: raced } = await supabaseAdmin
+    .from("product_site_links")
+    .select("product_id")
+    .eq("site", site)
+    .eq("site_product_id", created.id)
+    .eq("variation_id", "")
+    .maybeSingle();
+
+  // onConflict targets the site's own uniqueness (site, site_product_id,
+  // variation_id), not ours -- so this always lands as the row for this
+  // site_product_id, overwriting the webhook's product_id with ours if it
+  // got here first (never checking this upsert's error before was exactly
+  // how it went un-noticed).
+  const { error: linkErr } = await supabaseAdmin.from("product_site_links").upsert(
     {
       product_id: productId,
       site,
@@ -297,8 +317,13 @@ async function pushSetToWebsite(brandId: string, productId: string, title: strin
       matched_name: title,
       match_confidence: "exact",
     },
-    { onConflict: "product_id,site" }
+    { onConflict: "site,site_product_id,variation_id" }
   );
+  if (linkErr) throw new Error(linkErr.message);
+
+  if (raced && raced.product_id !== productId) {
+    await supabaseAdmin.from("products").update({ is_active: false }).eq("id", raced.product_id);
+  }
 }
 
 // Makes an Active Set a real sellable listing: creates (first time) or
@@ -356,15 +381,19 @@ async function activateSetListing(setId: string): Promise<void> {
 
 // Reverses activateSetListing: hides the Set's product from Stock
 // (is_active: false, not deleted -- it may carry stock/order history) and
-// unpublishes its website listing back to draft, if it has one. Website
-// side is best-effort, same reasoning as activateSetListing.
+// deletes its website listing outright, if it has one -- not just
+// unpublished, so it's gone from Stock > Website Products too, not sitting
+// there with a Draft badge. Reactivating later creates a fresh listing (see
+// pushSetToWebsite) rather than restoring this one. Website side is
+// best-effort, same reasoning as activateSetListing.
 async function deactivateSetListing(setId: string): Promise<void> {
   const { data: set, error } = await supabaseAdmin
     .from("sets")
     .select("linked_product_id, brand_id")
     .eq("id", setId)
     .single();
-  if (error || !set || !set.linked_product_id) return;
+  if (error) throw new Error(error.message);
+  if (!set || !set.linked_product_id) return;
 
   const { error: updateErr } = await supabaseAdmin
     .from("products")
@@ -378,14 +407,17 @@ async function deactivateSetListing(setId: string): Promise<void> {
     if (!catalog) return;
     const { data: link } = await supabaseAdmin
       .from("product_site_links")
-      .select("site_product_id")
+      .select("id, site_product_id")
       .eq("product_id", set.linked_product_id)
       .eq("site", catalog.brandSlug as ProductSiteLink["site"])
       .eq("variation_id", "")
       .maybeSingle();
-    if (link) await updateWebsiteProduct(catalog.id, link.site_product_id, { status: "draft" });
+    if (link) {
+      await deleteWebsiteProduct(catalog.id, link.site_product_id);
+      await supabaseAdmin.from("product_site_links").delete().eq("id", link.id);
+    }
   } catch (e) {
-    console.error(`Set ${setId} website unpublish failed`, e);
+    console.error(`Set ${setId} website delete failed`, e);
   }
 }
 
@@ -439,8 +471,15 @@ export async function updateSetAction(
 
   // Status is the switch that makes a Set show up in Stock and (as a draft,
   // pending review) on the website -- see activateSetListing's comment.
-  if (input.status === "active") await activateSetListing(setId);
-  else if (input.status === "draft") await deactivateSetListing(setId);
+  if (input.status === "active") {
+    await activateSetListing(setId);
+    revalidatePath("/stock");
+    revalidatePath("/sales");
+  } else if (input.status === "draft") {
+    await deactivateSetListing(setId);
+    revalidatePath("/stock");
+    revalidatePath("/sales");
+  }
 
   revalidatePath("/marketing");
 }
@@ -450,6 +489,8 @@ export async function deleteSetAction(setId: string): Promise<void> {
   // Best-effort: hide the Set's product/website listing before it's gone --
   // never blocks the delete itself if that cleanup fails.
   await deactivateSetListing(setId).catch((e) => console.error(`deactivateSetListing failed for set ${setId}`, e));
+  revalidatePath("/stock");
+  revalidatePath("/sales");
   const { error } = await supabaseAdmin.from("sets").delete().eq("id", setId);
   if (error) throw new Error(error.message);
   revalidatePath("/marketing");
