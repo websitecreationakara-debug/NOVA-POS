@@ -13,8 +13,10 @@ import {
 } from "@/lib/costControl";
 import { getEffectiveProductCost, syncSetItemCostsForProduct } from "@/lib/websiteProducts/purchaseCosts";
 import { ensurePosProductForSiteProduct } from "@/app/(app)/sales/websiteActions";
+import { catalogForBrandSlug } from "@/lib/websiteProducts/catalogs";
+import { createWebsiteProduct, updateWebsiteProduct } from "@/lib/websiteProducts/client";
 import type { WebsiteCatalogId } from "@/lib/websiteProducts/types";
-import type { SetStatus } from "@/types/database";
+import type { ProductSiteLink, SetStatus } from "@/types/database";
 
 // Cost Control's Set item search (see getStockPickerItems) can surface a
 // website catalog item that has no POS product yet -- this creates that
@@ -61,11 +63,17 @@ export async function listSetsAction(brandId: string): Promise<SetSummary[]> {
   const { data, error } = await supabaseAdmin
     .from("sets")
     .select("*, set_items(amount, unit_cost)")
-    .eq("brand_id", brandId)
-    .order("updated_at", { ascending: false });
+    .eq("brand_id", brandId);
   if (error) throw new Error(error.message);
 
-  return (data ?? []).map((s) => {
+  // Set ID smaller-to-bigger (A1, A1.1, A2, A7.1, A8.1, A8.2, B1, ...) --
+  // `numeric: true` makes the digit runs compare by value instead of
+  // lexically, so "A2" sorts before "A10" instead of after it.
+  const sorted = [...(data ?? [])].sort((a, b) =>
+    a.code.localeCompare(b.code, undefined, { numeric: true, sensitivity: "base" })
+  );
+
+  return sorted.map((s) => {
     const items = (s.set_items as SetItemCostRow[] | null) ?? [];
     const itemCosts = items.map((i) => ({ amount: i.amount, unitCost: i.unit_cost }));
     const totalCost = computeSetTotalCost(itemCosts);
@@ -148,7 +156,7 @@ type SetItemDetailRow = {
   products: { name: string; image_url: string | null; unit: string; weight_grams: number | null } | null;
 };
 
-export async function getSetAction(setId: string): Promise<SetDetail> {
+export async function getSetAction(setId: string): Promise<SetDetail | null> {
   await requireMarketingAccess();
   const { data: set, error } = await supabaseAdmin
     .from("sets")
@@ -156,8 +164,9 @@ export async function getSetAction(setId: string): Promise<SetDetail> {
       "*, set_items(id, product_id, amount, unit, unit_cost, sort_order, products(name, image_url, unit, weight_grams))"
     )
     .eq("id", setId)
-    .single();
-  if (error || !set) throw new Error(error?.message ?? "Set not found");
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  if (!set) return null;
 
   const rawItems = ((set.set_items as SetItemDetailRow[] | null) ?? [])
     .slice()
@@ -230,6 +239,156 @@ export async function createSetAction(input: {
   return { id: data.id };
 }
 
+// The Set's listed sell price when it goes live: prefers the pricing
+// model's actual Sale Price (Base Price minus the purchase/processing fee),
+// falling back through Recommend, the plain suggested_sell_price field, and
+// finally Total Cost -- so a Set with none of the pricing inputs filled in
+// yet still lists at *something* other than $0.
+function resolveSetSellPrice(
+  set: {
+    suggested_sell_price: number | null;
+    target_markup_pct: number | null;
+    labor_cost: number | null;
+    competitor_base_price: number | null;
+  },
+  totalCost: number | null
+): number {
+  const pricing = computeSetPricing({
+    setCost: totalCost,
+    targetMarkupPct: set.target_markup_pct,
+    laborCost: set.labor_cost,
+    competitorBasePrice: set.competitor_base_price,
+  });
+  return pricing.salePrice ?? pricing.recommend ?? set.suggested_sell_price ?? totalCost ?? 0;
+}
+
+// Pushes a Set's listing to its brand's storefront, if one is configured --
+// creates it as an unpublished draft the first time (staff review/publish it
+// from Stock > Website Products, same as any other new listing), or just
+// refreshes title/price on an already-linked one. No-ops quietly if the
+// brand has no storefront wired up. Never called for its own sake -- always
+// via activateSetListing/deactivateSetListing, which catch its errors.
+async function pushSetToWebsite(brandId: string, productId: string, title: string, price: number): Promise<void> {
+  const { data: brand } = await supabaseAdmin.from("brands").select("slug").eq("id", brandId).single();
+  const catalog = brand ? catalogForBrandSlug(brand.slug) : null;
+  if (!catalog) return;
+  const site = catalog.brandSlug as ProductSiteLink["site"];
+
+  const { data: link } = await supabaseAdmin
+    .from("product_site_links")
+    .select("site_product_id")
+    .eq("product_id", productId)
+    .eq("site", site)
+    .eq("variation_id", "")
+    .maybeSingle();
+
+  if (link) {
+    await updateWebsiteProduct(catalog.id, link.site_product_id, { title, price });
+    return;
+  }
+
+  const created = await createWebsiteProduct(catalog.id, { title, price, status: "draft" });
+  await supabaseAdmin.from("product_site_links").upsert(
+    {
+      product_id: productId,
+      site,
+      site_product_id: created.id,
+      variation_id: "",
+      matched_name: title,
+      match_confidence: "exact",
+    },
+    { onConflict: "product_id,site" }
+  );
+}
+
+// Makes an Active Set a real sellable listing: creates (first time) or
+// reactivates its own `products` row -- so it shows up in Stock -- then
+// best-effort pushes it to the storefront (see pushSetToWebsite). The POS
+// side is not best-effort: a failure here throws, since it's the whole
+// point of switching a Set to Active, not a side convenience.
+async function activateSetListing(setId: string): Promise<void> {
+  const { data: set, error } = await supabaseAdmin
+    .from("sets")
+    .select("*, set_items(amount, unit_cost)")
+    .eq("id", setId)
+    .single();
+  if (error || !set) throw new Error(error?.message ?? "Set not found");
+
+  const items = (set.set_items as SetItemCostRow[] | null) ?? [];
+  const totalCost = computeSetTotalCost(items.map((i) => ({ amount: i.amount, unitCost: i.unit_cost })));
+  const price = resolveSetSellPrice(set, totalCost);
+
+  let productId = set.linked_product_id;
+  if (productId) {
+    const { error: updateErr } = await supabaseAdmin
+      .from("products")
+      .update({ name: set.name, price, is_active: true })
+      .eq("id", productId);
+    if (updateErr) throw new Error(updateErr.message);
+  } else {
+    const { data: product, error: createErr } = await supabaseAdmin
+      .from("products")
+      .insert({
+        brand_id: set.brand_id,
+        category_id: null,
+        name: set.name,
+        sku: set.code,
+        price,
+        unit: "pcs",
+        image_url: null,
+        is_active: true,
+      })
+      .select("id")
+      .single();
+    if (createErr || !product) throw new Error(createErr?.message ?? "Failed to create Set product");
+    productId = product.id;
+    const { error: linkErr } = await supabaseAdmin
+      .from("sets")
+      .update({ linked_product_id: productId })
+      .eq("id", setId);
+    if (linkErr) throw new Error(linkErr.message);
+  }
+
+  await pushSetToWebsite(set.brand_id, productId, set.name, price).catch((e) => {
+    console.error(`Set ${setId} website push failed`, e);
+  });
+}
+
+// Reverses activateSetListing: hides the Set's product from Stock
+// (is_active: false, not deleted -- it may carry stock/order history) and
+// unpublishes its website listing back to draft, if it has one. Website
+// side is best-effort, same reasoning as activateSetListing.
+async function deactivateSetListing(setId: string): Promise<void> {
+  const { data: set, error } = await supabaseAdmin
+    .from("sets")
+    .select("linked_product_id, brand_id")
+    .eq("id", setId)
+    .single();
+  if (error || !set || !set.linked_product_id) return;
+
+  const { error: updateErr } = await supabaseAdmin
+    .from("products")
+    .update({ is_active: false })
+    .eq("id", set.linked_product_id);
+  if (updateErr) throw new Error(updateErr.message);
+
+  try {
+    const { data: brand } = await supabaseAdmin.from("brands").select("slug").eq("id", set.brand_id).single();
+    const catalog = brand ? catalogForBrandSlug(brand.slug) : null;
+    if (!catalog) return;
+    const { data: link } = await supabaseAdmin
+      .from("product_site_links")
+      .select("site_product_id")
+      .eq("product_id", set.linked_product_id)
+      .eq("site", catalog.brandSlug as ProductSiteLink["site"])
+      .eq("variation_id", "")
+      .maybeSingle();
+    if (link) await updateWebsiteProduct(catalog.id, link.site_product_id, { status: "draft" });
+  } catch (e) {
+    console.error(`Set ${setId} website unpublish failed`, e);
+  }
+}
+
 export async function updateSetAction(
   setId: string,
   input: Partial<{
@@ -278,11 +437,19 @@ export async function updateSetAction(
     throw new Error(error.message);
   }
 
+  // Status is the switch that makes a Set show up in Stock and (as a draft,
+  // pending review) on the website -- see activateSetListing's comment.
+  if (input.status === "active") await activateSetListing(setId);
+  else if (input.status === "draft") await deactivateSetListing(setId);
+
   revalidatePath("/marketing");
 }
 
 export async function deleteSetAction(setId: string): Promise<void> {
   await requireMarketingAccess();
+  // Best-effort: hide the Set's product/website listing before it's gone --
+  // never blocks the delete itself if that cleanup fails.
+  await deactivateSetListing(setId).catch((e) => console.error(`deactivateSetListing failed for set ${setId}`, e));
   const { error } = await supabaseAdmin.from("sets").delete().eq("id", setId);
   if (error) throw new Error(error.message);
   revalidatePath("/marketing");
