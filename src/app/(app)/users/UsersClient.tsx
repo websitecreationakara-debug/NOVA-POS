@@ -1,7 +1,8 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
+import { Trash2, TriangleAlert } from "lucide-react";
 import { staffRoleLabel, type StaffRole } from "@/types/database";
 import {
   createStaffAccountAction,
@@ -21,6 +22,23 @@ export default function UsersClient({
   const router = useRouter();
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState<{ id: string; name: string } | null>(null);
+  // Fades/scales the dialog in on open rather than snapping to full opacity --
+  // same as DeleteOrderDialog. Reset for each open, not a one-time mount
+  // effect, since this one dialog is reused for every row.
+  const [dialogVisible, setDialogVisible] = useState(false);
+  useEffect(() => {
+    if (!confirmDelete) return;
+    const raf = requestAnimationFrame(() => setDialogVisible(true));
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape") setConfirmDelete(null);
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      cancelAnimationFrame(raf);
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, [confirmDelete]);
   const [savingRoleId, setSavingRoleId] = useState<string | null>(null);
   const [roleError, setRoleError] = useState<string | null>(null);
   const [fullName, setFullName] = useState("");
@@ -80,10 +98,12 @@ export default function UsersClient({
     });
   }
 
-  function deleteAccount(id: string, name: string) {
-    if (!window.confirm(`Delete ${name}'s account? This can't be undone.`)) return;
+  function confirmDeleteAccount() {
+    if (!confirmDelete) return;
+    const { id } = confirmDelete;
     setDeleteError(null);
     setDeletingId(id);
+    setConfirmDelete(null);
     startTransition(async () => {
       try {
         await deleteStaffAccountAction(id);
@@ -97,7 +117,7 @@ export default function UsersClient({
   }
 
   return (
-    <div className="mx-auto max-w-3xl space-y-6 p-8">
+    <div className="mx-auto max-w-5xl space-y-6 p-8">
       <header>
         <h1 className="font-display text-2xl font-bold">Staff Accounts</h1>
         <p className="mt-1 text-muted-foreground">
@@ -198,6 +218,7 @@ export default function UsersClient({
         </div>
         {deleteError && <p className="px-6 pt-4 text-sm text-red-500">{deleteError}</p>}
         {roleError && <p className="px-6 pt-4 text-sm text-red-500">{roleError}</p>}
+        <div className="overflow-x-auto">
         <table className="w-full text-sm">
           <thead className="bg-muted text-xs font-bold tracking-widest text-muted-foreground uppercase">
             <tr>
@@ -240,11 +261,20 @@ export default function UsersClient({
                 <td className="px-6 py-3 text-right">
                   {s.id !== currentUserId && (
                     <button
+                      type="button"
+                      title="Delete"
                       disabled={deletingId === s.id}
-                      onClick={() => deleteAccount(s.id, s.fullName)}
-                      className="text-xs text-muted-foreground hover:text-red-500 disabled:opacity-40"
+                      onClick={() => {
+                        setDialogVisible(false);
+                        setConfirmDelete({ id: s.id, name: s.fullName });
+                      }}
+                      className="rounded p-1.5 text-muted-foreground hover:bg-red-100 hover:text-red-600 disabled:opacity-40 dark:hover:bg-red-900/40"
                     >
-                      {deletingId === s.id ? "Deleting…" : "Delete"}
+                      {deletingId === s.id ? (
+                        <span className="text-xs">Deleting…</span>
+                      ) : (
+                        <Trash2 className="size-4" />
+                      )}
                     </button>
                   )}
                 </td>
@@ -259,7 +289,58 @@ export default function UsersClient({
             )}
           </tbody>
         </table>
+        </div>
       </section>
+
+      {confirmDelete && (
+        <div
+          className={`fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 transition-opacity duration-150 ${
+            dialogVisible ? "opacity-100" : "opacity-0"
+          }`}
+          onClick={() => {
+            if (deletingId === null) setConfirmDelete(null);
+          }}
+        >
+          <div
+            role="alertdialog"
+            aria-modal="true"
+            aria-labelledby="delete-staff-title"
+            aria-describedby="delete-staff-description"
+            className={`w-full max-w-sm rounded-2xl border border-border bg-card p-6 text-center shadow-2xl transition-all duration-150 ${
+              dialogVisible ? "scale-100 opacity-100" : "scale-95 opacity-0"
+            }`}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-red-100 text-red-600 dark:bg-red-950 dark:text-red-400">
+              <TriangleAlert className="h-6 w-6" />
+            </div>
+            <h2 id="delete-staff-title" className="mt-4 text-base font-semibold text-foreground">
+              Delete {confirmDelete.name}&apos;s account?
+            </h2>
+            <p id="delete-staff-description" className="mt-1.5 text-sm text-muted-foreground">
+              They&apos;ll lose access immediately. This can&apos;t be undone.
+            </p>
+            <div className="mt-6 flex justify-center gap-2">
+              <button
+                type="button"
+                disabled={deletingId !== null}
+                onClick={() => setConfirmDelete(null)}
+                className="flex-1 rounded-full border border-border px-4 py-2 text-sm font-medium transition-colors hover:bg-muted disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={deletingId !== null}
+                onClick={confirmDeleteAccount}
+                className="flex-1 rounded-full bg-red-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-red-700 disabled:opacity-50"
+              >
+                {deletingId !== null ? "Deleting…" : "Delete"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
