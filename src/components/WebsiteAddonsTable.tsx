@@ -1,11 +1,12 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { ChevronLeft, ChevronRight, Trash2 } from "lucide-react";
+import { ChevronLeft, ChevronRight, Trash2, TriangleAlert } from "lucide-react";
 import type { WebsiteAddon, WebsiteAddonWrite, WebsiteCatalogId } from "@/lib/websiteProducts/types";
 import {
   createWebsiteAddonAction,
+  deleteWebsiteAddonAction,
   updateWebsiteAddonAction,
   uploadWebsiteImageAction,
 } from "@/app/(app)/stock/websiteActions";
@@ -44,6 +45,11 @@ export default function WebsiteAddonsTable({
   const [error, setError] = useState<string | null>(null);
   const [pendingId, setPendingId] = useState<string | null>(null);
   const [confirmDeleteAddon, setConfirmDeleteAddon] = useState<WebsiteAddon | null>(null);
+  // Bulk selection -- same checkbox + toolbar pattern as the product table
+  // above (select-all-on-page, Publish/Draft/Delete selected).
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const [confirmBulkDelete, setConfirmBulkDelete] = useState(false);
   // Always-editable Price/Stock cells (blur-to-save), same pattern as the
   // product table above -- no separate click-to-edit step.
   const [drafts, setDrafts] = useState<Record<string, { price?: string; stock?: string }>>({});
@@ -65,6 +71,60 @@ export default function WebsiteAddonsTable({
   const pageCount = Math.max(1, Math.ceil(sortedAddons.length / pageSize));
   const currentPage = Math.min(page, pageCount);
   const paged = sortedAddons.slice((currentPage - 1) * pageSize, currentPage * pageSize);
+
+  const pageAddonIds = useMemo(() => paged.map((a) => a.id), [paged]);
+  const allOnPageSelected = pageAddonIds.length > 0 && pageAddonIds.every((id) => selected.has(id));
+
+  function toggleSelected(id: string) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function toggleSelectPage() {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (allOnPageSelected) pageAddonIds.forEach((id) => next.delete(id));
+      else pageAddonIds.forEach((id) => next.add(id));
+      return next;
+    });
+  }
+
+  async function bulkSetStatus(status: WebsiteAddonWrite["status"]) {
+    const ids = Array.from(selected);
+    if (ids.length === 0) return;
+    setBulkBusy(true);
+    for (const id of ids) {
+      try {
+        await updateWebsiteAddonAction(catalogId, id, { status });
+      } catch {
+        /* keep going; the row will just stay as it was */
+      }
+    }
+    setBulkBusy(false);
+    setSelected(new Set());
+    router.refresh();
+  }
+
+  async function bulkDelete() {
+    const ids = Array.from(selected);
+    if (ids.length === 0) return;
+    setBulkBusy(true);
+    for (const id of ids) {
+      try {
+        await deleteWebsiteAddonAction(catalogId, id);
+      } catch {
+        /* keep going */
+      }
+    }
+    setBulkBusy(false);
+    setSelected(new Set());
+    setConfirmBulkDelete(false);
+    router.refresh();
+  }
 
   function handleImagePick(file: File | null) {
     if (!file) return;
@@ -220,6 +280,40 @@ export default function WebsiteAddonsTable({
         </button>
       </div>
 
+      {selected.size > 0 && (
+        <div className="flex flex-wrap items-center gap-2 border-b border-black/[.08] bg-brand/10 px-6 py-2.5 text-sm dark:border-white/[.145]">
+          <span className="font-semibold">{selected.size} selected</span>
+          <button
+            onClick={() => bulkSetStatus("published")}
+            disabled={bulkBusy}
+            className="rounded-full border border-black/[.15] px-3 py-1 text-xs font-medium disabled:opacity-50 dark:border-white/[.2]"
+          >
+            Publish
+          </button>
+          <button
+            onClick={() => bulkSetStatus("draft")}
+            disabled={bulkBusy}
+            className="rounded-full border border-black/[.15] px-3 py-1 text-xs font-medium disabled:opacity-50 dark:border-white/[.2]"
+          >
+            Set to Draft
+          </button>
+          <button
+            onClick={() => setConfirmBulkDelete(true)}
+            disabled={bulkBusy}
+            className="rounded-full border border-red-300 px-3 py-1 text-xs font-medium text-red-600 disabled:opacity-50 dark:border-red-900 dark:text-red-400"
+          >
+            Delete
+          </button>
+          {bulkBusy && <span className="text-xs text-zinc-500">Working…</span>}
+          <button
+            onClick={() => setSelected(new Set())}
+            className="ml-auto text-xs font-medium text-zinc-500 hover:text-foreground"
+          >
+            Clear
+          </button>
+        </div>
+      )}
+
       {showForm && (
         <div className="border-b border-black/[.08] bg-black/[.02] px-6 py-5 dark:border-white/[.145] dark:bg-white/[.02]">
           <h3 className="mb-4 text-sm font-semibold">New addon</h3>
@@ -373,7 +467,16 @@ export default function WebsiteAddonsTable({
       <table className="w-full border-collapse text-sm">
         <thead className="sticky top-0 bg-zinc-50 dark:bg-zinc-900">
           <tr className="border-b border-black/[.08] text-left text-xs text-zinc-500 dark:border-white/[.145]">
-            <th className="w-14 px-3 py-2 pl-6 font-medium">Image</th>
+            <th className="w-10 py-2 pl-6">
+              <input
+                type="checkbox"
+                aria-label="Select all on this page"
+                checked={allOnPageSelected}
+                onChange={toggleSelectPage}
+                className="align-middle accent-[var(--brand)]"
+              />
+            </th>
+            <th className="w-14 px-3 py-2 font-medium">Image</th>
             <th className="px-3 py-2 font-medium">Addon</th>
             <th className="w-24 px-3 py-2 text-right font-medium">Price</th>
             <th className="w-20 px-3 py-2 text-right font-medium">Stock</th>
@@ -388,8 +491,22 @@ export default function WebsiteAddonsTable({
             const stockValue = drafts[a.id]?.stock ?? (a.stock === null ? "" : String(a.stock));
             const busy = pendingId === a.id;
             return (
-              <tr key={a.id} className="border-b border-black/[.06] align-top dark:border-white/[.08]">
-                <td className="px-3 py-2 pl-6">
+              <tr
+                key={a.id}
+                className={`border-b border-black/[.06] align-top dark:border-white/[.08] ${
+                  selected.has(a.id) ? "bg-brand/5" : ""
+                }`}
+              >
+                <td className="py-2 pl-6">
+                  <input
+                    type="checkbox"
+                    aria-label={`Select ${a.title}`}
+                    checked={selected.has(a.id)}
+                    onChange={() => toggleSelected(a.id)}
+                    className="align-middle accent-[var(--brand)]"
+                  />
+                </td>
+                <td className="px-3 py-2">
                   <div className="h-10 w-10 shrink-0 overflow-hidden rounded border border-black/[.1] bg-zinc-100 dark:border-white/[.15] dark:bg-zinc-800">
                     {a.image_url ? (
                       // eslint-disable-next-line @next/next/no-img-element
@@ -497,7 +614,7 @@ export default function WebsiteAddonsTable({
           })}
           {paged.length === 0 && (
             <tr>
-              <td colSpan={7} className="px-6 py-8 text-center text-sm text-zinc-500">
+              <td colSpan={8} className="px-6 py-8 text-center text-sm text-zinc-500">
                 No add-ons.
               </td>
             </tr>
@@ -555,6 +672,51 @@ export default function WebsiteAddonsTable({
           title={confirmDeleteAddon.title}
           onClose={() => setConfirmDeleteAddon(null)}
         />
+      )}
+
+      {confirmBulkDelete && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+          onClick={() => {
+            if (!bulkBusy) setConfirmBulkDelete(false);
+          }}
+        >
+          <div
+            role="alertdialog"
+            aria-modal="true"
+            aria-label="Delete selected addons"
+            className="w-full max-w-sm rounded-2xl border border-border bg-card p-6 text-center shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-red-100 text-red-600 dark:bg-red-950 dark:text-red-400">
+              <TriangleAlert className="h-6 w-6" />
+            </div>
+            <h2 className="mt-4 text-base font-semibold text-foreground">
+              Delete {selected.size} addon{selected.size === 1 ? "" : "s"}?
+            </h2>
+            <p className="mt-1.5 text-sm text-muted-foreground">
+              This removes them from the storefront for good. This can&apos;t be undone.
+            </p>
+            <div className="mt-6 flex justify-center gap-2">
+              <button
+                type="button"
+                disabled={bulkBusy}
+                onClick={() => setConfirmBulkDelete(false)}
+                className="flex-1 rounded-full border border-border px-4 py-2 text-sm font-medium transition-colors hover:bg-muted disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={bulkBusy}
+                onClick={bulkDelete}
+                className="flex-1 rounded-full bg-red-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-red-700 disabled:opacity-50"
+              >
+                {bulkBusy ? "Deleting…" : "Delete all"}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </>
   );

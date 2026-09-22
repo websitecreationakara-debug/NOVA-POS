@@ -25,6 +25,7 @@ import {
 import type {
   WebsiteAddon,
   WebsiteCatalogId,
+  WebsiteCategory,
   WebsiteProduct,
   WebsiteProductVariation,
   WebsiteProductWrite,
@@ -33,6 +34,7 @@ import {
   createWebsiteProductAction,
   deleteWebsiteProductAction,
   deleteWebsiteProductVariationAction,
+  listWebsiteCategoriesAction,
   listWebsiteProductsAction,
   setSimpleProductPriceAction,
   setSimpleProductStockAction,
@@ -154,6 +156,7 @@ export default function WebsiteProductsPanel({
   initialError,
   posProducts,
   addons,
+  initialCategories,
   purchaseCosts,
 }: {
   catalogId: WebsiteCatalogId;
@@ -169,6 +172,11 @@ export default function WebsiteProductsPanel({
   // `products` above, since an add-on id must never flow through the product
   // edit/delete endpoints.
   addons?: WebsiteAddon[];
+  // This storefront's live category list, if it has the read-only categories
+  // endpoint deployed (see categoriesUrlEnv) -- keeps the filter chips and
+  // category picker in sync with the website automatically. Empty for a
+  // catalog that hasn't deployed it yet.
+  initialCategories?: WebsiteCategory[];
   // Original Cost / Total Cost 10% / Extra Money columns -- POS's own
   // purchasing record (see lib/websiteProducts/purchaseCosts.ts), keyed by
   // purchaseCostKey(siteProductId, variationId).
@@ -177,6 +185,9 @@ export default function WebsiteProductsPanel({
   const router = useRouter();
   const [products, setProducts] = useState<WebsiteProduct[] | null>(initialProducts);
   const [loadError, setLoadError] = useState<string | null>(initialError);
+  const [websiteCategories, setWebsiteCategories] = useState<WebsiteCategory[]>(
+    initialCategories ?? []
+  );
   const [search, setSearch] = useState("");
   const [categoryFilter, setCategoryFilter] = useState<string>("");
   const [outOfStockOnly, setOutOfStockOnly] = useState(false);
@@ -254,13 +265,18 @@ export default function WebsiteProductsPanel({
     return map;
   }, [posProducts]);
 
-  // Options for the "Category" picker in the add-product form. The storefront
-  // APIs expose no category list, so start from the hand-maintained names in
-  // catalogs.ts and add any other category id seen on a live product (labelled
-  // by its id, since we have no name for it) so nothing already in use is
-  // missing. A brand-new empty category still has to be created on the
-  // storefront first.
+  // Options for the "Category" picker in the add-product form, and the source
+  // for the filter chips below. Prefers the storefront's own live category
+  // list (see listWebsiteCategories/categoriesUrlEnv) when that endpoint is
+  // deployed for this catalog -- a category added or removed on the website
+  // then shows up here on the next poll, no hand-editing needed. Falls back
+  // to the hand-maintained names in catalogs.ts (plus any other category id
+  // seen on a live product, labelled by its id) for a catalog that hasn't
+  // deployed the endpoint yet.
   const categoryOptions = useMemo(() => {
+    if (websiteCategories.length > 0) {
+      return websiteCategories.map((c) => ({ id: c.id, label: c.name }));
+    }
     const known = getCatalog(catalogId).categories ?? [];
     const byId = new Map(known.map((c) => [c.id, c.label]));
     for (const p of products ?? []) {
@@ -269,17 +285,20 @@ export default function WebsiteProductsPanel({
       }
     }
     return [...byId].map(([id, label]) => ({ id, label }));
-  }, [catalogId, products]);
+  }, [catalogId, products, websiteCategories]);
 
-  // Filter pills mirror the storefront live, not catalogs.ts: a *named*
-  // category shows here only while at least one polled product still
-  // references it, so one the site empties out disappears on its own -- no
-  // hand-editing catalogs.ts needed for removals. Unnamed categories (no
-  // entry in catalogs.ts) are left out of this row entirely -- an "Unnamed
-  // category (xxxxxxxx…)" pill isn't useful to filter by; those products
-  // stay reachable under "All" until the id is given a real label in
-  // catalogs.ts.
+  // Filter pills. With a live category list, every website category gets a
+  // chip -- including ones with zero products right now -- and one deleted on
+  // the website disappears here on its own next poll. Without one, mirror the
+  // storefront live from products instead: a *named* category shows here only
+  // while at least one polled product still references it, so one the site
+  // empties out disappears on its own -- no hand-editing catalogs.ts needed
+  // for removals. Unnamed categories (no entry in catalogs.ts) are left out of
+  // this row entirely -- an "Unnamed category (xxxxxxxx…)" pill isn't useful
+  // to filter by; those products stay reachable under "All" until the id is
+  // given a real label in catalogs.ts.
   const liveCategoryOptions = useMemo(() => {
+    if (websiteCategories.length > 0) return categoryOptions;
     const counts = new Map<string, number>();
     for (const p of products ?? []) {
       if (p.category_id) counts.set(p.category_id, (counts.get(p.category_id) ?? 0) + 1);
@@ -287,7 +306,39 @@ export default function WebsiteProductsPanel({
     return categoryOptions.filter(
       (c) => !c.label.startsWith("Unnamed category (") && (counts.get(c.id) ?? 0) > 0
     );
-  }, [categoryOptions, products]);
+  }, [categoryOptions, products, websiteCategories]);
+
+  // categoryFilter -> itself + every descendant category id, so picking a
+  // parent chip (e.g. "Frozen Seafoods") matches products filed directly
+  // under it AND under its children (e.g. "Oyster", "Crab") -- same as how
+  // the storefront's own category page rolls children up into the parent's
+  // listing. A parent with no products of its own (common: it's purely an
+  // organizational grouping) would otherwise always show "No website
+  // products yet." even though the website's equivalent page isn't empty.
+  // No-op (just the id itself) without a live category list, since the old
+  // hand-maintained catalogs.ts list carries no parent/child structure.
+  const categoryFilterIds = useMemo(() => {
+    if (!categoryFilter || categoryFilter === ADDONS_FILTER_ID || categoryFilter === "__none__") {
+      return null;
+    }
+    if (websiteCategories.length === 0) return new Set([categoryFilter]);
+    const childrenOf = new Map<string, string[]>();
+    for (const c of websiteCategories) {
+      if (!c.parent_id) continue;
+      const list = childrenOf.get(c.parent_id);
+      if (list) list.push(c.id);
+      else childrenOf.set(c.parent_id, [c.id]);
+    }
+    const ids = new Set<string>();
+    const stack = [categoryFilter];
+    while (stack.length > 0) {
+      const id = stack.pop()!;
+      if (ids.has(id)) continue;
+      ids.add(id);
+      stack.push(...(childrenOf.get(id) ?? []));
+    }
+    return ids;
+  }, [categoryFilter, websiteCategories]);
 
   // Refs so the polling loop can read current state without re-subscribing.
   const signatureRef = useRef<string>(initialProducts ? catalogSignature(initialProducts) : "");
@@ -316,6 +367,11 @@ export default function WebsiteProductsPanel({
           setProducts(data);
         }
         if (!background) setLoadError(null);
+        // Best-effort -- a catalog with no categories endpoint deployed yet
+        // just keeps the last-known-good (empty) list, same as add-ons.
+        listWebsiteCategoriesAction(catalogId)
+          .then(setWebsiteCategories)
+          .catch(() => {});
       } catch (e) {
         if (!background) {
           setLoadError(
@@ -757,11 +813,17 @@ export default function WebsiteProductsPanel({
         (weight ?? "").toLowerCase().includes(q) ||
         (p.taste_notes ?? "").toLowerCase().includes(q)) &&
       (!categoryFilter ||
-        (categoryFilter === "__none__" ? !p.category_id : p.category_id === categoryFilter)) &&
+        (categoryFilter === "__none__"
+          ? !p.category_id
+          : !!p.category_id && !!categoryFilterIds?.has(p.category_id))) &&
       (!outOfStockOnly || (stock !== null && stock <= 0)) &&
       (!lowStockOnly || (stock !== null && stock > 0 && stock <= 5))
     );
   });
+  // Same search box, applied to the Addons tab too -- title/description match.
+  const filteredAddons = (addons ?? []).filter(
+    (a) => !q || a.title.toLowerCase().includes(q) || (a.description ?? "").toLowerCase().includes(q)
+  );
   const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize));
   // Snap back to page 1 whenever the result set changes under the current page.
   const filterKey = `${q}|${categoryFilter}|${outOfStockOnly}|${lowStockOnly}|${pageSize}|${pageCount}`;
@@ -1187,7 +1249,7 @@ export default function WebsiteProductsPanel({
 
       <div className="flex-1 overflow-auto">
         {categoryFilter === ADDONS_FILTER_ID ? (
-          <WebsiteAddonsTable catalogId={catalogId} addons={addons ?? []} />
+          <WebsiteAddonsTable catalogId={catalogId} addons={filteredAddons} />
         ) : (
         <>
         {loadError && <p className="px-6 py-3 text-sm text-red-500">{loadError}</p>}

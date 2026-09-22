@@ -1,10 +1,11 @@
 import { getBrands, getCatalogForBrand } from "@/lib/supabase/queries";
 import { catalogForBrandSlug } from "@/lib/websiteProducts/catalogs";
-import { listWebsiteAddons, listWebsiteProducts } from "@/lib/websiteProducts/client";
+import { listWebsiteAddons, listWebsiteCategories, listWebsiteProducts } from "@/lib/websiteProducts/client";
 import { getWebsitePurchaseCosts, type PurchaseCostFields } from "@/lib/websiteProducts/purchaseCosts";
 import type {
   WebsiteAddon,
   WebsiteCatalogId,
+  WebsiteCategory,
   WebsiteProduct,
 } from "@/lib/websiteProducts/types";
 import type { ProductSiteLink } from "@/types/database";
@@ -19,6 +20,11 @@ export type WebsiteCatalogData = {
   // lib/websiteProducts/client.ts for why these never go through the
   // editable product list above. Empty for a brand with no add-on endpoint.
   addons: WebsiteAddon[];
+  // This storefront's live category list, if it has the read-only categories
+  // endpoint deployed -- see categoriesUrlEnv. Empty for a catalog that hasn't
+  // deployed it yet, in which case the panel falls back to its old
+  // derived-from-products chip list.
+  categories: WebsiteCategory[];
   // Manually-entered purchase-cost breakdown per storefront item (Original
   // Cost / Total Cost 10% / Extra Money columns), keyed by purchaseCostKey --
   // POS's own record, unrelated to the storefront's own data.
@@ -62,6 +68,7 @@ export default async function StockPage({
             products: prods,
             error: null,
             addons: await listWebsiteAddons(catalog.id).catch(() => []),
+            categories: await listWebsiteCategories(catalog.id).catch(() => []),
             purchaseCosts: await getWebsitePurchaseCosts(
               catalog.brandSlug as ProductSiteLink["site"]
             ).catch(() => ({})),
@@ -75,6 +82,7 @@ export default async function StockPage({
                 ? e.message
                 : "Failed to load",
             addons: [],
+            categories: [],
             purchaseCosts: {},
           }))
       : Promise.resolve(null);
