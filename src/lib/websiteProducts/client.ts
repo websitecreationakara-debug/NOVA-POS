@@ -3,6 +3,7 @@ import type {
   WebsiteAddon,
   WebsiteAddonWrite,
   WebsiteCatalogId,
+  WebsiteCategory,
   WebsiteProduct,
   WebsiteProductWrite,
 } from "./types";
@@ -170,7 +171,7 @@ function blankToNull(input: Partial<WebsiteProductWrite>): Partial<WebsiteProduc
 // Catalogs disagree on envelope shape: some return a bare array / object, others
 // wrap it as `{ count, products: [...] }` / `{ product: {...} }` (BOSBA Drink &
 // Snack) or `{ data: ... }` (BOSBA Premium Foods). Try each wrapper key in turn.
-function unwrap<T>(payload: unknown, keys: ("data" | "products" | "product")[]): T {
+function unwrap<T>(payload: unknown, keys: ("data" | "products" | "product" | "categories")[]): T {
   if (payload && typeof payload === "object") {
     for (const key of keys) {
       if (key in payload) return (payload as Record<string, unknown>)[key] as T;
@@ -254,6 +255,33 @@ export async function listWebsiteAddons(catalogId: WebsiteCatalogId): Promise<We
   return addons.map((a) => ({
     ...a,
     image_url: a.image_url && a.image_url.startsWith("/") ? `${origin}${a.image_url}` : a.image_url,
+  }));
+}
+
+// This storefront's live category list, if it has the read-only categories
+// endpoint deployed -- see categoriesUrlEnv on the catalog config. Empty array
+// (not an error) for a catalog with no categories endpoint configured yet, so
+// callers can fall back to the hardcoded `categories` label list instead of
+// failing outright.
+export async function listWebsiteCategories(catalogId: WebsiteCatalogId): Promise<WebsiteCategory[]> {
+  const catalog = getCatalog(catalogId);
+  if (!catalog.categoriesUrlEnv) return [];
+  const baseUrl = process.env[catalog.categoriesUrlEnv];
+  if (!baseUrl) return [];
+
+  const payload = await request<unknown>(catalogId, "", {
+    headers: authHeaders(catalogId),
+  }, baseUrl);
+  const categories = unwrap<WebsiteCategory[]>(payload, ["data", "categories"]);
+  if (!Array.isArray(categories)) {
+    throw new Error(
+      `Website categories API returned an unexpected shape (expected an array or { data: [] }).`
+    );
+  }
+  const { origin } = new URL(baseUrl);
+  return categories.map((c) => ({
+    ...c,
+    image_url: c.image_url && c.image_url.startsWith("/") ? `${origin}${c.image_url}` : c.image_url,
   }));
 }
 

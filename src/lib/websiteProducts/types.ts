@@ -70,6 +70,18 @@ export type WebsiteAddon = {
   sort_order: number;
 };
 
+// A storefront category, straight from its own `categories` table (flat,
+// self-referencing via `parent_id`) -- see listWebsiteCategories. Read-only:
+// categories are still created/edited/deleted on each storefront's own admin,
+// this app only mirrors the list so Stock's chips stay in sync automatically.
+export type WebsiteCategory = {
+  id: string;
+  name: string;
+  slug: string;
+  parent_id: string | null;
+  image_url: string | null;
+};
+
 export type WebsiteAddonWrite = {
   title: string;
   description?: string | null;

@@ -11,6 +11,7 @@ import {
   deleteWebsiteProduct,
   deleteWebsiteProductVariation,
   listSellableWebsiteProducts,
+  listWebsiteCategories,
   listWebsiteProducts,
   updateWebsiteAddon,
   updateWebsiteProduct,
@@ -21,6 +22,7 @@ import type {
   WebsiteAddon,
   WebsiteAddonWrite,
   WebsiteCatalogId,
+  WebsiteCategory,
   WebsiteProduct,
   WebsiteProductWrite,
 } from "@/lib/websiteProducts/types";
@@ -57,6 +59,15 @@ export async function listWebsiteProductsAction(
 ): Promise<WebsiteProduct[]> {
   await requireStockAccess();
   return listWebsiteProducts(catalogId);
+}
+
+// The storefront's live category list (empty if it has no categories endpoint
+// deployed yet) -- see listWebsiteCategories for the fallback behavior.
+export async function listWebsiteCategoriesAction(
+  catalogId: WebsiteCatalogId
+): Promise<WebsiteCategory[]> {
+  await requireStockAccess();
+  return listWebsiteCategories(catalogId);
 }
 
 // Sales' grid only -- see listSellableWebsiteProducts for why this merges in
