@@ -38,13 +38,33 @@ export interface CustomerSuggestion {
 // needing the full number before anything happens.
 export async function searchCustomersByPhone(prefix: string): Promise<CustomerSuggestion[]> {
   const trimmed = prefix.trim();
-  if (trimmed.length < 3) return [];
+  if (trimmed.length < 1) return [];
 
   const { data, error } = await supabaseAdmin
     .from("customers")
     .select("id, name, phone, photo_url, address")
     .not("phone", "is", null)
     .ilike("phone", `${trimmed}%`)
+    .order("name")
+    .limit(8);
+  if (error) throw error;
+
+  return (data ?? [])
+    .filter((c): c is typeof c & { phone: string } => c.phone !== null)
+    .map((c) => ({ id: c.id, name: c.name, phone: c.phone, photoUrl: c.photo_url, address: c.address }));
+}
+
+// Same idea as searchCustomersByPhone, but by name -- lets staff who only
+// remember the customer's name (not their number) find them the same way.
+export async function searchCustomersByName(prefix: string): Promise<CustomerSuggestion[]> {
+  const trimmed = prefix.trim();
+  if (trimmed.length < 1) return [];
+
+  const { data, error } = await supabaseAdmin
+    .from("customers")
+    .select("id, name, phone, photo_url, address")
+    .not("phone", "is", null)
+    .ilike("name", `%${trimmed}%`)
     .order("name")
     .limit(8);
   if (error) throw error;
