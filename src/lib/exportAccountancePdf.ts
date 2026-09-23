@@ -35,7 +35,7 @@ export async function exportAccountancePdf(
 
   pdf.setFont("helvetica", "bold");
   pdf.setFontSize(16);
-  pdf.text("Accountance Report", marginX, y);
+  pdf.text("Accounting Report", marginX, y);
   y += 8;
 
   pdf.setFont("helvetica", "normal");

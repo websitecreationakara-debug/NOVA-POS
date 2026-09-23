@@ -84,9 +84,17 @@ export default function AddWasteItemModal({
     startTransition(async () => {
       try {
         if (selected.website) {
-          // Unlimited (null) starts tracking from 0, same as the Stock
-          // page's own Add Stock box for one of these.
-          const newSiteStock = (selected.website.siteStock ?? 0) - amount;
+          // The delta applied to POS below is `newSiteStock - currentStock`,
+          // where `currentStock` is POS's own count -- so the base this
+          // subtracts `amount` from must be that same POS count once linked
+          // (POS is the source of truth, see site-sync.ts), not the site's
+          // own independently-tracked siteStock. Using siteStock here let
+          // the two numbers drift apart and silently turned "waste" into a
+          // stock *increase* whenever they disagreed. Only a brand-new,
+          // not-yet-linked item (no POS count to match) falls back to
+          // siteStock -- same as the Stock page's own Add Stock box.
+          const baseStock = selected.pos ? selected.pos.currentStock : (selected.website.siteStock ?? 0);
+          const newSiteStock = baseStock - amount;
           const shared = {
             catalogId: selected.website.catalogId,
             siteProductId: selected.website.siteProductId,
