@@ -6,8 +6,8 @@ NOVA-POS is a Next.js 16 app (App Router, Supabase, Tailwind 4) hosted on **Verc
 
 | Thing | Value |
 | --- | --- |
-| Vercel team | `website-creation1` (Hobby plan) |
-| Vercel project | `nova-pos` |
+| Vercel team | `Demo's projects` (`demos-projects-d02c6d9b`, Hobby plan) |
+| Vercel project | `pos-system` |
 | GitHub repo | `websitecreationakara-debug/NOVA-POS` |
 | Production branch | `master` |
 | Production URL | `https://pos-system-inky-ten.vercel.app` |
@@ -34,7 +34,7 @@ git push -u origin my-change       # first push of the branch
 ```
 
 Vercel auto-builds and the preview is at:
-`https://nova-pos-git-my-change-website-creation1.vercel.app`
+`https://pos-system-git-my-change-demos-projects-d02c6d9b.vercel.app`
 
 ### Update PRODUCTION (`pos-system-inky-ten.vercel.app`)
 
@@ -73,8 +73,8 @@ vercel --prod --force
 
 ## 1. Prerequisites (one-time)
 
-- You are a member of the `website-creation1` Vercel team.
-- Environment variables are set in Vercel → `nova-pos` → Settings → Environment
+- You are a member of the `Demo's projects` Vercel team.
+- Environment variables are set in Vercel → `pos-system` → Settings → Environment
   Variables (see [Section 4](#4-environment-variables)).
 
 Optional local CLI:
@@ -82,7 +82,7 @@ Optional local CLI:
 ```powershell
 npm i -g vercel
 vercel login
-vercel link      # select team "website-creation1", project "nova-pos"
+vercel link      # select team "Demo's projects", project "pos-system"
 ```
 
 ---
@@ -106,8 +106,8 @@ Vercel then builds and gives you:
 
 | URL | Description |
 | --- | --- |
-| `nova-pos-git-my-feature-website-creation1.vercel.app` | Stable per-branch URL. Always points to the latest commit on that branch. |
-| `nova-pos-<hash>-website-creation1.vercel.app` | Unique per-commit URL. Pinned to one deployment. |
+| `pos-system-git-my-feature-demos-projects-d02c6d9b.vercel.app` | Stable per-branch URL. Always points to the latest commit on that branch. |
+| `pos-system-<hash>-demos-projects-d02c6d9b.vercel.app` | Unique per-commit URL. Pinned to one deployment. |
 
 Preview deploys use the **Preview** environment variables.
 
@@ -121,7 +121,7 @@ vercel            # builds current folder, deploys a PREVIEW, prints the URL
 
 ### Promote a preview to production (no rebuild)
 
-Vercel → `nova-pos` → Deployments → pick the deployment → **Promote to Production**.
+Vercel → `pos-system` → Deployments → pick the deployment → **Promote to Production**.
 
 ---
 
@@ -148,8 +148,8 @@ vercel --prod
 
 ### Adding a custom domain (one-time, not done yet)
 
-1. Buy a domain (any registrar), e.g. `nova-pos.com`.
-2. Vercel → `nova-pos` → **Settings → Domains** → enter the domain → **Add**.
+1. Buy a domain (any registrar), e.g. `pos-system.com`.
+2. Vercel → `pos-system` → **Settings → Domains** → enter the domain → **Add**.
 3. Vercel shows the DNS records to create. At the registrar:
    - Apex `example.com`: **A** record → `76.76.21.21`
      (or ALIAS/ANAME → `cname.vercel-dns.com` if the registrar supports it).
@@ -166,10 +166,10 @@ After this, every production deploy is automatically served on the custom domain
 
 ## 4. Environment variables
 
-Set these in Vercel → `nova-pos` → Settings → Environment Variables. Source of
+Set these in Vercel → `pos-system` → Settings → Environment Variables. Source of
 truth for the list is [`.env.example`](./.env.example).
 
-> **Status:** all variables below are already set on `nova-pos` for
+> **Status:** all variables below are already set on `pos-system` for
 > **Production, Preview, and Development** (values pulled from the local
 > `.env.local`). `vercel.json` pins the deployment region to `sin1`
 > (Singapore) to match the Supabase project. If a Supabase key ever shows
@@ -202,7 +202,7 @@ Notes:
 - **Supabase Auth redirect URLs** — in the Supabase dashboard →
   Authentication → URL Configuration, add:
   - `https://pos-system-inky-ten.vercel.app/**` (and the custom domain once added)
-  - `https://nova-pos-*-website-creation1.vercel.app/**` (preview wildcard)
+  - `https://pos-system-*-demos-projects-d02c6d9b.vercel.app/**` (preview wildcard)
   Without these, login and auth callbacks fail on deployed builds.
 - Run `npm run build` locally once before pushing to catch type/lint errors
   early (`next build`).
