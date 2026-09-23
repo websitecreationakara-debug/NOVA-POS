@@ -10,14 +10,14 @@ NOVA-POS is a Next.js 16 app (App Router, Supabase, Tailwind 4) hosted on **Verc
 | Vercel project | `nova-pos` |
 | GitHub repo | `websitecreationakara-debug/NOVA-POS` |
 | Production branch | `master` |
-| Production URL | `https://nova-pos-eight.vercel.app` |
+| Production URL | `https://pos-system-inky-ten.vercel.app` |
 | Custom domain | **not configured yet** (see [Section 3](#3-deploy-to-production--real-domain)) |
 
 The project is already created and linked, so day-to-day deploys just involve
 pushing branches. This document covers the two targets:
 
 - a **preview URL** (per branch / per pull request)
-- the **production** deployment (`nova-pos-eight.vercel.app`, plus a real domain once added)
+- the **production** deployment (`pos-system-inky-ten.vercel.app`, plus a real domain once added)
 
 ---
 
@@ -36,7 +36,7 @@ git push -u origin my-change       # first push of the branch
 Vercel auto-builds and the preview is at:
 `https://nova-pos-git-my-change-website-creation1.vercel.app`
 
-### Update PRODUCTION (`nova-pos-eight.vercel.app`)
+### Update PRODUCTION (`pos-system-inky-ten.vercel.app`)
 
 ```powershell
 git checkout master
@@ -130,7 +130,7 @@ Vercel → `nova-pos` → Deployments → pick the deployment → **Promote to P
 ### Deploying
 
 **Option A — Git (recommended, automatic):** merging or pushing to `master`
-triggers a production deployment, served on `nova-pos-eight.vercel.app` (and any custom
+triggers a production deployment, served on `pos-system-inky-ten.vercel.app` (and any custom
 domain once added).
 
 ```powershell
@@ -160,7 +160,7 @@ vercel --prod
    `www` → apex).
 
 After this, every production deploy is automatically served on the custom domain
-— no per-deploy domain step. `nova-pos-eight.vercel.app` keeps working too.
+— no per-deploy domain step. `pos-system-inky-ten.vercel.app` keeps working too.
 
 ---
 
@@ -178,7 +178,7 @@ truth for the list is [`.env.example`](./.env.example).
 
 | Variable | Environments | Notes |
 | --- | --- | --- |
-| `NEXT_PUBLIC_SITE_URL` | Production / Preview / Development | Production = the live URL (`https://nova-pos-eight.vercel.app` or the custom domain). |
+| `NEXT_PUBLIC_SITE_URL` | Production / Preview / Development | Production = the live URL (`https://pos-system-inky-ten.vercel.app` or the custom domain). |
 | `NEXT_PUBLIC_SUPABASE_URL` | all | Supabase project URL |
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | all | Supabase anon key |
 | `SUPABASE_SERVICE_ROLE_KEY` | Production / Preview | Server-only secret. Never commit. |
@@ -201,7 +201,7 @@ Notes:
 
 - **Supabase Auth redirect URLs** — in the Supabase dashboard →
   Authentication → URL Configuration, add:
-  - `https://nova-pos-eight.vercel.app/**` (and the custom domain once added)
+  - `https://pos-system-inky-ten.vercel.app/**` (and the custom domain once added)
   - `https://nova-pos-*-website-creation1.vercel.app/**` (preview wildcard)
   Without these, login and auth callbacks fail on deployed builds.
 - Run `npm run build` locally once before pushing to catch type/lint errors
