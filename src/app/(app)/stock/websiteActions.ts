@@ -251,9 +251,6 @@ export async function setVariationStockAction(input: {
   createdAt?: string;
 }): Promise<void> {
   await requireStockAccess();
-  await updateWebsiteProductVariation(input.catalogId, input.siteProductId, input.variationId, {
-    stock: input.stock,
-  });
 
   const linked = await ensurePosProductForSiteProduct({
     catalogId: input.catalogId,
@@ -270,6 +267,13 @@ export async function setVariationStockAction(input: {
   if (input.alreadyLinked && input.stock !== null) {
     const delta = input.stock - input.currentStock;
     if (delta !== 0) {
+      // adjustStockAction pushes the resulting POS quantity straight back out
+      // to the storefront (see pushStockToSites -- POS is the source of
+      // truth for stock). Also PATCHing the storefront directly here, with
+      // the same target value, sent it two writes for one edit -- harmless
+      // if the storefront's endpoint really replaces the count, but at least
+      // one live catalog's endpoint doesn't: it adds the given number instead
+      // of setting it, so two writes of the same value doubled its stock.
       await adjustStockAction({
         productId: linked.id,
         delta,
@@ -278,7 +282,15 @@ export async function setVariationStockAction(input: {
         createdAt: input.createdAt,
       });
     }
+    return;
   }
+
+  // Not yet linked (nothing else pushes to the storefront for a brand-new
+  // link) or left "unlimited" (null, no POS delta to compute) -- write it
+  // directly here, the one and only time.
+  await updateWebsiteProductVariation(input.catalogId, input.siteProductId, input.variationId, {
+    stock: input.stock,
+  });
 }
 
 // Same as setVariationPriceAction/setVariationStockAction but for a simple
@@ -329,7 +341,6 @@ export async function setSimpleProductStockAction(input: {
   createdAt?: string;
 }): Promise<void> {
   await requireStockAccess();
-  await updateWebsiteProduct(input.catalogId, input.siteProductId, { stock: input.stock });
 
   const linked = await ensurePosProductForSiteProduct({
     catalogId: input.catalogId,
@@ -343,6 +354,10 @@ export async function setSimpleProductStockAction(input: {
   if (input.alreadyLinked && input.stock !== null) {
     const delta = input.stock - input.currentStock;
     if (delta !== 0) {
+      // See setVariationStockAction's comment -- adjustStockAction's own
+      // pushStockToSites is the single write to the storefront here; a
+      // second direct write of the same value duplicated it, which at least
+      // one catalog's API applies as an increment rather than a replace.
       await adjustStockAction({
         productId: linked.id,
         delta,
@@ -351,7 +366,10 @@ export async function setSimpleProductStockAction(input: {
         createdAt: input.createdAt,
       });
     }
+    return;
   }
+
+  await updateWebsiteProduct(input.catalogId, input.siteProductId, { stock: input.stock });
 }
 
 export async function deleteWebsiteProductAction(

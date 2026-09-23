@@ -49,8 +49,8 @@ const MARKETING_ROLES = ["admin", "marketing"];
 // component and this needs to stay a plain client-safe array.
 const ACCOUNTANCE_LINKS = [
   { tab: "reconciliation", label: "Cash Reconciliation" },
-  { tab: "reports", label: "Financial Reporting & P&L" },
   { tab: "expenses", label: "Expense & Accounts Payable" },
+  { tab: "reports", label: "Financial Reporting & P&L" },
   { tab: "cogs", label: "COGS & Margin Tracking" },
 ];
 const ACCOUNTANCE_ROLES = ["admin", "accountance"];
@@ -121,8 +121,7 @@ export default function Sidebar({ role }: { role: string }) {
           })}
 
         {/* Accountance -- header itself still links to the page (default
-            tab), same as before this session's edits; the chevron only
-            toggles the sub-list. */}
+            tab); the chevron only toggles the sub-list. */}
         {showAccountance && (
           <div>
             <div
@@ -132,13 +131,13 @@ export default function Sidebar({ role }: { role: string }) {
             >
               <Link href="/accountance" className="flex flex-1 items-center gap-3 py-2.5">
                 <Calculator className="size-4" />
-                Accountance
+                Accounting
               </Link>
               <button
                 type="button"
                 onClick={() => setAccountanceOpen((open) => !open)}
                 aria-expanded={accountanceOpen}
-                aria-label={accountanceOpen ? "Collapse Accountance" : "Expand Accountance"}
+                aria-label={accountanceOpen ? "Collapse Accounting" : "Expand Accounting"}
                 className={`rounded p-1 ${isOnAccountance ? "hover:bg-black/10" : "hover:bg-black/5 dark:hover:bg-white/10"}`}
               >
                 <ChevronDown
