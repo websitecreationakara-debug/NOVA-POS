@@ -426,6 +426,21 @@ export async function setProductCategoryAction(input: {
   revalidatePath("/sales");
 }
 
+// A cheap "has anything changed" fingerprint for LiveOrdersWatcher, which
+// piggybacks this onto its existing order-activity poll so a brand-new (or
+// renamed/reordered/deleted) category shows up in an already-open Sales tab
+// without a manual reload -- categories are passed down as server-rendered
+// props, so nothing else tells an already-mounted page to re-fetch them.
+export async function getCategoriesFingerprintAction(): Promise<string> {
+  const { data, error } = await supabaseAdmin
+    .from("categories")
+    .select("id, brand_id, name, sort_order")
+    .order("brand_id")
+    .order("sort_order");
+  if (error) throw error;
+  return (data ?? []).map((c) => `${c.id}:${c.brand_id}:${c.name}:${c.sort_order}`).join("|");
+}
+
 export async function createCategoryAction(input: {
   brandId: string;
   name: string;
