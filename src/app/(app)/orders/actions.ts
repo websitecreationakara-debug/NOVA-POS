@@ -37,12 +37,32 @@ export async function getRecentOrderActivityAction(): Promise<
   return (data ?? []).map((o) => ({ id: o.id, fulfillmentStatus: o.fulfillment_status }));
 }
 
-// Orders whose customer-requested delivery time is within the next 2 hours
+// How many storefront (channel="online") orders came in *today* and are
+// still sitting unhandled (fulfillment_status="new_order") -- the sidebar's
+// "Orders" badge, so sales staff notice a customer bought from the website
+// without needing the removed voice announcement. Scoped to today so it
+// reads like a fresh count each day (Monday's 10 don't pile onto Tuesday's
+// 5) rather than an ever-growing backlog. POS-charged orders never count
+// here; the cashier who charged one is already looking at it.
+export async function getNewOnlineOrdersCountAction(): Promise<number> {
+  const today = new Date().toISOString().slice(0, 10);
+  const { count, error } = await supabaseAdmin
+    .from("orders")
+    .select("id", { count: "exact", head: true })
+    .eq("channel", "online")
+    .eq("fulfillment_status", "new_order")
+    .gte("created_at", `${today}T00:00:00.000Z`)
+    .lte("created_at", `${today}T23:59:59.999Z`);
+  if (error) throw error;
+  return count ?? 0;
+}
+
+// Orders whose customer-requested delivery time is within the next 1 hour
 // (or already past) and that aren't finished yet -- what the alert bell polls.
 // Returns [] if the delivery_at column isn't there yet (migration 0020), so a
 // missing migration doesn't blow up the app shell.
 export async function getDueDeliveries(): Promise<DueDelivery[]> {
-  const cutoff = new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString();
+  const cutoff = new Date(Date.now() + 60 * 60 * 1000).toISOString();
   try {
     const { data, error } = await supabaseAdmin
       .from("orders")

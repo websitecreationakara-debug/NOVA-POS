@@ -6,7 +6,11 @@ import {
   getInvoice,
 } from "@/lib/supabase/queries";
 import { catalogForBrandSlug } from "@/lib/websiteProducts/catalogs";
-import { ADDON_CATEGORY_ID, listSellableWebsiteProducts } from "@/lib/websiteProducts/client";
+import {
+  ADDON_CATEGORY_ID,
+  listSellableWebsiteProducts,
+  listWebsiteCategories,
+} from "@/lib/websiteProducts/client";
 import type { WebsiteCatalogId, WebsiteProduct } from "@/lib/websiteProducts/types";
 import SalesClient, { type EditOrderSeed } from "./SalesClient";
 
@@ -74,18 +78,30 @@ export default async function SalesPage({
   // synthetic "Addon" chip -- a failure fetching those alone never blocks
   // regular products, it just means no add-ons show up this load.
   const catalog = catalogForBrandSlug(currentBrand.slug);
+  // Same "prefer the storefront's own live category list, fall back to the
+  // hand-maintained one in catalogs.ts" rule Stock's Website tab already
+  // uses (see WebsiteProductsPanel's categoryOptions) -- without this, Sales
+  // was stuck on the old hardcoded list even after categories were
+  // added/renamed/removed on the live site.
+  const liveCategoriesPromise = catalog ? listWebsiteCategories(catalog.id).catch(() => []) : Promise.resolve([]);
   const websiteCatalogPromise: Promise<SalesWebsiteCatalog | null> = catalog
-    ? listSellableWebsiteProducts(catalog.id)
-        .then(({ products, addonCount }) => ({
-          id: catalog.id,
-          label: catalog.label,
-          products,
-          error: null,
-          categories:
-            addonCount > 0
-              ? [...(catalog.categories ?? []), { id: ADDON_CATEGORY_ID, label: "Addon" }]
-              : (catalog.categories ?? []),
-        }))
+    ? Promise.all([listSellableWebsiteProducts(catalog.id), liveCategoriesPromise])
+        .then(([{ products, addonCount }, liveCategories]) => {
+          const baseCategories =
+            liveCategories.length > 0
+              ? liveCategories.map((c) => ({ id: c.id, label: c.name }))
+              : (catalog.categories ?? []);
+          return {
+            id: catalog.id,
+            label: catalog.label,
+            products,
+            error: null,
+            categories:
+              addonCount > 0
+                ? [...baseCategories, { id: ADDON_CATEGORY_ID, label: "Addon" }]
+                : baseCategories,
+          };
+        })
         .catch((e) => ({
           id: catalog.id,
           label: catalog.label,

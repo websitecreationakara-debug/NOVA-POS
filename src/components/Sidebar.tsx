@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
 import {
@@ -13,6 +13,8 @@ import {
   ShoppingCart,
   Users,
 } from "lucide-react";
+import { getNewOnlineOrdersCountAction } from "@/app/(app)/orders/actions";
+import { ORDERS_CHANGED } from "@/lib/ordersChanged";
 
 const topItems = [
   {
@@ -90,6 +92,36 @@ export default function Sidebar({ role }: { role: string }) {
 
   const showMarketing = MARKETING_ROLES.includes(role);
 
+  // Badge on "Orders" -- how many storefront orders are sitting unhandled,
+  // so staff notice a customer bought from the website without needing the
+  // (removed) voice announcement. No timer of its own: this count only ever
+  // changes when an order is created or its status changes, both of which
+  // LiveOrdersWatcher (mounted in TopBar) already detects and announces via
+  // ORDERS_CHANGED -- reacting to that (plus mount and window focus) keeps
+  // this accurate without adding a 4th independent poll loop running on
+  // every open tab all day.
+  const [newOnlineOrdersCount, setNewOnlineOrdersCount] = useState(0);
+  useEffect(() => {
+    let cancelled = false;
+    async function load() {
+      try {
+        const count = await getNewOnlineOrdersCountAction();
+        if (!cancelled) setNewOnlineOrdersCount(count);
+      } catch {
+        // transient network hiccup -- next event tries again
+      }
+    }
+    void load();
+    const onFocus = () => void load();
+    window.addEventListener("focus", onFocus);
+    window.addEventListener(ORDERS_CHANGED, onFocus);
+    return () => {
+      cancelled = true;
+      window.removeEventListener("focus", onFocus);
+      window.removeEventListener(ORDERS_CHANGED, onFocus);
+    };
+  }, []);
+
   function topLinkClass(active: boolean) {
     return `flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors ${
       active ? "bg-brand text-black" : "text-muted-foreground hover:bg-muted"
@@ -116,6 +148,15 @@ export default function Sidebar({ role }: { role: string }) {
               <Link key={item.href} href={item.href} className={topLinkClass(isActive)}>
                 <item.icon className="size-4" />
                 {item.label}
+                {item.href === "/orders" && newOnlineOrdersCount > 0 && (
+                  <span
+                    className={`ml-auto grid min-w-[1.375rem] place-items-center rounded-full bg-red-600 px-1.5 py-0.5 text-[11px] font-bold text-white shadow-sm ${
+                      isActive ? "ring-2 ring-black/15" : ""
+                    }`}
+                  >
+                    {newOnlineOrdersCount}
+                  </span>
+                )}
               </Link>
             );
           })}
