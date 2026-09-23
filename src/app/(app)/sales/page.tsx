@@ -6,7 +6,7 @@ import {
   getInvoice,
 } from "@/lib/supabase/queries";
 import { catalogForBrandSlug } from "@/lib/websiteProducts/catalogs";
-import { listWebsiteProducts } from "@/lib/websiteProducts/client";
+import { listWebsiteCategories, listWebsiteProducts } from "@/lib/websiteProducts/client";
 import type { WebsiteCatalogId, WebsiteProduct } from "@/lib/websiteProducts/types";
 import SalesClient, { type EditOrderSeed } from "./SalesClient";
 
@@ -72,13 +72,18 @@ export default async function SalesPage({
   // surface inside the Website tab.
   const catalog = catalogForBrandSlug(currentBrand.slug);
   const websiteCatalogPromise: Promise<SalesWebsiteCatalog | null> = catalog
-    ? listWebsiteProducts(catalog.id)
-        .then((prods) => ({
+    ? Promise.all([
+        listWebsiteProducts(catalog.id),
+        // Never lets a broken/unconfigured categories endpoint take down the
+        // whole panel -- fall back to the static list from catalogs.ts.
+        listWebsiteCategories(catalog.id).catch(() => null),
+      ])
+        .then(([prods, liveCategories]) => ({
           id: catalog.id,
           label: catalog.label,
           products: prods,
           error: null,
-          categories: catalog.categories ?? [],
+          categories: liveCategories ?? catalog.categories ?? [],
         }))
         .catch((e) => ({
           id: catalog.id,

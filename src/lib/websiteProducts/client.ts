@@ -1,5 +1,10 @@
 import { getCatalog } from "./catalogs";
-import type { WebsiteCatalogId, WebsiteProduct, WebsiteProductWrite } from "./types";
+import type {
+  WebsiteCatalogId,
+  WebsiteCategory,
+  WebsiteProduct,
+  WebsiteProductWrite,
+} from "./types";
 
 function config(catalogId: WebsiteCatalogId) {
   const catalog = getCatalog(catalogId);
@@ -26,12 +31,12 @@ function looksLikeHtml(contentType: string | null, body: string): boolean {
   return /^\s*<(?:!doctype|html)\b/i.test(body);
 }
 
-async function request<T>(
+async function requestAt<T>(
   catalogId: WebsiteCatalogId,
+  baseUrl: string,
   path: string,
   init?: RequestInit
 ): Promise<T> {
-  const { baseUrl } = config(catalogId);
   const url = `${baseUrl}${path}`;
   const res = await fetch(url, {
     ...init,
@@ -101,6 +106,15 @@ async function request<T>(
       `Website products API returned invalid JSON from ${url}: ${raw.slice(0, 500)}`
     );
   }
+}
+
+async function request<T>(
+  catalogId: WebsiteCatalogId,
+  path: string,
+  init?: RequestInit
+): Promise<T> {
+  const { baseUrl } = config(catalogId);
+  return requestAt<T>(catalogId, baseUrl, path, init);
 }
 
 // Catalogs store `image_url` (and `video_url`) as a site-relative path like
@@ -189,6 +203,38 @@ export async function listWebsiteProducts(
     );
   }
   return products.map((p) => absolutizeMedia(catalogId, p));
+}
+
+// Live category names for the "Category" picker/filter chips, replacing the
+// hand-maintained `categories` array in catalogs.ts wherever a catalog has a
+// real categories endpoint. Returns null (not an error) when the catalog has
+// no `categoriesUrlEnv` configured, so callers can fall back to the static
+// list -- same shape as configuredCatalogs()'s "not wired up" check.
+export async function listWebsiteCategories(
+  catalogId: WebsiteCatalogId
+): Promise<WebsiteCategory[] | null> {
+  const catalog = getCatalog(catalogId);
+  if (!catalog.categoriesUrlEnv) return null;
+  const baseUrl = process.env[catalog.categoriesUrlEnv];
+  if (!baseUrl) return null;
+
+  const payload = await requestAt<unknown>(catalogId, baseUrl, "?limit=1000", {
+    headers: authHeaders(catalogId),
+  });
+  const rows = unwrap<
+    { id: string; name: string; parent_id: string | null; sort_order: number }[]
+  >(payload, ["data"]);
+  if (!Array.isArray(rows)) {
+    throw new Error(
+      `${catalog.label} categories API returned an unexpected shape (expected an array or { data: [] }).`
+    );
+  }
+  return rows.map((r) => ({
+    id: r.id,
+    label: r.name,
+    parent_id: r.parent_id ?? null,
+    sort_order: r.sort_order ?? 0,
+  }));
 }
 
 export async function getWebsiteProduct(

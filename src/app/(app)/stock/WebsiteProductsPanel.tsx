@@ -133,6 +133,7 @@ export default function WebsiteProductsPanel({
   initialProducts,
   initialError,
   posProducts,
+  categories,
 }: {
   catalogId: WebsiteCatalogId;
   initialProducts: WebsiteProduct[] | null;
@@ -141,6 +142,10 @@ export default function WebsiteProductsPanel({
   // (and edit) the POS-linked product for that size, if one exists yet --
   // see setVariationPriceAction/setVariationStockAction.
   posProducts: ProductWithStock[];
+  // Category picker/filter options for this catalog -- live from the
+  // storefront's categories endpoint when configured, else the hand-maintained
+  // fallback in catalogs.ts (see page.tsx).
+  categories: { id: string; label: string }[];
 }) {
   const router = useRouter();
   const [products, setProducts] = useState<WebsiteProduct[] | null>(initialProducts);
@@ -209,22 +214,21 @@ export default function WebsiteProductsPanel({
     return map;
   }, [posProducts]);
 
-  // Options for the "Category" picker in the add-product form. The storefront
-  // APIs expose no category list, so start from the hand-maintained names in
-  // catalogs.ts and add any other category id seen on a live product (labelled
-  // by its id, since we have no name for it) so nothing already in use is
-  // missing. A brand-new empty category still has to be created on the
-  // storefront first.
+  // Options for the "Category" picker in the add-product form. `categories`
+  // is live from the storefront's categories endpoint when configured (see
+  // page.tsx), else the hand-maintained fallback in catalogs.ts. Either way,
+  // add any other category id seen on a live product (labelled by its id,
+  // since we have no name for it) so nothing already in use is missing. A
+  // brand-new empty category still has to be created on the storefront first.
   const categoryOptions = useMemo(() => {
-    const known = getCatalog(catalogId).categories ?? [];
-    const byId = new Map(known.map((c) => [c.id, c.label]));
+    const byId = new Map(categories.map((c) => [c.id, c.label]));
     for (const p of products ?? []) {
       if (p.category_id && !byId.has(p.category_id)) {
         byId.set(p.category_id, `Unnamed category (${p.category_id.slice(0, 8)}…)`);
       }
     }
     return [...byId].map(([id, label]) => ({ id, label }));
-  }, [catalogId, products]);
+  }, [categories, products]);
 
   // Refs so the polling loop can read current state without re-subscribing.
   const signatureRef = useRef<string>(initialProducts ? catalogSignature(initialProducts) : "");

@@ -17,9 +17,14 @@ export type WebsiteCatalog = {
   // When set, the list endpoint takes this query string to include drafts
   // (and requires auth to do so). Omit for catalogs whose list is all-or-nothing.
   listAllParam?: string;
-  // Category filter chips for the Sales > Website tab. The storefront product
-  // API only returns a `category_id` (a UUID) per product and has no endpoint
-  // for category names, so the `label`s below were inferred from the products
+  // env var holding the categories list endpoint's base URL (same auth/key as
+  // `keyEnv`). When set, listWebsiteCategories() (./client) fetches live names
+  // instead of the hand-maintained `categories` fallback below.
+  categoriesUrlEnv?: string;
+  // Fallback category filter chips for the Sales > Website tab, used when
+  // `categoriesUrlEnv` is unset or the live fetch fails. Catalogs with no
+  // categories endpoint have their product API return only a `category_id`
+  // (a UUID) with no name, so these `label`s were inferred from the products
   // in each group -- edit them to match the storefront's own wording. A
   // product whose `category_id` isn't listed here just isn't matched by any
   // chip (still shown under "All"). Order here is the chip order.
@@ -78,12 +83,17 @@ export const CATALOGS: WebsiteCatalog[] = [
     auth: "x-api-key",
     // status=all + drafts require the write key; limit is capped at 500.
     listAllParam: "status=all&limit=500",
-    // Reconstructed from the live catalog: each id is a category actually in
-    // use on a product, named from that group's contents (the storefront still
-    // has no endpoint that returns category names). "Frozen Seafoods" and
-    // "Premium Fish" are best guesses for one-off groups; the rest are certain.
-    // Empty storefront categories (Sashimi Platters, Clam, Meat & Poultry, ...)
-    // aren't listed because there's no product to read their id from.
+    // The storefront now has a real categories endpoint
+    // (`https://bosbapremiumfoods.com/api/v1/categories`) -- live names win
+    // whenever this is configured. `categories` below only fires if the env
+    // var is unset or the live fetch throws.
+    categoriesUrlEnv: "BOSBA_PREMIUM_FOODS_CATEGORIES_API_URL",
+    // Reconstructed from the live catalog before the categories endpoint
+    // existed: each id is a category actually in use on a product, named from
+    // that group's contents. "Frozen Seafoods" and "Premium Fish" are best
+    // guesses for one-off groups; the rest are certain. Empty storefront
+    // categories (Sashimi Platters, Clam, Meat & Poultry, ...) aren't listed
+    // because there was no product to read their id from.
     categories: [
       { id: "7104b338-dce2-4321-86ef-14a51f2c7eb6", label: "Sea Urchin Uni Set" },
       { id: "fa63a04e-ae55-4143-a92f-b5019a5bc48f", label: "Yellowtail Hamachi Set" },

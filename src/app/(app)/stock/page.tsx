@@ -1,6 +1,6 @@
 import { getBrands, getCatalogForBrand } from "@/lib/supabase/queries";
 import { catalogForBrandSlug } from "@/lib/websiteProducts/catalogs";
-import { listWebsiteProducts } from "@/lib/websiteProducts/client";
+import { listWebsiteCategories, listWebsiteProducts } from "@/lib/websiteProducts/client";
 import type {
   WebsiteCatalogId,
   WebsiteProduct,
@@ -12,6 +12,9 @@ export type WebsiteCatalogData = {
   label: string;
   products: WebsiteProduct[] | null;
   error: string | null;
+  // Category filter/picker options. Live from the storefront's categories
+  // endpoint when configured, else the hand-maintained fallback in catalogs.ts.
+  categories: { id: string; label: string }[];
 };
 
 export default async function StockPage({
@@ -44,12 +47,18 @@ export default async function StockPage({
 
   const websiteCatalogPromise: Promise<WebsiteCatalogData | null> =
     catalog
-      ? listWebsiteProducts(catalog.id)
-          .then((prods) => ({
+      ? Promise.all([
+          listWebsiteProducts(catalog.id),
+          // Never lets a broken/unconfigured categories endpoint take down the
+          // whole panel -- fall back to the static list from catalogs.ts.
+          listWebsiteCategories(catalog.id).catch(() => null),
+        ])
+          .then(([prods, liveCategories]) => ({
             id: catalog.id,
             label: catalog.label,
             products: prods,
             error: null,
+            categories: liveCategories ?? catalog.categories ?? [],
           }))
           .catch((e) => ({
             id: catalog.id,
@@ -59,6 +68,7 @@ export default async function StockPage({
               e instanceof Error
                 ? e.message
                 : "Failed to load",
+            categories: catalog.categories ?? [],
           }))
       : Promise.resolve(null);
 

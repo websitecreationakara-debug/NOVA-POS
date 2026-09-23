@@ -185,6 +185,7 @@ truth for the list is [`.env.example`](./.env.example).
 | `SORA_SAKE_PRODUCTS_API_URL` / `SORA_SAKE_PRODUCTS_API_KEY` | as needed | Storefront product API |
 | `BOSBA_DRINK_SNACK_PRODUCTS_API_URL` / `BOSBA_DRINK_SNACK_PRODUCTS_API_TOKEN` | as needed | Storefront product API |
 | `BOSBA_PREMIUM_FOODS_PRODUCTS_API_URL` / `BOSBA_PREMIUM_FOODS_PRODUCTS_API_KEY` | as needed | Storefront product API |
+| `BOSBA_PREMIUM_FOODS_CATEGORIES_API_URL` | as needed | Storefront categories API (reuses `BOSBA_PREMIUM_FOODS_PRODUCTS_API_KEY`) |
 
 Notes:
 

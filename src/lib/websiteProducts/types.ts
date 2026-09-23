@@ -54,6 +54,17 @@ export type WebsiteProduct = {
   tabs?: unknown[];
 };
 
+// Live category from a catalog's categories endpoint (see
+// listWebsiteCategories in ./client). `parent_id`/`sort_order` mirror the
+// storefront's own hierarchy; consumers that just need filter chips can
+// ignore both.
+export type WebsiteCategory = {
+  id: string;
+  label: string;
+  parent_id: string | null;
+  sort_order: number;
+};
+
 export type WebsiteProductWrite = {
   title: string;
   description?: string | null;
