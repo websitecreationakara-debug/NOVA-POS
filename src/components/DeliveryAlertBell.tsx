@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { Bell, Receipt, Volume2, VolumeX } from "lucide-react";
+import { Bell, Receipt } from "lucide-react";
 import { getDueDeliveries, type DueDelivery } from "@/app/(app)/orders/actions";
 import { ORDERS_CHANGED } from "@/lib/ordersChanged";
 import { SALE_CHARGED, type SaleChargedDetail } from "@/lib/saleCharged";
@@ -11,14 +11,14 @@ const POLL_MS = 60_000;
 // While an order is overdue and still not marked done, nag again this often.
 const OVERDUE_REPEAT_MS = 30 * 60_000;
 
-// Escalation step for a delivery time: 0 = entered the 2h window, 1 = under
-// 1 hour, 2 = under 30 min, 3 = overdue. The alert re-sounds each time an
+// Escalation step for a delivery time: 0 = entered the 1h window, 1 = under
+// 30 min, 2 = under 15 min, 3 = overdue. The alert re-fires each time an
 // order moves up a step (and keeps nagging once overdue).
 function alertStep(iso: string): number {
   const mins = (new Date(iso).getTime() - Date.now()) / 60_000;
   if (mins < 0) return 3;
-  if (mins < 30) return 2;
-  if (mins < 60) return 1;
+  if (mins < 15) return 2;
+  if (mins < 30) return 1;
   return 0;
 }
 
@@ -55,55 +55,10 @@ function agoLabel(at: number): string {
 type RecentSale = SaleChargedDetail & { id: string; at: number };
 const MAX_RECENT_SALES = 5;
 
-// One reused context so the browser's autoplay unlock (from the user's first
-// click anywhere) carries over to later programmatic chimes.
-let audioCtx: AudioContext | null = null;
-
-function getAudioCtx(): AudioContext | null {
-  try {
-    const Ctx =
-      window.AudioContext ??
-      (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
-    if (!Ctx) return null;
-    if (!audioCtx || audioCtx.state === "closed") audioCtx = new Ctx();
-    if (audioCtx.state === "suspended") void audioCtx.resume();
-    return audioCtx;
-  } catch {
-    return null;
-  }
-}
-
-// Two rising beeps via WebAudio -- no asset to ship.
-function chime() {
-  try {
-    const ctx = getAudioCtx();
-    if (!ctx) return;
-
-    const t0 = ctx.currentTime + 0.02;
-    for (const [start, freq] of [
-      [t0, 880],
-      [t0 + 0.22, 1174],
-    ] as const) {
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-      osc.connect(gain);
-      gain.connect(ctx.destination);
-      osc.type = "sine";
-      osc.frequency.setValueAtTime(freq, start);
-      gain.gain.setValueAtTime(0.0001, start);
-      gain.gain.exponentialRampToValueAtTime(0.3, start + 0.02);
-      gain.gain.exponentialRampToValueAtTime(0.0001, start + 0.18);
-      osc.start(start);
-      osc.stop(start + 0.2);
-    }
-  } catch {
-    /* audio not available -- silent */
-  }
-}
-
-// Polls for orders whose requested delivery time is within 2 hours (or past)
-// and not finished, and alerts staff -- a badge count, a list, and (opt-in) a
-// sound + browser notification when a new one enters the window.
+// Polls for orders whose requested delivery time is within 1 hour (or past)
+// and not finished, and alerts staff -- a badge count, a list, and a browser
+// notification (if permission was already granted) when a new one enters the
+// window. No sound -- just the visual badge/list/notification.
 export default function DeliveryAlertBell() {
   const [items, setItems] = useState<DueDelivery[]>([]);
   // Sales charged in this tab -- newest first, capped. Fired synchronously by
@@ -112,26 +67,11 @@ export default function DeliveryAlertBell() {
   const [recentSales, setRecentSales] = useState<RecentSale[]>([]);
   const [unseenSales, setUnseenSales] = useState(0);
   const [open, setOpen] = useState(false);
-  // Read the saved preference once. SSR renders it off; the client picks up
-  // the real value on first render (a one-frame icon flip at most).
-  const [sound, setSound] = useState<boolean>(() => {
-    if (typeof window === "undefined") return false;
-    try {
-      return localStorage.getItem("deliveryAlertSound") === "1";
-    } catch {
-      return false;
-    }
-  });
   const rootRef = useRef<HTMLDivElement>(null);
-  const soundRef = useRef(sound);
   // Per order: the escalation step we last alerted at, and when. Re-alert when
   // an order moves up a step, or (once overdue) every OVERDUE_REPEAT_MS. Stays
   // mounted across page navigation, so this persists too.
   const alertedRef = useRef<Map<string, { step: number; at: number }>>(new Map());
-
-  useEffect(() => {
-    soundRef.current = sound;
-  }, [sound]);
 
   const load = useCallback(async () => {
     let data: DueDelivery[];
@@ -166,31 +106,17 @@ export default function DeliveryAlertBell() {
     // the window (e.g. its status was reverted) alerts again.
     alertedRef.current = nextState;
 
-    if (toAlert.length > 0 && soundRef.current) {
-      chime();
-      if (typeof Notification !== "undefined" && Notification.permission === "granted") {
-        new Notification(
-          `${toAlert.length} delivery${toAlert.length === 1 ? "" : " orders"} due`,
-          {
-            body: toAlert
-              .map((f) => `${f.customerName ?? f.invoiceNumber ?? "Order"} — ${relTime(f.deliveryAt)}`)
-              .join("\n"),
-            tag: "nova-delivery-due",
-          }
-        );
-      }
+    if (toAlert.length > 0 && typeof Notification !== "undefined" && Notification.permission === "granted") {
+      new Notification(
+        `${toAlert.length} delivery${toAlert.length === 1 ? "" : " orders"} due`,
+        {
+          body: toAlert
+            .map((f) => `${f.customerName ?? f.invoiceNumber ?? "Order"} — ${relTime(f.deliveryAt)}`)
+            .join("\n"),
+          tag: "nova-delivery-due",
+        }
+      );
     }
-  }, []);
-
-  // Browsers block audio until the user interacts with the page. Unlock the
-  // context on the first click/tap anywhere, so a poll-triggered chime later
-  // can actually be heard even if they never touched the sound toggle.
-  useEffect(() => {
-    function prime() {
-      if (soundRef.current) getAudioCtx();
-    }
-    window.addEventListener("pointerdown", prime);
-    return () => window.removeEventListener("pointerdown", prime);
   }, []);
 
   useEffect(() => {
@@ -212,7 +138,7 @@ export default function DeliveryAlertBell() {
     };
   }, [load]);
 
-  // A sale charged in this tab -- shows up in the list and chimes/notifies
+  // A sale charged in this tab -- shows up in the list and notifies
   // immediately, same as a delivery crossing into its alert window.
   useEffect(() => {
     function onSaleCharged(e: Event) {
@@ -225,14 +151,11 @@ export default function DeliveryAlertBell() {
         )
       );
       setUnseenSales((n) => n + 1);
-      if (soundRef.current) {
-        chime();
-        if (typeof Notification !== "undefined" && Notification.permission === "granted") {
-          new Notification(`Sale charged — ${formatMoney(detail.amount)}`, {
-            body: [detail.customerName, detail.invoiceNumber].filter(Boolean).join(" · ") || undefined,
-            tag: `nova-sale-${detail.orderId}`,
-          });
-        }
+      if (typeof Notification !== "undefined" && Notification.permission === "granted") {
+        new Notification(`Sale charged — ${formatMoney(detail.amount)}`, {
+          body: [detail.customerName, detail.invoiceNumber].filter(Boolean).join(" · ") || undefined,
+          tag: `nova-sale-${detail.orderId}`,
+        });
       }
     }
     window.addEventListener(SALE_CHARGED, onSaleCharged);
@@ -255,24 +178,6 @@ export default function DeliveryAlertBell() {
     };
   }, [open]);
 
-  function toggleSound() {
-    const next = !sound;
-    setSound(next);
-    try {
-      localStorage.setItem("deliveryAlertSound", next ? "1" : "0");
-    } catch {
-      /* ignore */
-    }
-    if (next) {
-      // Runs inside this click, so the browser lets the sound through and the
-      // audio context stays unlocked for later poll-triggered chimes.
-      chime();
-      if (typeof Notification !== "undefined" && Notification.permission === "default") {
-        void Notification.requestPermission();
-      }
-    }
-  }
-
   const count = items.length + unseenSales;
   const anyUrgent = items.some((i) => alertStep(i.deliveryAt) >= 2);
 
@@ -282,6 +187,11 @@ export default function DeliveryAlertBell() {
       // Opening the bell counts as having seen the recent sales -- the badge
       // settles back down to just the delivery count until the next charge.
       if (next) setUnseenSales(0);
+      // A real click, so the browser allows the permission prompt -- lets
+      // someone opt into desktop notifications without a dedicated toggle.
+      if (next && typeof Notification !== "undefined" && Notification.permission === "default") {
+        void Notification.requestPermission();
+      }
       return next;
     });
   }
@@ -308,16 +218,8 @@ export default function DeliveryAlertBell() {
 
       {open && (
         <div className="absolute right-0 top-full z-50 mt-2 w-80 overflow-hidden rounded-xl border border-border bg-card shadow-lg">
-          <div className="flex items-center justify-between border-b border-border px-4 py-2.5">
+          <div className="border-b border-border px-4 py-2.5">
             <span className="text-sm font-semibold">Alerts</span>
-            <button
-              type="button"
-              onClick={toggleSound}
-              title={sound ? "Sound alerts on" : "Sound alerts off"}
-              className="text-muted-foreground hover:text-foreground"
-            >
-              {sound ? <Volume2 className="size-4" /> : <VolumeX className="size-4" />}
-            </button>
           </div>
           <div className="max-h-96 overflow-y-auto">
             {recentSales.length > 0 && (
@@ -353,7 +255,7 @@ export default function DeliveryAlertBell() {
             )}
             {items.length === 0 && recentSales.length === 0 ? (
               <p className="px-4 py-6 text-center text-sm text-muted-foreground">
-                Nothing due in the next 2 hours.
+                Nothing due in the next hour.
               </p>
             ) : (
               items.map((d) => {

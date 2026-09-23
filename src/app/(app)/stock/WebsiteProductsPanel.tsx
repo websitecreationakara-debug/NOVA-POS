@@ -10,12 +10,22 @@ import {
   RefreshCw,
   Trash2,
   TriangleAlert,
+  X,
 } from "lucide-react";
 import type { ProductWithStock } from "@/lib/supabase/queries";
 import Dropdown from "@/components/Dropdown";
+import WebsiteAddonsTable from "@/components/WebsiteAddonsTable";
 import { getCatalog } from "@/lib/websiteProducts/catalogs";
+import {
+  derivePurchaseCost,
+  purchaseCostKey,
+  EMPTY_PURCHASE_COSTS,
+  type PurchaseCostFields,
+} from "@/lib/websiteProducts/purchaseCosts";
 import type {
+  WebsiteAddon,
   WebsiteCatalogId,
+  WebsiteCategory,
   WebsiteProduct,
   WebsiteProductVariation,
   WebsiteProductWrite,
@@ -24,9 +34,13 @@ import {
   createWebsiteProductAction,
   deleteWebsiteProductAction,
   deleteWebsiteProductVariationAction,
+  listWebsiteCategoriesAction,
   listWebsiteProductsAction,
+  setSimpleProductPriceAction,
+  setSimpleProductStockAction,
   setVariationPriceAction,
   setVariationStockAction,
+  setWebsitePurchaseCostAction,
   updateWebsiteProductAction,
   uploadWebsiteImageAction,
 } from "./websiteActions";
@@ -38,6 +52,10 @@ function posEntryKey(siteProductId: string, variationId: string): string {
   return `${siteProductId}::${variationId}`;
 }
 
+function formatMoney(n: number): string {
+  return `$${n.toFixed(2)}`;
+}
+
 // How often to re-pull the storefront catalog so edits made on the website (or
 // by another POS user) show up here without a manual refresh. The storefront API
 // has no push channel, so this is a poll.
@@ -45,6 +63,10 @@ const POLL_INTERVAL_MS = 15_000;
 
 // Rows-per-page choices for the table footer.
 const PAGE_SIZE_OPTIONS = [10, 25, 50];
+
+// Sentinel `categoryFilter` value for the "Addons" chip -- picked so it can
+// never collide with a real category_id (those are UUIDs).
+const ADDONS_FILTER_ID = "__addons__";
 
 const fieldInputClass =
   "rounded border border-black/[.15] bg-transparent px-2.5 py-1.5 text-sm outline-none focus:border-black/40 dark:border-white/[.2] dark:focus:border-white/50";
@@ -133,7 +155,9 @@ export default function WebsiteProductsPanel({
   initialProducts,
   initialError,
   posProducts,
-  categories,
+  addons,
+  initialCategories,
+  purchaseCosts,
 }: {
   catalogId: WebsiteCatalogId;
   initialProducts: WebsiteProduct[] | null;
@@ -142,14 +166,28 @@ export default function WebsiteProductsPanel({
   // (and edit) the POS-linked product for that size, if one exists yet --
   // see setVariationPriceAction/setVariationStockAction.
   posProducts: ProductWithStock[];
-  // Category picker/filter options for this catalog -- live from the
-  // storefront's categories endpoint when configured, else the hand-maintained
-  // fallback in catalogs.ts (see page.tsx).
-  categories: { id: string; label: string }[];
+  // This storefront's add-on catalog, if it has one (empty = no add-on
+  // endpoint configured -- see addonsUrlEnv). Rendered as its own table (see
+  // WebsiteAddonsTable) when the "Addons" chip is active -- never merged into
+  // `products` above, since an add-on id must never flow through the product
+  // edit/delete endpoints.
+  addons?: WebsiteAddon[];
+  // This storefront's live category list, if it has the read-only categories
+  // endpoint deployed (see categoriesUrlEnv) -- keeps the filter chips and
+  // category picker in sync with the website automatically. Empty for a
+  // catalog that hasn't deployed it yet.
+  initialCategories?: WebsiteCategory[];
+  // Original Cost / Total Cost 10% / Extra Money columns -- POS's own
+  // purchasing record (see lib/websiteProducts/purchaseCosts.ts), keyed by
+  // purchaseCostKey(siteProductId, variationId).
+  purchaseCosts?: Record<string, PurchaseCostFields>;
 }) {
   const router = useRouter();
   const [products, setProducts] = useState<WebsiteProduct[] | null>(initialProducts);
   const [loadError, setLoadError] = useState<string | null>(initialError);
+  const [websiteCategories, setWebsiteCategories] = useState<WebsiteCategory[]>(
+    initialCategories ?? []
+  );
   const [search, setSearch] = useState("");
   const [categoryFilter, setCategoryFilter] = useState<string>("");
   const [outOfStockOnly, setOutOfStockOnly] = useState(false);
@@ -167,6 +205,8 @@ export default function WebsiteProductsPanel({
   const [imageError, setImageError] = useState<string | null>(null);
   const [pendingId, setPendingId] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+  // Set when a row's thumbnail is clicked, so a full-size preview can be shown.
+  const [previewImage, setPreviewImage] = useState<{ url: string; title: string } | null>(null);
   const [, startTransition] = useTransition();
 
   // A brief bottom-right toast confirming a save (price/stock/status/delete) or
@@ -205,6 +245,17 @@ export default function WebsiteProductsPanel({
   const [drafts, setDrafts] = useState<
     Record<string, { price?: string; stock?: string; title?: string }>
   >({});
+  // "Add Stock" column: a quantity being *received* (e.g. a new delivery),
+  // not the absolute count -- applying it adds to whatever the current stock
+  // already is, then the box clears back to empty/0 rather than sitting at
+  // the new total (see applyAddStock).
+  const [addStockDrafts, setAddStockDrafts] = useState<Record<string, string>>({});
+  // Original Cost / Total Cost 10% / Extra Money / Total -- purely manual
+  // inputs (Purchase Cost is always derived; Total is too unless its own
+  // override is set -- see derivePurchaseCost).
+  const [costDrafts, setCostDrafts] = useState<
+    Record<string, { original?: string; total10?: string; extra?: string; total?: string }>
+  >({});
 
   const posByEntryKey = useMemo(() => {
     const map = new Map<string, ProductWithStock>();
@@ -214,21 +265,80 @@ export default function WebsiteProductsPanel({
     return map;
   }, [posProducts]);
 
-  // Options for the "Category" picker in the add-product form. `categories`
-  // is live from the storefront's categories endpoint when configured (see
-  // page.tsx), else the hand-maintained fallback in catalogs.ts. Either way,
-  // add any other category id seen on a live product (labelled by its id,
-  // since we have no name for it) so nothing already in use is missing. A
-  // brand-new empty category still has to be created on the storefront first.
+  // Options for the "Category" picker in the add-product form, and the source
+  // for the filter chips below. Prefers the storefront's own live category
+  // list (see listWebsiteCategories/categoriesUrlEnv) when that endpoint is
+  // deployed for this catalog -- a category added or removed on the website
+  // then shows up here on the next poll, no hand-editing needed. Falls back
+  // to the hand-maintained names in catalogs.ts (plus any other category id
+  // seen on a live product, labelled by its id) for a catalog that hasn't
+  // deployed the endpoint yet.
   const categoryOptions = useMemo(() => {
-    const byId = new Map(categories.map((c) => [c.id, c.label]));
+    if (websiteCategories.length > 0) {
+      return websiteCategories.map((c) => ({ id: c.id, label: c.name }));
+    }
+    const known = getCatalog(catalogId).categories ?? [];
+    const byId = new Map(known.map((c) => [c.id, c.label]));
     for (const p of products ?? []) {
       if (p.category_id && !byId.has(p.category_id)) {
         byId.set(p.category_id, `Unnamed category (${p.category_id.slice(0, 8)}…)`);
       }
     }
     return [...byId].map(([id, label]) => ({ id, label }));
-  }, [categories, products]);
+  }, [catalogId, products, websiteCategories]);
+
+  // Filter pills. With a live category list, every website category gets a
+  // chip -- including ones with zero products right now -- and one deleted on
+  // the website disappears here on its own next poll. Without one, mirror the
+  // storefront live from products instead: a *named* category shows here only
+  // while at least one polled product still references it, so one the site
+  // empties out disappears on its own -- no hand-editing catalogs.ts needed
+  // for removals. Unnamed categories (no entry in catalogs.ts) are left out of
+  // this row entirely -- an "Unnamed category (xxxxxxxx…)" pill isn't useful
+  // to filter by; those products stay reachable under "All" until the id is
+  // given a real label in catalogs.ts.
+  const liveCategoryOptions = useMemo(() => {
+    if (websiteCategories.length > 0) return categoryOptions;
+    const counts = new Map<string, number>();
+    for (const p of products ?? []) {
+      if (p.category_id) counts.set(p.category_id, (counts.get(p.category_id) ?? 0) + 1);
+    }
+    return categoryOptions.filter(
+      (c) => !c.label.startsWith("Unnamed category (") && (counts.get(c.id) ?? 0) > 0
+    );
+  }, [categoryOptions, products, websiteCategories]);
+
+  // categoryFilter -> itself + every descendant category id, so picking a
+  // parent chip (e.g. "Frozen Seafoods") matches products filed directly
+  // under it AND under its children (e.g. "Oyster", "Crab") -- same as how
+  // the storefront's own category page rolls children up into the parent's
+  // listing. A parent with no products of its own (common: it's purely an
+  // organizational grouping) would otherwise always show "No website
+  // products yet." even though the website's equivalent page isn't empty.
+  // No-op (just the id itself) without a live category list, since the old
+  // hand-maintained catalogs.ts list carries no parent/child structure.
+  const categoryFilterIds = useMemo(() => {
+    if (!categoryFilter || categoryFilter === ADDONS_FILTER_ID || categoryFilter === "__none__") {
+      return null;
+    }
+    if (websiteCategories.length === 0) return new Set([categoryFilter]);
+    const childrenOf = new Map<string, string[]>();
+    for (const c of websiteCategories) {
+      if (!c.parent_id) continue;
+      const list = childrenOf.get(c.parent_id);
+      if (list) list.push(c.id);
+      else childrenOf.set(c.parent_id, [c.id]);
+    }
+    const ids = new Set<string>();
+    const stack = [categoryFilter];
+    while (stack.length > 0) {
+      const id = stack.pop()!;
+      if (ids.has(id)) continue;
+      ids.add(id);
+      stack.push(...(childrenOf.get(id) ?? []));
+    }
+    return ids;
+  }, [categoryFilter, websiteCategories]);
 
   // Refs so the polling loop can read current state without re-subscribing.
   const signatureRef = useRef<string>(initialProducts ? catalogSignature(initialProducts) : "");
@@ -257,6 +367,11 @@ export default function WebsiteProductsPanel({
           setProducts(data);
         }
         if (!background) setLoadError(null);
+        // Best-effort -- a catalog with no categories endpoint deployed yet
+        // just keeps the last-known-good (empty) list, same as add-ons.
+        listWebsiteCategoriesAction(catalogId)
+          .then(setWebsiteCategories)
+          .catch(() => {});
       } catch (e) {
         if (!background) {
           setLoadError(
@@ -444,7 +559,7 @@ export default function WebsiteProductsPanel({
     product: WebsiteProduct,
     variation: WebsiteProductVariation,
     linked: ProductWithStock | null,
-    stock: number
+    stock: number | null
   ) {
     setPendingId(variation.id);
     startTransition(async () => {
@@ -466,6 +581,139 @@ export default function WebsiteProductsPanel({
       } catch (e) {
         notify(e instanceof Error ? e.message : "Failed to update this size's stock", "err");
         setPendingId(null);
+      }
+    });
+  }
+
+  // Same as patchVariationPrice/Stock but for a simple (non-variable)
+  // product's own price/stock -- links it to a POS product the same way a
+  // "variable" product's size does (see setSimpleProductPriceAction), so it
+  // can be found in Cost Control's Set item search afterward.
+  function patchSimpleProductPrice(product: WebsiteProduct, linked: ProductWithStock | null, price: number) {
+    setPendingId(product.id);
+    startTransition(async () => {
+      try {
+        await setSimpleProductPriceAction({
+          catalogId,
+          siteProductId: product.id,
+          title: product.title,
+          imageUrl: product.image_url,
+          alreadyLinked: linked != null,
+          seedStock: product.stock,
+          price,
+        });
+        setPendingId(null);
+        notify(`Price updated — ${product.title}`);
+        router.refresh();
+      } catch (e) {
+        notify(e instanceof Error ? e.message : "Failed to update price", "err");
+        setPendingId(null);
+      }
+    });
+  }
+
+  function patchSimpleProductStock(
+    product: WebsiteProduct,
+    linked: ProductWithStock | null,
+    stock: number | null
+  ) {
+    setPendingId(product.id);
+    startTransition(async () => {
+      try {
+        await setSimpleProductStockAction({
+          catalogId,
+          siteProductId: product.id,
+          title: product.title,
+          imageUrl: product.image_url,
+          alreadyLinked: linked != null,
+          seedPrice: linked?.price ?? product.price,
+          currentStock: linked?.stock_quantity ?? 0,
+          stock,
+        });
+        setPendingId(null);
+        notify(`Stock updated — ${product.title}`);
+        router.refresh();
+      } catch (e) {
+        notify(e instanceof Error ? e.message : "Failed to update stock", "err");
+        setPendingId(null);
+      }
+    });
+  }
+
+  // "Add Stock" column: adds the typed quantity to whatever's currently on
+  // hand (e.g. a new delivery of 2 on top of an existing 5 -> 7) instead of
+  // replacing it -- the usual way stock actually gets restocked. The box
+  // itself always clears back to empty once applied, whether it succeeded or
+  // not: a zero/blank amount is a no-op, and a real failure already shows in
+  // the toast, so there's nothing useful left to retype.
+  function applyAddStock(
+    editId: string,
+    p: WebsiteProduct,
+    v: WebsiteProductVariation | null,
+    linked: ProductWithStock | null,
+    currentStock: number | null
+  ) {
+    const raw = addStockDrafts[editId];
+    const amount = parseFloat(raw ?? "");
+    setAddStockDrafts((prev) => {
+      const next = { ...prev };
+      delete next[editId];
+      return next;
+    });
+    if (!raw || Number.isNaN(amount) || amount === 0) return;
+    // Unlimited (null) has nothing to add on top of -- adding stock to one
+    // starts tracking it from 0, same as a brand-new delivery.
+    const newStock = (currentStock ?? 0) + amount;
+    if (v) patchVariationStock(p, v, linked, newStock);
+    else patchSimpleProductStock(p, linked, newStock);
+  }
+
+  // Original Cost / Total Cost 10% / Extra Money / Total -- each box saves
+  // independently on blur, same as Price/Stock. Purely an internal
+  // purchasing record kept in POS's own database (see
+  // lib/websiteProducts/purchaseCosts.ts); never sent to the storefront.
+  function saveCostField(
+    costKey: string,
+    siteProductId: string,
+    variationId: string,
+    field: "original" | "total10" | "extra" | "total",
+    currentValue: number | null
+  ) {
+    const raw = costDrafts[costKey]?.[field];
+    if (raw === undefined) return;
+    const clearField = () =>
+      setCostDrafts((prev) => {
+        const rowDraft = { ...(prev[costKey] ?? {}) };
+        delete rowDraft[field];
+        const next = { ...prev };
+        if (Object.keys(rowDraft).length === 0) delete next[costKey];
+        else next[costKey] = rowDraft;
+        return next;
+      });
+
+    const trimmed = raw.trim();
+    const value = trimmed === "" ? null : parseFloat(trimmed);
+    if ((value !== null && (Number.isNaN(value) || value < 0)) || value === currentValue) {
+      clearField();
+      return;
+    }
+
+    const dbField =
+      field === "original"
+        ? "original_cost"
+        : field === "total10"
+          ? "total_cost_10pct"
+          : field === "extra"
+            ? "extra_money"
+            : "total_override";
+    startTransition(async () => {
+      try {
+        await setWebsitePurchaseCostAction(catalogId, siteProductId, variationId, { [dbField]: value });
+        router.refresh();
+      } catch (e) {
+        notify(e instanceof Error ? e.message : "Failed to save cost", "err");
+      } finally {
+        clearField();
       }
     });
   }
@@ -538,14 +786,22 @@ export default function WebsiteProductsPanel({
   // price/stock are meaningless at the parent level (always 0/null) -- then
   // search/filter over the resulting rows.
   const q = search.trim().toLowerCase();
-  const allEntries = toEntries(products ?? []);
+  // A-Z by name -- the storefront API returns products in its own arbitrary
+  // (usually creation) order, not alphabetical. Stable sort keeps a
+  // "variable" product's own sizes in their existing relative order since
+  // they all share the same title.
+  const allEntries = toEntries(products ?? []).sort((a, b) =>
+    a.product.title.localeCompare(b.product.title, undefined, { sensitivity: "base" })
+  );
+  // null stock means unlimited -- never out of stock or low, same as the
+  // Sales grid's "Stock untracked" treatment.
   const lowStockCount = allEntries.filter(({ product: p, variation: v }) => {
-    const s = (v ? v.stock : p.stock) ?? 0;
-    return s > 0 && s <= 5;
+    const s = v ? v.stock : p.stock;
+    return s !== null && s > 0 && s <= 5;
   }).length;
   const outOfStockCount = allEntries.filter(({ product: p, variation: v }) => {
-    const s = (v ? v.stock : p.stock) ?? 0;
-    return s <= 0;
+    const s = v ? v.stock : p.stock;
+    return s !== null && s <= 0;
   }).length;
 
   const filtered = allEntries.filter(({ product: p, variation: v }) => {
@@ -557,11 +813,17 @@ export default function WebsiteProductsPanel({
         (weight ?? "").toLowerCase().includes(q) ||
         (p.taste_notes ?? "").toLowerCase().includes(q)) &&
       (!categoryFilter ||
-        (categoryFilter === "__none__" ? !p.category_id : p.category_id === categoryFilter)) &&
-      (!outOfStockOnly || (stock ?? 0) <= 0) &&
-      (!lowStockOnly || ((stock ?? 0) > 0 && (stock ?? 0) <= 5))
+        (categoryFilter === "__none__"
+          ? !p.category_id
+          : !!p.category_id && !!categoryFilterIds?.has(p.category_id))) &&
+      (!outOfStockOnly || (stock !== null && stock <= 0)) &&
+      (!lowStockOnly || (stock !== null && stock > 0 && stock <= 5))
     );
   });
+  // Same search box, applied to the Addons tab too -- title/description match.
+  const filteredAddons = (addons ?? []).filter(
+    (a) => !q || a.title.toLowerCase().includes(q) || (a.description ?? "").toLowerCase().includes(q)
+  );
   const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize));
   // Snap back to page 1 whenever the result set changes under the current page.
   const filterKey = `${q}|${categoryFilter}|${outOfStockOnly}|${lowStockOnly}|${pageSize}|${pageCount}`;
@@ -765,7 +1027,7 @@ export default function WebsiteProductsPanel({
         >
           All
         </button>
-        {categoryOptions.map((c) => (
+        {liveCategoryOptions.map((c) => (
           <button
             key={c.id}
             type="button"
@@ -790,6 +1052,19 @@ export default function WebsiteProductsPanel({
         >
           Uncategorized
         </button>
+        {!!addons?.length && (
+          <button
+            type="button"
+            onClick={() => setCategoryFilter(ADDONS_FILTER_ID)}
+            className={`rounded-full border px-3 py-1 text-xs ${
+              categoryFilter === ADDONS_FILTER_ID
+                ? "border-black bg-black text-white dark:border-white dark:bg-white dark:text-black"
+                : "border-black/[.15] dark:border-white/[.2]"
+            }`}
+          >
+            Addons ({addons.length})
+          </button>
+        )}
       </div>
 
       {selected.size > 0 && (
@@ -973,6 +1248,10 @@ export default function WebsiteProductsPanel({
       )}
 
       <div className="flex-1 overflow-auto">
+        {categoryFilter === ADDONS_FILTER_ID ? (
+          <WebsiteAddonsTable catalogId={catalogId} addons={filteredAddons} />
+        ) : (
+        <>
         {loadError && <p className="px-6 py-3 text-sm text-red-500">{loadError}</p>}
         {products === null && !loadError && (
           <p className="px-6 py-8 text-center text-sm text-zinc-500">Loading…</p>
@@ -991,30 +1270,68 @@ export default function WebsiteProductsPanel({
                   />
                 </th>
                 <th className="w-14 px-3 py-2 font-medium">Image</th>
-                <th className="px-3 py-2 font-medium">Product</th>
-                <th className="w-28 px-3 py-2 text-right font-medium">Price</th>
-                <th className="w-20 px-3 py-2 text-right font-medium">Stock</th>
+                <th className="min-w-[14rem] px-3 py-2 font-medium">Product</th>
+                <th className="w-20 bg-black/[.015] px-2 py-2 text-right font-medium dark:bg-white/[.02]">
+                  Original Cost
+                </th>
+                <th className="w-20 bg-black/[.015] px-2 py-2 text-right font-medium dark:bg-white/[.02]">
+                  Total Cost 10%
+                </th>
+                <th className="w-20 bg-black/[.015] px-2 py-2 text-right font-medium dark:bg-white/[.02]">
+                  Purchase Cost
+                </th>
+                <th className="w-20 bg-black/[.015] px-2 py-2 text-right font-medium dark:bg-white/[.02]">
+                  Extra Cost
+                </th>
+                <th className="w-20 border-r border-black/[.08] bg-black/[.015] px-2 py-2 text-right font-medium dark:border-white/[.145] dark:bg-white/[.02]">
+                  Total
+                </th>
+                <th className="w-24 px-2 py-2 text-right font-medium">Price</th>
+                <th className="w-20 px-2 py-2 text-right font-medium">Stock</th>
+                <th className="w-20 px-2 py-2 text-right font-medium">Add Stock</th>
                 <th className="w-32 px-3 py-2 font-medium">Status</th>
                 <th className="w-16 px-3 py-2 text-right font-medium">Actions</th>
               </tr>
             </thead>
             <tbody>
               {paged.map(({ product: p, variation: v, key }) => {
-                // The POS product linked to this size, if anyone has already
-                // sold it or edited it here before -- null means editing will
-                // create one on the fly (see patchVariationPrice/Stock).
-                const linked = v ? (posByEntryKey.get(posEntryKey(p.id, v.id)) ?? null) : null;
+                // The POS product linked to this item (size or simple
+                // product), if anyone has already sold it or edited it here
+                // before -- null means editing will create one on the fly
+                // (see patchVariationPrice/Stock and
+                // patchSimpleProductPrice/Stock).
+                const linked = posByEntryKey.get(posEntryKey(p.id, v ? v.id : "")) ?? null;
                 const editId = v ? v.id : p.id;
-                const currentPrice = v ? (linked?.price ?? v.price) : p.price;
-                const currentStock = v ? (linked?.stock_quantity ?? v.stock ?? 0) : p.stock;
+                const currentPrice = linked?.price ?? (v ? v.price : p.price);
+                // The storefront's own stock is the source of truth for
+                // "unlimited" (null) -- once it's tracked (non-null), prefer
+                // POS's own linked count the same way price does.
+                const siteStock = v ? v.stock : p.stock;
+                const currentStock = siteStock === null ? null : (linked?.stock_quantity ?? siteStock);
                 const priceValue = drafts[editId]?.price ?? String(currentPrice);
-                const stockValue = drafts[editId]?.stock ?? String(currentStock ?? 0);
+                const stockValue =
+                  drafts[editId]?.stock ?? (currentStock === null ? "" : String(currentStock));
                 const imageUrl = v?.image_url ?? p.image_url;
                 const weight = v?.weight ?? p.weight;
                 // A size's own price/stock is POS's tracked value for it (see
                 // patchVariationPrice/Stock) -- separate from, and never
                 // written back to, the website's own listing for this size.
                 const editTitle = v ? "Updates this size's price/stock on the website too" : undefined;
+                const costKey = purchaseCostKey(p.id, v ? v.id : "");
+                const savedCosts = purchaseCosts?.[costKey] ?? EMPTY_PURCHASE_COSTS;
+                const { purchaseCost, total } = derivePurchaseCost(savedCosts);
+                const originalCostValue =
+                  costDrafts[costKey]?.original ??
+                  (savedCosts.originalCost === null ? "" : String(savedCosts.originalCost));
+                const total10Value =
+                  costDrafts[costKey]?.total10 ??
+                  (savedCosts.totalCost10pct === null ? "" : String(savedCosts.totalCost10pct));
+                const extraValue =
+                  costDrafts[costKey]?.extra ??
+                  (savedCosts.extraMoney === null ? "" : String(savedCosts.extraMoney));
+                const totalValue =
+                  costDrafts[costKey]?.total ??
+                  (savedCosts.totalOverride === null ? "" : String(savedCosts.totalOverride));
                 return (
                   <tr
                     key={key}
@@ -1032,18 +1349,22 @@ export default function WebsiteProductsPanel({
                       />
                     </td>
                     <td className="px-3 py-2">
-                      <div className="h-10 w-10 shrink-0 overflow-hidden rounded border border-black/[.1] bg-zinc-100 dark:border-white/[.15] dark:bg-zinc-800">
-                        {imageUrl ? (
-                          // eslint-disable-next-line @next/next/no-img-element
+                      {imageUrl ? (
+                        <button
+                          type="button"
+                          onClick={() => setPreviewImage({ url: imageUrl, title: p.title })}
+                          className="block h-10 w-10 shrink-0 overflow-hidden rounded border border-black/[.1] bg-zinc-100 dark:border-white/[.15] dark:bg-zinc-800"
+                        >
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
                           <img src={imageUrl} alt="" className="h-full w-full object-cover" />
-                        ) : (
-                          <div className="flex h-full w-full items-center justify-center text-[9px] text-zinc-400">
-                            No img
-                          </div>
-                        )}
-                      </div>
+                        </button>
+                      ) : (
+                        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded border border-black/[.1] bg-zinc-100 text-[9px] text-zinc-400 dark:border-white/[.15] dark:bg-zinc-800">
+                          No img
+                        </div>
+                      )}
                     </td>
-                    <td className="px-3 py-2">
+                    <td className="min-w-[14rem] px-3 py-2">
                       {/* Editable name. Keyed by p.id (not editId) so the sibling
                           size-rows of a "variable" product share one draft and
                           rename the parent together. */}
@@ -1066,10 +1387,114 @@ export default function WebsiteProductsPanel({
                         <div className="break-words text-xs text-zinc-400">{p.taste_notes}</div>
                       )}
                     </td>
-                    <td className="px-3 py-2 text-right">
+                    <td className="bg-black/[.015] px-2 py-2 text-right dark:bg-white/[.02]">
+                      <label className="inline-flex w-16 items-center gap-1 rounded border border-black/[.15] px-2 py-1 text-sm tabular-nums focus-within:border-black/40 dark:border-white/[.2] dark:focus-within:border-white/50">
+                        <span className="select-none text-zinc-400">$</span>
+                        <input
+                          type="number"
+                          min={0}
+                          step="0.01"
+                          placeholder="—"
+                          value={originalCostValue}
+                          onChange={(e) =>
+                            setCostDrafts((prev) => ({
+                              ...prev,
+                              [costKey]: { ...prev[costKey], original: e.target.value },
+                            }))
+                          }
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") e.currentTarget.blur();
+                          }}
+                          onBlur={() =>
+                            saveCostField(costKey, p.id, v ? v.id : "", "original", savedCosts.originalCost)
+                          }
+                          className="w-full min-w-0 bg-transparent text-right outline-none"
+                        />
+                      </label>
+                    </td>
+                    <td className="bg-black/[.015] px-2 py-2 text-right dark:bg-white/[.02]">
+                      <label className="inline-flex w-16 items-center gap-1 rounded border border-black/[.15] px-2 py-1 text-sm tabular-nums focus-within:border-black/40 dark:border-white/[.2] dark:focus-within:border-white/50">
+                        <span className="select-none text-zinc-400">$</span>
+                        <input
+                          type="number"
+                          min={0}
+                          step="0.01"
+                          placeholder="—"
+                          value={total10Value}
+                          onChange={(e) =>
+                            setCostDrafts((prev) => ({
+                              ...prev,
+                              [costKey]: { ...prev[costKey], total10: e.target.value },
+                            }))
+                          }
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") e.currentTarget.blur();
+                          }}
+                          onBlur={() =>
+                            saveCostField(costKey, p.id, v ? v.id : "", "total10", savedCosts.totalCost10pct)
+                          }
+                          className="w-full min-w-0 bg-transparent text-right outline-none"
+                        />
+                      </label>
+                    </td>
+                    <td className="bg-black/[.015] px-2 py-2 text-right tabular-nums text-zinc-500 dark:bg-white/[.02]">
+                      {purchaseCost === null ? "—" : formatMoney(purchaseCost)}
+                    </td>
+                    <td className="bg-black/[.015] px-2 py-2 text-right dark:bg-white/[.02]">
+                      <label className="inline-flex w-16 items-center gap-1 rounded border border-black/[.15] px-2 py-1 text-sm tabular-nums focus-within:border-black/40 dark:border-white/[.2] dark:focus-within:border-white/50">
+                        <span className="select-none text-zinc-400">$</span>
+                        <input
+                          type="number"
+                          min={0}
+                          step="0.01"
+                          placeholder="—"
+                          value={extraValue}
+                          onChange={(e) =>
+                            setCostDrafts((prev) => ({
+                              ...prev,
+                              [costKey]: { ...prev[costKey], extra: e.target.value },
+                            }))
+                          }
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") e.currentTarget.blur();
+                          }}
+                          onBlur={() =>
+                            saveCostField(costKey, p.id, v ? v.id : "", "extra", savedCosts.extraMoney)
+                          }
+                          className="w-full min-w-0 bg-transparent text-right outline-none"
+                        />
+                      </label>
+                    </td>
+                    <td className="border-r border-black/[.08] bg-black/[.015] px-2 py-2 text-right dark:border-white/[.145] dark:bg-white/[.02]">
+                      <label
+                        title="Manual override -- wins over Purchase Cost + Extra Cost, and works even when Original Cost / Total Cost 10% aren't filled in"
+                        className="inline-flex w-16 items-center gap-1 rounded border border-black/[.15] px-2 py-1 text-sm font-medium tabular-nums focus-within:border-black/40 dark:border-white/[.2] dark:focus-within:border-white/50"
+                      >
+                        <span className="select-none text-zinc-400">$</span>
+                        <input
+                          type="number"
+                          min={0}
+                          step="0.01"
+                          placeholder={savedCosts.totalOverride === null && total !== null ? total.toFixed(2) : "—"}
+                          value={totalValue}
+                          onChange={(e) =>
+                            setCostDrafts((prev) => ({
+                              ...prev,
+                              [costKey]: { ...prev[costKey], total: e.target.value },
+                            }))
+                          }
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") e.currentTarget.blur();
+                          }}
+                          onBlur={() => saveCostField(costKey, p.id, v ? v.id : "", "total", savedCosts.totalOverride)}
+                          className="w-full min-w-0 bg-transparent text-right outline-none"
+                        />
+                      </label>
+                    </td>
+                    <td className="px-2 py-2 text-right">
                       <label
                         title={editTitle}
-                        className="inline-flex w-24 items-center gap-1 rounded border border-black/[.15] px-2 py-1 text-sm focus-within:border-black/40 dark:border-white/[.2] dark:focus-within:border-white/50"
+                        className="inline-flex w-20 items-center gap-1 rounded border border-black/[.15] px-2 py-1 text-sm focus-within:border-black/40 dark:border-white/[.2] dark:focus-within:border-white/50"
                       >
                         <span className="select-none text-zinc-400">$</span>
                         <input
@@ -1083,7 +1508,7 @@ export default function WebsiteProductsPanel({
                             const price = Number(e.target.value);
                             if (!Number.isNaN(price) && price !== currentPrice) {
                               if (v) patchVariationPrice(p, v, linked, price);
-                              else patch(p.id, { price }, "Price updated");
+                              else patchSimpleProductPrice(p, linked, price);
                             }
                             clearDraft(editId, "price");
                           }}
@@ -1091,22 +1516,45 @@ export default function WebsiteProductsPanel({
                         />
                       </label>
                     </td>
-                    <td className="px-3 py-2 text-right">
+                    <td className="px-2 py-2 text-right">
                       <input
                         type="number"
                         min={0}
-                        title={editTitle}
+                        placeholder="—"
+                        title={editTitle ?? "Blank = unlimited stock"}
                         value={stockValue}
                         disabled={pendingId === editId}
                         onChange={(e) => setDraft(editId, "stock", e.target.value)}
                         onBlur={(e) => {
-                          const stock = Number(e.target.value);
-                          if (!Number.isNaN(stock) && stock !== (currentStock ?? 0)) {
+                          const raw = e.target.value.trim();
+                          const stock = raw === "" ? null : Number(raw);
+                          if ((stock === null || !Number.isNaN(stock)) && stock !== currentStock) {
                             if (v) patchVariationStock(p, v, linked, stock);
-                            else patch(p.id, { stock }, "Stock updated");
+                            else patchSimpleProductStock(p, linked, stock);
                           }
                           clearDraft(editId, "stock");
                         }}
+                        className="w-16 rounded border border-black/[.15] bg-transparent px-2 py-1 text-right text-sm tabular-nums focus:border-black/40 focus:outline-none dark:border-white/[.2] dark:focus:border-white/50"
+                      />
+                    </td>
+                    <td className="px-2 py-2 text-right">
+                      <input
+                        type="number"
+                        title={
+                          currentStock === null
+                            ? "Unlimited stock -- adding starts tracking it from 0"
+                            : "Adds to the current stock on save -- e.g. a delivery of 2 on top of 5 becomes 7"
+                        }
+                        placeholder="0"
+                        value={addStockDrafts[editId] ?? ""}
+                        disabled={pendingId === editId}
+                        onChange={(e) =>
+                          setAddStockDrafts((prev) => ({ ...prev, [editId]: e.target.value }))
+                        }
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") e.currentTarget.blur();
+                        }}
+                        onBlur={() => applyAddStock(editId, p, v, linked, currentStock)}
                         className="w-16 rounded border border-black/[.15] bg-transparent px-2 py-1 text-right text-sm tabular-nums focus:border-black/40 focus:outline-none dark:border-white/[.2] dark:focus:border-white/50"
                       />
                     </td>
@@ -1160,7 +1608,7 @@ export default function WebsiteProductsPanel({
               })}
               {filtered.length === 0 && (
                 <tr>
-                  <td colSpan={7} className="px-6 py-8 text-center text-sm text-zinc-500">
+                  <td colSpan={13} className="px-6 py-8 text-center text-sm text-zinc-500">
                     {q ? "No products match your search." : "No website products yet."}
                   </td>
                 </tr>
@@ -1168,9 +1616,11 @@ export default function WebsiteProductsPanel({
             </tbody>
           </table>
         )}
+        </>
+        )}
       </div>
 
-      {products && filtered.length > 0 && (
+      {categoryFilter !== ADDONS_FILTER_ID && products && filtered.length > 0 && (
         <div className="flex flex-wrap items-center justify-between gap-3 border-t border-black/[.08] px-6 py-3 text-sm dark:border-white/[.145]">
           <label className="flex items-center gap-2 text-xs text-zinc-500">
             Items per page
@@ -1324,6 +1774,37 @@ export default function WebsiteProductsPanel({
                 {bulkBusy ? "Deleting…" : "Delete all"}
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {previewImage && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4"
+          onClick={() => setPreviewImage(null)}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label={previewImage.title}
+            className="relative max-h-[85vh] max-w-[85vw]"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <button
+              type="button"
+              onClick={() => setPreviewImage(null)}
+              aria-label="Close"
+              className="absolute -top-3 -right-3 flex h-8 w-8 items-center justify-center rounded-full bg-white text-black shadow-lg hover:bg-zinc-100"
+            >
+              <X className="h-4 w-4" />
+            </button>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={previewImage.url}
+              alt={previewImage.title}
+              className="max-h-[85vh] max-w-[85vw] rounded-lg object-contain shadow-2xl"
+            />
+            <p className="mt-2 text-center text-sm font-medium text-white">{previewImage.title}</p>
           </div>
         </div>
       )}

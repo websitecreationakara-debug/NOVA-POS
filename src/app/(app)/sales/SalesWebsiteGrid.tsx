@@ -1,13 +1,13 @@
 "use client";
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { ChevronDown, ChevronLeft, ChevronRight, ChevronUp, UtensilsCrossed } from "lucide-react";
+import { ChevronLeft, ChevronRight, UtensilsCrossed } from "lucide-react";
 import type {
   WebsiteCatalogId,
   WebsiteProduct,
   WebsiteProductVariation,
 } from "@/lib/websiteProducts/types";
-import { listWebsiteProductsAction } from "../stock/websiteActions";
+import { listSellableWebsiteProductsAction } from "../stock/websiteActions";
 
 // useLayoutEffect on the client, useEffect on the server (avoids the SSR warning).
 const useIsoLayoutEffect = typeof window !== "undefined" ? useLayoutEffect : useEffect;
@@ -93,7 +93,6 @@ export default function SalesWebsiteGrid({
   const [loadError, setLoadError] = useState<string | null>(initialError);
   const [search, setSearch] = useState("");
   const [activeCategoryId, setActiveCategoryId] = useState<string | "all">("all");
-  const [categoriesExpanded, setCategoriesExpanded] = useState(false);
   const [page, setPage] = useState(1);
 
   const signatureRef = useRef<string>(initialProducts ? catalogSignature(initialProducts) : "");
@@ -120,7 +119,7 @@ export default function SalesWebsiteGrid({
       busyRef.current = true;
       if (!background) setLoadError(null);
       try {
-        const data = await listWebsiteProductsAction(catalogId);
+        const data = await listSellableWebsiteProductsAction(catalogId);
         const nextSig = catalogSignature(data);
         if (nextSig !== signatureRef.current) {
           signatureRef.current = nextSig;
@@ -188,18 +187,15 @@ export default function SalesWebsiteGrid({
   const q = search.trim().toLowerCase();
   const all = products ?? [];
 
-  // Only show a chip if the catalog has products in it right now.
+  // Every configured category gets a chip, whether or not it currently has a
+  // product in it -- same as Stock's Website tab (see WebsiteProductsPanel's
+  // categoryOptions), so the two never show a different set.
   const knownIds = new Set(categories.map((c) => c.id));
-  const countByCategory = new Map<string, number>();
   let uncategorised = 0;
   for (const p of all) {
-    if (p.category_id && knownIds.has(p.category_id)) {
-      countByCategory.set(p.category_id, (countByCategory.get(p.category_id) ?? 0) + 1);
-    } else {
-      uncategorised += 1;
-    }
+    if (!p.category_id || !knownIds.has(p.category_id)) uncategorised += 1;
   }
-  const chips = categories.filter((c) => (countByCategory.get(c.id) ?? 0) > 0);
+  const chips = categories;
   const showChips = chips.length > 0;
 
   const visible = all.filter((p) => {
@@ -247,63 +243,41 @@ export default function SalesWebsiteGrid({
   return (
     <main ref={scrollerRef} className="flex-1 overflow-y-auto p-6">
       {showChips && (
-        // Wrap onto a few rows -- no horizontal scrolling. Capped at ~3 rows
-        // with a toggle so a long list doesn't push the products down the page.
-        <div className="mb-4">
-          <div
-            className="flex flex-wrap gap-2"
-            style={categoriesExpanded ? undefined : { maxHeight: "7.5rem", overflow: "hidden" }}
+        // Plain wrap, no cap/collapse -- same as Stock's Website tab.
+        <div className="mb-4 flex flex-wrap gap-2">
+          <button
+            onClick={() => setActiveCategoryId("all")}
+            className={`rounded-full border px-3 py-1 text-xs ${
+              activeCategoryId === "all"
+                ? "border-black bg-black text-white dark:border-white dark:bg-white dark:text-black"
+                : "border-black/[.15] dark:border-white/[.2]"
+            }`}
           >
+            All
+          </button>
+          {chips.map((c) => (
             <button
-              onClick={() => setActiveCategoryId("all")}
-              className={`rounded-full border px-4 py-1.5 text-sm ${
-                activeCategoryId === "all"
+              key={c.id}
+              onClick={() => setActiveCategoryId(c.id)}
+              className={`rounded-full border px-3 py-1 text-xs ${
+                activeCategoryId === c.id
                   ? "border-black bg-black text-white dark:border-white dark:bg-white dark:text-black"
                   : "border-black/[.15] dark:border-white/[.2]"
               }`}
             >
-              All
+              {c.label}
             </button>
-            {chips.map((c) => (
-              <button
-                key={c.id}
-                onClick={() => setActiveCategoryId(c.id)}
-                className={`rounded-full border px-4 py-1.5 text-sm ${
-                  activeCategoryId === c.id
-                    ? "border-black bg-black text-white dark:border-white dark:bg-white dark:text-black"
-                    : "border-black/[.15] dark:border-white/[.2]"
-                }`}
-              >
-                {c.label}
-              </button>
-            ))}
-            {uncategorised > 0 && (
-              <button
-                onClick={() => setActiveCategoryId("__uncategorised")}
-                className={`rounded-full border px-4 py-1.5 text-sm ${
-                  activeCategoryId === "__uncategorised"
-                    ? "border-black bg-black text-white dark:border-white dark:bg-white dark:text-black"
-                    : "border-black/[.15] dark:border-white/[.2]"
-                }`}
-              >
-                Other
-              </button>
-            )}
-          </div>
-          {chips.length + (uncategorised > 0 ? 1 : 0) > 9 && (
+          ))}
+          {uncategorised > 0 && (
             <button
-              onClick={() => setCategoriesExpanded((v) => !v)}
-              className="mt-2 flex items-center gap-1 text-xs font-medium text-zinc-500 hover:text-black dark:hover:text-white"
+              onClick={() => setActiveCategoryId("__uncategorised")}
+              className={`rounded-full border px-3 py-1 text-xs ${
+                activeCategoryId === "__uncategorised"
+                  ? "border-black bg-black text-white dark:border-white dark:bg-white dark:text-black"
+                  : "border-black/[.15] dark:border-white/[.2]"
+              }`}
             >
-              {categoriesExpanded ? (
-                <>
-                  Show fewer <ChevronUp className="size-3.5" />
-                </>
-              ) : (
-                <>
-                  Show all categories <ChevronDown className="size-3.5" />
-                </>
-              )}
+              Uncategorized
             </button>
           )}
         </div>

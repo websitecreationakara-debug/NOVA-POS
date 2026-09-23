@@ -39,6 +39,7 @@ import TopBarSlot from "@/components/TopBarSlot";
 import type { SalesWebsiteCatalog } from "./page";
 import {
   chargeOrder,
+  searchCustomersByName,
   searchCustomersByPhone,
   type CartLine,
   type ChargeResult,
@@ -61,6 +62,7 @@ export type EditOrderSeed = {
   // Stored discount dollar amount and delivery fee from the order.
   discount: number;
   deliveryFee: number;
+  paymentMethod: PaymentMethod | null;
   // Requested delivery as an ISO timestamp, or "" for none.
   deliveryAt: string;
   note: string;
@@ -164,7 +166,7 @@ export default function SalesClient({
   const [page, setPage] = useState(1);
   const [categoriesExpanded, setCategoriesExpanded] = useState(false);
   const [cart, setCart] = useState<CartLine[]>(() => editOrder?.lines ?? []);
-  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("khqr");
+  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>(editOrder?.paymentMethod ?? "khqr");
   const [paymentReference, setPaymentReference] = useState("");
   const [note, setNote] = useState(() => editOrder?.note ?? "");
   const [customerName, setCustomerName] = useState(() => editOrder?.customerName ?? "");
@@ -200,6 +202,15 @@ export default function SalesClient({
   const [phonePos, setPhonePos] = useState<{ bottom: number; left: number; width: number } | null>(
     null
   );
+  // Same lookup, keyed off the name field instead -- for staff who only
+  // remember the customer's name, not their number.
+  const [nameSuggestions, setNameSuggestions] = useState<CustomerSuggestion[]>([]);
+  const [nameDropdownOpen, setNameDropdownOpen] = useState(false);
+  const nameInputRef = useRef<HTMLInputElement>(null);
+  const [namePos, setNamePos] = useState<{ bottom: number; left: number; width: number } | null>(
+    null
+  );
+  const nameSearchDebounce = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [receipt, setReceipt] = useState<ChargeResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   // A brief, self-dismissing toast for "you tapped an out-of-stock product" --
@@ -214,6 +225,7 @@ export default function SalesClient({
   useEffect(() => {
     return () => {
       if (searchDebounce.current) clearTimeout(searchDebounce.current);
+      if (nameSearchDebounce.current) clearTimeout(nameSearchDebounce.current);
     };
   }, []);
 
@@ -243,6 +255,27 @@ export default function SalesClient({
       window.removeEventListener("scroll", place, true);
     };
   }, [phoneDropdownOpen]);
+
+  useEffect(() => {
+    if (!nameDropdownOpen) return;
+    function place() {
+      const r = nameInputRef.current?.getBoundingClientRect();
+      if (r) {
+        setNamePos({
+          bottom: window.innerHeight - r.top + 6,
+          left: r.left,
+          width: Math.max(r.width, 240),
+        });
+      }
+    }
+    place();
+    window.addEventListener("resize", place);
+    window.addEventListener("scroll", place, true);
+    return () => {
+      window.removeEventListener("resize", place);
+      window.removeEventListener("scroll", place, true);
+    };
+  }, [nameDropdownOpen]);
 
   const isExistingCustomer = selectedCustomer?.phone === customerPhone.trim() && !!selectedCustomer;
 
@@ -492,7 +525,7 @@ export default function SalesClient({
 
     if (searchDebounce.current) clearTimeout(searchDebounce.current);
     const trimmed = value.trim();
-    if (trimmed.length < 3) {
+    if (trimmed.length < 1) {
       setSuggestions([]);
       return;
     }
@@ -507,17 +540,41 @@ export default function SalesClient({
     }, 250);
   }
 
+  function handleNameChange(value: string) {
+    setCustomerName(value);
+    setSelectedCustomer(null);
+    setNameDropdownOpen(true);
+
+    if (nameSearchDebounce.current) clearTimeout(nameSearchDebounce.current);
+    const trimmed = value.trim();
+    if (trimmed.length < 1) {
+      setNameSuggestions([]);
+      return;
+    }
+    nameSearchDebounce.current = setTimeout(() => {
+      startLookup(async () => {
+        try {
+          setNameSuggestions(await searchCustomersByName(trimmed));
+        } catch {
+          setNameSuggestions([]);
+        }
+      });
+    }, 250);
+  }
+
   function selectCustomer(customer: CustomerSuggestion) {
     setCustomerPhone(customer.phone);
     setCustomerName(customer.name);
     setCustomerAddress(customer.address ?? "");
     setSelectedCustomer({ id: customer.id, phone: customer.phone });
     setPhoneDropdownOpen(false);
+    setNameDropdownOpen(false);
   }
 
   function selectNewCustomer() {
     setSelectedCustomer(null);
     setPhoneDropdownOpen(false);
+    setNameDropdownOpen(false);
   }
 
   function handleCharge() {
@@ -554,6 +611,7 @@ export default function SalesClient({
             deliveryFee: deliveryFeeValue,
             deliveryAt: deliveryAt ? new Date(deliveryAt).toISOString() : "",
             note: note.trim(),
+            paymentMethod,
           });
           router.push(`/orders/${editOrder.orderId}`);
         } catch (e) {
@@ -835,7 +893,7 @@ export default function SalesClient({
         </main>
         )}
 
-        <aside className="flex w-96 flex-col border-l border-black/[.08] dark:border-white/[.145]">
+        <aside className="flex w-[34rem] flex-col border-l border-black/[.08] dark:border-white/[.145]">
           <div className="border-b border-black/[.08] px-4 py-3 font-medium dark:border-white/[.145]">
             Order
           </div>
@@ -949,7 +1007,7 @@ export default function SalesClient({
                           </span>
                         </button>
                       ))}
-                      {suggestions.length === 0 && customerPhone.trim().length >= 3 && (
+                      {suggestions.length === 0 && customerPhone.trim().length >= 1 && (
                         <p className="px-3 py-2 text-xs text-zinc-500">
                           No matches — pick New to add them.
                         </p>
@@ -957,12 +1015,67 @@ export default function SalesClient({
                     </div>
                   )}
                 </div>
-                <input
-                  className="flex-1 rounded border border-black/[.15] bg-transparent px-3 py-1.5 text-sm dark:border-white/[.2]"
-                  placeholder={isExistingCustomer ? "Customer name" : "Customer name *"}
-                  value={customerName}
-                  onChange={(e) => setCustomerName(e.target.value)}
-                />
+                <div className="flex-1">
+                  <input
+                    ref={nameInputRef}
+                    autoComplete="off"
+                    className="w-full rounded border border-black/[.15] bg-transparent px-3 py-1.5 text-sm dark:border-white/[.2]"
+                    placeholder={isExistingCustomer ? "Customer name" : "Customer name *"}
+                    value={customerName}
+                    onChange={(e) => handleNameChange(e.target.value)}
+                    onFocus={() => setNameDropdownOpen(true)}
+                    onBlur={() => setTimeout(() => setNameDropdownOpen(false), 150)}
+                  />
+                  {nameDropdownOpen && customerName.trim().length > 0 && namePos && (
+                    <div
+                      style={{
+                        position: "fixed",
+                        bottom: namePos.bottom,
+                        left: namePos.left,
+                        width: namePos.width,
+                        zIndex: 50,
+                      }}
+                      className="max-h-64 overflow-y-auto rounded-lg border border-black/[.15] bg-white shadow-xl dark:border-white/[.2] dark:bg-zinc-900"
+                    >
+                      <button
+                        type="button"
+                        onMouseDown={(e) => e.preventDefault()}
+                        onClick={selectNewCustomer}
+                        className="flex w-full items-center gap-2 border-b border-black/[.08] px-3 py-2 text-left text-sm hover:bg-black/[.03] dark:border-white/[.145] dark:hover:bg-white/[.05]"
+                      >
+                        <Plus className="size-4" />
+                        New
+                      </button>
+                      {nameSuggestions.map((c) => (
+                        <button
+                          type="button"
+                          key={c.id}
+                          onMouseDown={(e) => e.preventDefault()}
+                          onClick={() => selectCustomer(c)}
+                          className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-black/[.03] dark:hover:bg-white/[.05]"
+                        >
+                          <span className="flex h-6 w-6 shrink-0 items-center justify-center overflow-hidden rounded-full bg-zinc-200 dark:bg-zinc-700">
+                            {c.photoUrl ? (
+                              // eslint-disable-next-line @next/next/no-img-element
+                              <img src={c.photoUrl} alt="" className="h-full w-full object-cover" />
+                            ) : (
+                              <User className="size-3.5 text-zinc-500" />
+                            )}
+                          </span>
+                          <span className="flex flex-col">
+                            <span>{c.name}</span>
+                            <span className="text-xs text-zinc-500">{c.phone}</span>
+                          </span>
+                        </button>
+                      ))}
+                      {nameSuggestions.length === 0 && customerName.trim().length >= 1 && (
+                        <p className="px-3 py-2 text-xs text-zinc-500">
+                          No matches — pick New to add them.
+                        </p>
+                      )}
+                    </div>
+                  )}
+                </div>
               </div>
               <input
                 className="mt-2 w-full rounded border border-black/[.15] bg-transparent px-3 py-1.5 text-sm dark:border-white/[.2]"

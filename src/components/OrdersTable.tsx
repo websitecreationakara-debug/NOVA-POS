@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { FileDown, Search, Truck, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, FileDown, Search, Truck, X } from "lucide-react";
 import type { OrderListRow } from "@/lib/supabase/queries";
 import type { FulfillmentStatus } from "@/types/database";
 import { updateFulfillmentStatusAction } from "@/app/(app)/orders/actions";
@@ -11,6 +11,8 @@ import { notifyOrdersChanged } from "@/lib/ordersChanged";
 import { FULFILLMENT_STATUSES, STATUS_LABELS } from "@/lib/orderStatus";
 import OrderStatusControl from "@/components/OrderStatusControl";
 import OrderRowMenu from "@/components/OrderRowMenu";
+
+const PAGE_SIZE_OPTIONS = [10, 25, 50];
 
 function formatMoney(n: number) {
   return `$${n.toFixed(2)}`;
@@ -49,6 +51,8 @@ export default function OrdersTable({
   const [brandId, setBrandId] = useState("");
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [bulkBusy, setBulkBusy] = useState(false);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(25);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -71,6 +75,17 @@ export default function OrdersTable({
 
   const hasFilter = search.trim() !== "" || from !== "" || to !== "" || brandId !== "";
 
+  const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize));
+  // Snap back to page 1 whenever the result set changes under the current page.
+  const filterKey = `${activeStatus ?? ""}|${brandId}|${search}|${from}|${to}|${pageSize}`;
+  const [prevFilterKey, setPrevFilterKey] = useState(filterKey);
+  if (filterKey !== prevFilterKey) {
+    setPrevFilterKey(filterKey);
+    setPage(1);
+  }
+  const currentPage = Math.min(page, pageCount);
+  const paged = filtered.slice((currentPage - 1) * pageSize, currentPage * pageSize);
+
   function clearFilters() {
     setSearch("");
     setFrom("");
@@ -90,7 +105,7 @@ export default function OrdersTable({
     return `/invoice/bulk?${params.toString()}`;
   }, [selected, brands, brandId, from, to]);
 
-  const visibleIds = useMemo(() => filtered.map((o) => o.id), [filtered]);
+  const visibleIds = useMemo(() => paged.map((o) => o.id), [paged]);
   const allVisibleSelected =
     visibleIds.length > 0 && visibleIds.every((id) => selected.has(id));
 
@@ -255,14 +270,15 @@ export default function OrdersTable({
               </tr>
             </thead>
             <tbody>
-              {filtered.map((o) => (
+              {paged.map((o) => (
                 <tr
                   key={o.id}
-                  className={`border-b border-border hover:bg-muted ${
+                  onClick={() => router.push(`/orders/${o.id}`)}
+                  className={`cursor-pointer border-b border-border hover:bg-muted ${
                     selected.has(o.id) ? "bg-brand/5" : ""
                   }`}
                 >
-                  <td className="py-2">
+                  <td className="py-2" onClick={(e) => e.stopPropagation()}>
                     <input
                       type="checkbox"
                       aria-label={`Select ${o.invoiceNumber ?? o.id}`}
@@ -274,6 +290,7 @@ export default function OrdersTable({
                   <td className="py-2 pr-4">
                     <Link
                       href={`/orders/${o.id}`}
+                      onClick={(e) => e.stopPropagation()}
                       className="font-semibold text-brand hover:underline"
                     >
                       {o.invoiceNumber ?? `#${o.id.slice(0, 8)}`}
@@ -283,7 +300,7 @@ export default function OrdersTable({
                   <td className="py-2 pr-4">{o.customerName || "—"}</td>
                   <td className="py-2 pr-4 text-muted-foreground">{o.customerPhone || "—"}</td>
                   <td className="py-2 pr-4 text-right tabular-nums">{formatMoney(o.total)}</td>
-                  <td className="py-2 pr-4">
+                  <td className="py-2 pr-4" onClick={(e) => e.stopPropagation()}>
                     {/* key includes the status so a bulk change (which updates
                         the server prop after router.refresh) remounts this with
                         the fresh value rather than keeping stale local state. */}
@@ -317,7 +334,7 @@ export default function OrdersTable({
                         );
                       })()}
                   </td>
-                  <td className="py-2">
+                  <td className="py-2" onClick={(e) => e.stopPropagation()}>
                     <OrderRowMenu orderId={o.id} />
                   </td>
                 </tr>
@@ -326,6 +343,48 @@ export default function OrdersTable({
           </table>
         )}
       </div>
+
+      {filtered.length > 0 && (
+        <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border px-6 py-3 text-sm">
+          <label className="flex items-center gap-2 text-xs text-muted-foreground">
+            Items per page
+            <select
+              value={pageSize}
+              onChange={(e) => setPageSize(Number(e.target.value))}
+              className="rounded border border-border bg-transparent px-2 py-1 text-xs text-foreground"
+            >
+              {PAGE_SIZE_OPTIONS.map((n) => (
+                <option key={n} value={n}>
+                  {n}
+                </option>
+              ))}
+            </select>
+          </label>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setPage(currentPage - 1)}
+              disabled={currentPage <= 1}
+              className="flex items-center gap-1 rounded border border-border px-2.5 py-1 text-xs disabled:opacity-30"
+            >
+              <ChevronLeft className="size-3.5" />
+              Prev
+            </button>
+            <span className="tabular-nums text-muted-foreground">
+              Page {currentPage} of {pageCount}
+            </span>
+            <button
+              type="button"
+              onClick={() => setPage(currentPage + 1)}
+              disabled={currentPage >= pageCount}
+              className="flex items-center gap-1 rounded border border-border px-2.5 py-1 text-xs disabled:opacity-30"
+            >
+              Next
+              <ChevronRight className="size-3.5" />
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

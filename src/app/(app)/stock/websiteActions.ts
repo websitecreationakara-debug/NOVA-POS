@@ -3,19 +3,30 @@
 import { revalidatePath } from "next/cache";
 import { supabaseAdmin } from "@/lib/supabase/server";
 import { ensurePosProductForSiteProduct } from "@/app/(app)/sales/websiteActions";
+import { getCatalog } from "@/lib/websiteProducts/catalogs";
 import {
+  createWebsiteAddon,
   createWebsiteProduct,
+  deleteWebsiteAddon,
   deleteWebsiteProduct,
   deleteWebsiteProductVariation,
+  listSellableWebsiteProducts,
+  listWebsiteCategories,
   listWebsiteProducts,
+  updateWebsiteAddon,
   updateWebsiteProduct,
   updateWebsiteProductVariation,
 } from "@/lib/websiteProducts/client";
+import { setWebsitePurchaseCost, syncSetItemCostsForProduct } from "@/lib/websiteProducts/purchaseCosts";
 import type {
+  WebsiteAddon,
+  WebsiteAddonWrite,
   WebsiteCatalogId,
+  WebsiteCategory,
   WebsiteProduct,
   WebsiteProductWrite,
 } from "@/lib/websiteProducts/types";
+import type { ProductSiteLink, StockAdjustmentCategory } from "@/types/database";
 import { requireStockAccess } from "@/lib/stockAccess";
 import { adjustStockAction, setProductPriceAction } from "./actions";
 
@@ -50,12 +61,114 @@ export async function listWebsiteProductsAction(
   return listWebsiteProducts(catalogId);
 }
 
+// The storefront's live category list (empty if it has no categories endpoint
+// deployed yet) -- see listWebsiteCategories for the fallback behavior.
+export async function listWebsiteCategoriesAction(
+  catalogId: WebsiteCatalogId
+): Promise<WebsiteCategory[]> {
+  await requireStockAccess();
+  return listWebsiteCategories(catalogId);
+}
+
+// Sales' grid only -- see listSellableWebsiteProducts for why this merges in
+// add-ons and Stock's product panel doesn't.
+export async function listSellableWebsiteProductsAction(
+  catalogId: WebsiteCatalogId
+): Promise<WebsiteProduct[]> {
+  await requireStockAccess();
+  const { products } = await listSellableWebsiteProducts(catalogId);
+  return products;
+}
+
+export async function createWebsiteAddonAction(
+  catalogId: WebsiteCatalogId,
+  input: WebsiteAddonWrite
+): Promise<WebsiteAddon> {
+  await requireStockAccess();
+  const addon = await createWebsiteAddon(catalogId, input);
+  revalidatePath("/stock");
+  revalidatePath("/sales");
+  return addon;
+}
+
+export async function updateWebsiteAddonAction(
+  catalogId: WebsiteCatalogId,
+  id: string,
+  input: { price?: number; stock?: number | null; status?: WebsiteAddon["status"] }
+): Promise<WebsiteAddon> {
+  await requireStockAccess();
+  const addon = await updateWebsiteAddon(catalogId, id, input);
+  revalidatePath("/stock");
+  revalidatePath("/sales");
+  return addon;
+}
+
+export async function deleteWebsiteAddonAction(
+  catalogId: WebsiteCatalogId,
+  id: string
+): Promise<void> {
+  await requireStockAccess();
+  await deleteWebsiteAddon(catalogId, id);
+  revalidatePath("/stock");
+  revalidatePath("/sales");
+}
+
+// Product table's Original Cost / Total Cost 10% / Extra Money columns --
+// purely an internal purchasing record (what staff paid to acquire the
+// stock), stored in POS's own database and never sent to the storefront.
+export async function setWebsitePurchaseCostAction(
+  catalogId: WebsiteCatalogId,
+  siteProductId: string,
+  variationId: string,
+  fields: Partial<{
+    original_cost: number | null;
+    total_cost_10pct: number | null;
+    extra_money: number | null;
+    total_override: number | null;
+  }>
+): Promise<void> {
+  await requireStockAccess();
+  const site = getCatalog(catalogId).brandSlug as ProductSiteLink["site"];
+  await setWebsitePurchaseCost(site, siteProductId, variationId, fields);
+
+  // If this item is already linked to a POS product, push its new Total
+  // straight into any Set that uses it (see syncSetItemCostsForProduct) --
+  // otherwise Cost Control keeps showing the Unit Cost/Line Total from
+  // whenever the line was last added or edited by hand.
+  const { data: link } = await supabaseAdmin
+    .from("product_site_links")
+    .select("product_id")
+    .eq("site", site)
+    .eq("site_product_id", siteProductId)
+    .eq("variation_id", variationId)
+    .maybeSingle();
+  if (link) await syncSetItemCostsForProduct(link.product_id);
+
+  revalidatePath("/stock");
+  revalidatePath("/marketing");
+}
+
 export async function createWebsiteProductAction(
   catalogId: WebsiteCatalogId,
   input: WebsiteProductWrite
 ): Promise<{ id: string }> {
   await requireStockAccess();
   const result = await createWebsiteProduct(catalogId, input);
+  // Auto-links a POS product immediately, same as the first price/stock edit
+  // already does for an existing product (see setSimpleProductPriceAction's
+  // comment) -- otherwise a brand-new product has zero rows in POS's own
+  // `products` table and can't be found in Cost Control's Set item search
+  // until someone happens to re-save its price or stock once. Best-effort:
+  // a hiccup here shouldn't block the product from being created.
+  await ensurePosProductForSiteProduct({
+    catalogId,
+    siteProductId: result.id,
+    variationId: "",
+    title: input.title,
+    price: input.price ?? 0,
+    imageUrl: input.image_url ?? null,
+    stock: input.stock ?? null,
+  }).catch(() => null);
   revalidatePath("/stock");
   return result;
 }
@@ -125,12 +238,19 @@ export async function setVariationStockAction(input: {
   // The POS product's stock right now (0 if not yet linked) -- used to turn
   // the typed absolute value into the delta adjustStockAction expects.
   currentStock: number;
-  stock: number;
+  // null = unlimited stock -- written straight to the storefront with no POS
+  // delta (nothing meaningful to decrement toward), same as an add-on's
+  // blank Stock box.
+  stock: number | null;
+  // Accountance's "Add waste item" reuses this same sync (patch the
+  // storefront + mirror into POS) tagged "waste" instead of a plain edit --
+  // both default to the Stock page's own values so every other caller is
+  // unaffected.
+  category?: StockAdjustmentCategory;
+  reason?: string;
+  createdAt?: string;
 }): Promise<void> {
   await requireStockAccess();
-  await updateWebsiteProductVariation(input.catalogId, input.siteProductId, input.variationId, {
-    stock: input.stock,
-  });
 
   const linked = await ensurePosProductForSiteProduct({
     catalogId: input.catalogId,
@@ -144,12 +264,112 @@ export async function setVariationStockAction(input: {
   // ensurePosProductForSiteProduct seeds stock directly at creation time (to
   // the target value already) -- only need an explicit adjustment if the
   // link already existed.
-  if (input.alreadyLinked) {
+  if (input.alreadyLinked && input.stock !== null) {
     const delta = input.stock - input.currentStock;
     if (delta !== 0) {
-      await adjustStockAction({ productId: linked.id, delta, reason: "Stock page edit" });
+      // adjustStockAction pushes the resulting POS quantity straight back out
+      // to the storefront (see pushStockToSites -- POS is the source of
+      // truth for stock). Also PATCHing the storefront directly here, with
+      // the same target value, sent it two writes for one edit -- harmless
+      // if the storefront's endpoint really replaces the count, but at least
+      // one live catalog's endpoint doesn't: it adds the given number instead
+      // of setting it, so two writes of the same value doubled its stock.
+      await adjustStockAction({
+        productId: linked.id,
+        delta,
+        reason: input.reason ?? "Stock page edit",
+        category: input.category,
+        createdAt: input.createdAt,
+      });
     }
+    return;
   }
+
+  // Not yet linked (nothing else pushes to the storefront for a brand-new
+  // link) or left "unlimited" (null, no POS delta to compute) -- write it
+  // directly here, the one and only time.
+  await updateWebsiteProductVariation(input.catalogId, input.siteProductId, input.variationId, {
+    stock: input.stock,
+  });
+}
+
+// Same as setVariationPriceAction/setVariationStockAction but for a simple
+// (non-variable) product's own price/stock -- these used to only patch the
+// storefront listing, so a simple product with no sales/manual link yet
+// never got a POS product created for it and could never show up in a Cost
+// Control Set's product search. variationId "" is the same composite-key
+// convention a simple product's own link already uses (see
+// ensurePosProductForSiteProduct).
+export async function setSimpleProductPriceAction(input: {
+  catalogId: WebsiteCatalogId;
+  siteProductId: string;
+  title: string;
+  imageUrl: string | null;
+  alreadyLinked: boolean;
+  seedStock: number | null;
+  price: number;
+}): Promise<void> {
+  await requireStockAccess();
+  await updateWebsiteProduct(input.catalogId, input.siteProductId, { price: input.price });
+
+  const linked = await ensurePosProductForSiteProduct({
+    catalogId: input.catalogId,
+    siteProductId: input.siteProductId,
+    variationId: "",
+    title: input.title,
+    price: input.price,
+    imageUrl: input.imageUrl,
+    stock: input.seedStock,
+  });
+  if (input.alreadyLinked) {
+    await setProductPriceAction({ productId: linked.id, price: input.price });
+  }
+}
+
+export async function setSimpleProductStockAction(input: {
+  catalogId: WebsiteCatalogId;
+  siteProductId: string;
+  title: string;
+  imageUrl: string | null;
+  alreadyLinked: boolean;
+  seedPrice: number;
+  currentStock: number;
+  // null = unlimited stock -- see setVariationStockAction's comment.
+  stock: number | null;
+  category?: StockAdjustmentCategory;
+  reason?: string;
+  createdAt?: string;
+}): Promise<void> {
+  await requireStockAccess();
+
+  const linked = await ensurePosProductForSiteProduct({
+    catalogId: input.catalogId,
+    siteProductId: input.siteProductId,
+    variationId: "",
+    title: input.title,
+    price: input.seedPrice,
+    imageUrl: input.imageUrl,
+    stock: input.stock,
+  });
+  if (input.alreadyLinked && input.stock !== null) {
+    const delta = input.stock - input.currentStock;
+    if (delta !== 0) {
+      // See setVariationStockAction's comment -- adjustStockAction's own
+      // pushStockToSites is the single write to the storefront here; a
+      // second direct write of the same value duplicated it, which at least
+      // one catalog's API applies as an increment rather than a replace.
+      await adjustStockAction({
+        productId: linked.id,
+        delta,
+        reason: input.reason ?? "Stock page edit",
+        category: input.category,
+        createdAt: input.createdAt,
+      });
+    }
+    return;
+  }
+
+  await updateWebsiteProduct(input.catalogId, input.siteProductId, { stock: input.stock });
 }
 
 export async function deleteWebsiteProductAction(

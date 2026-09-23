@@ -13,21 +13,32 @@ export type WebsiteCatalog = {
   urlEnv: string;
   // env var holding the API credential (server-only, never NEXT_PUBLIC_)
   keyEnv: string;
+  // env var holding the catalog's add-on API base URL (up to and including
+  // `/api/v1/addons`), if this storefront has one -- read-only, reuses `keyEnv`
+  // for auth. Omitted for a catalog with no add-on endpoint yet.
+  addonsUrlEnv?: string;
+  // env var holding the catalog's read-only categories API base URL (up to and
+  // including `/api/categories` or `/api/v1/categories`), reusing `keyEnv` for
+  // auth -- if the storefront hasn't deployed this endpoint yet (or the env var
+  // isn't set), listWebsiteCategories falls back to the hardcoded `categories`
+  // label list below instead of failing.
+  categoriesUrlEnv?: string;
   auth: AuthScheme;
   // When set, the list endpoint takes this query string to include drafts
   // (and requires auth to do so). Omit for catalogs whose list is all-or-nothing.
   listAllParam?: string;
-  // env var holding the categories list endpoint's base URL (same auth/key as
-  // `keyEnv`). When set, listWebsiteCategories() (./client) fetches live names
-  // instead of the hand-maintained `categories` fallback below.
-  categoriesUrlEnv?: string;
-  // Fallback category filter chips for the Sales > Website tab, used when
-  // `categoriesUrlEnv` is unset or the live fetch fails. Catalogs with no
-  // categories endpoint have their product API return only a `category_id`
-  // (a UUID) with no name, so these `label`s were inferred from the products
-  // in each group -- edit them to match the storefront's own wording. A
-  // product whose `category_id` isn't listed here just isn't matched by any
-  // chip (still shown under "All"). Order here is the chip order.
+  // When set, listWebsiteProducts pages through the list endpoint at this
+  // page size (via &limit=&offset=) instead of one request -- works around
+  // bosbapremiumfoods.com's status=all endpoint 500ing past ~100 results
+  // (its catalog crossed 100 products including drafts). Omit for catalogs
+  // with no known limit.
+  listPageSize?: number;
+  // Fallback category filter chips for the Sales > Website tab, used only when
+  // categoriesUrlEnv isn't set/deployed yet. The `label`s below were inferred
+  // from the products in each group before the storefronts had a categories
+  // endpoint -- edit them to match the storefront's own wording. A product
+  // whose `category_id` isn't listed here just isn't matched by any chip
+  // (still shown under "All"). Order here is the chip order.
   categories?: { id: string; label: string }[];
 };
 
@@ -42,6 +53,7 @@ export const CATALOGS: WebsiteCatalog[] = [
     brandSlug: "sora-sake",
     urlEnv: "SORA_SAKE_PRODUCTS_API_URL",
     keyEnv: "SORA_SAKE_PRODUCTS_API_KEY",
+    categoriesUrlEnv: "SORA_SAKE_CATEGORIES_API_URL",
     auth: "bearer",
     categories: [
       { id: "0c378c91-e44e-4682-95f9-3bdbc3bb4cbd", label: "Junmai Daiginjo" },
@@ -60,6 +72,7 @@ export const CATALOGS: WebsiteCatalog[] = [
     brandSlug: "bosba-drink-snack",
     urlEnv: "BOSBA_DRINK_SNACK_PRODUCTS_API_URL",
     keyEnv: "BOSBA_DRINK_SNACK_PRODUCTS_API_TOKEN",
+    categoriesUrlEnv: "BOSBA_DRINK_SNACK_CATEGORIES_API_URL",
     auth: "bearer",
     listAllParam: "status=all",
     categories: [
@@ -80,14 +93,13 @@ export const CATALOGS: WebsiteCatalog[] = [
     brandSlug: "bosba-premium-foods",
     urlEnv: "BOSBA_PREMIUM_FOODS_PRODUCTS_API_URL",
     keyEnv: "BOSBA_PREMIUM_FOODS_PRODUCTS_API_KEY",
-    auth: "x-api-key",
-    // status=all + drafts require the write key; limit is capped at 500.
-    listAllParam: "status=all&limit=500",
-    // The storefront now has a real categories endpoint
-    // (`https://bosbapremiumfoods.com/api/v1/categories`) -- live names win
-    // whenever this is configured. `categories` below only fires if the env
-    // var is unset or the live fetch throws.
+    addonsUrlEnv: "BOSBA_PREMIUM_FOODS_ADDONS_API_URL",
     categoriesUrlEnv: "BOSBA_PREMIUM_FOODS_CATEGORIES_API_URL",
+    auth: "x-api-key",
+    // status=all + drafts require the write key. No &limit here -- paged via
+    // listPageSize instead (see its comment: status=all 500s past ~100).
+    listAllParam: "status=all",
+    listPageSize: 100,
     // Reconstructed from the live catalog before the categories endpoint
     // existed: each id is a category actually in use on a product, named from
     // that group's contents. "Frozen Seafoods" and "Premium Fish" are best

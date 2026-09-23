@@ -66,6 +66,37 @@ export type Product = {
   is_active: boolean;
   created_at: string;
   updated_at: string;
+  // Per-unit cost -- used for direct COGS when the product has no recipe.
+  // null = cost not recorded yet, treated as "unknown", never as $0.
+  cost_price: number | null;
+  // Hides this product from the Sales checkout grid while keeping it
+  // manageable in Stock -- for raw materials/packaging used only as a
+  // recipe ingredient, not sold on their own.
+  is_ingredient: boolean;
+  // Grams one unit of this product (e.g. one "pcs") weighs -- lets Cost
+  // Control Set lines convert Scale to kg/g. null = unknown.
+  weight_grams: number | null;
+};
+
+export type RecipeItem = {
+  id: string;
+  product_id: string;
+  ingredient_product_id: string;
+  quantity: number;
+  created_at: string;
+};
+
+// Snapshot of one ingredient's consumption (and cost) for one order line --
+// see order_item_ingredients in migration 0026. Lets a cancelled/deleted
+// order restore ingredient stock precisely even if the recipe has since
+// changed.
+export type OrderItemIngredient = {
+  id: string;
+  order_item_id: string;
+  ingredient_product_id: string;
+  quantity: number;
+  unit_cost: number | null;
+  created_at: string;
 };
 
 export type Customer = {
@@ -113,6 +144,71 @@ export type ProductSiteLink = {
   created_at: string;
 };
 
+// Manually-entered purchase-cost breakdown for one storefront item (Stock >
+// Website product table), independent of whether it has a linked POS
+// product yet -- see migration 0027. Purchase Cost is derived in the app
+// (never stored): Purchase Cost = (original_cost + total_cost_10pct) / 2.
+// Total is derived too (Purchase Cost + extra_money) unless total_override
+// is set, in which case it wins outright -- see migration 0032.
+export type WebsiteProductPurchaseCost = {
+  id: string;
+  site: "bosba-premium-foods" | "bosba-drink-snack" | "sora-sake";
+  site_product_id: string;
+  // "" for a simple site product; a variation's own id for one size/flavor
+  // of a "variable" product -- mirrors product_site_links.variation_id.
+  variation_id: string;
+  original_cost: number | null;
+  total_cost_10pct: number | null;
+  extra_money: number | null;
+  total_override: number | null;
+  updated_at: string;
+};
+
+// Marketing > Cost Control: a bundle of existing Stock products sold/costed
+// as one unit (e.g. a gift box). Total Cost and Margin % are always derived
+// from `SetItem`s + suggested_sell_price -- never stored -- see
+// lib/costControl.ts.
+export type SetStatus = "draft" | "active";
+
+export type ProductSet = {
+  id: string;
+  brand_id: string;
+  code: string;
+  name: string;
+  suggested_sell_price: number | null;
+  status: SetStatus;
+  created_at: string;
+  updated_at: string;
+  // Pricing model manual inputs -- see lib/costControl.ts for the derived
+  // fields (After MU$, Cost/Purchase, Total Cost, Recommend, Sale Price,
+  // %Off, Mark Up%, Gross Profit, Profit Status) computed from these plus
+  // the set's ingredient Set Cost (computeSetTotalCost).
+  target_markup_pct: number | null;
+  labor_cost: number | null;
+  competitor_name: string | null;
+  competitor_base_price: number | null;
+  // The `products` row this Set is sellable as once Active -- see
+  // activateSetListing in costControlActions.ts. null until first activated.
+  linked_product_id: string | null;
+};
+
+// One line item (an existing product + amount) inside a Set. unit/unit_cost
+// are a snapshot from the product at add-time (or last refresh), editable
+// independently so a later catalog change doesn't silently reprice an
+// already-built set.
+export type SetItem = {
+  id: string;
+  set_id: string;
+  product_id: string;
+  amount: number;
+  unit: string;
+  unit_cost: number | null;
+  sort_order: number;
+  created_at: string;
+};
+
+export type StockAdjustmentCategory = "waste" | "promotion" | "other";
+
 export type StockAdjustment = {
   id: string;
   product_id: string;
@@ -120,6 +216,11 @@ export type StockAdjustment = {
   reason: string;
   created_by: string | null;
   created_at: string;
+  category: StockAdjustmentCategory;
+  // Cost of stock that left uncompensated (waste/promo), snapshotted from
+  // the product's cost_price at adjustment time. null if no cost price was
+  // set, or the adjustment added stock back (positive delta).
+  cost_impact: number | null;
 };
 
 export type Promotion = {
@@ -179,6 +280,13 @@ export type OrderItem = {
   quantity: number;
   unit_price: number;
   line_total: number;
+  // Cost snapshot taken at sale time (see migration 0026) -- read back for
+  // margin reporting, never recomputed from the product's current
+  // cost_price, so editing a cost price today can't rewrite past COGS.
+  // Both null when the cost was unknown at sale time.
+  unit_cost: number | null;
+  cogs: number | null;
+  cost_source: "direct" | "recipe" | null;
 };
 
 export type Expense = {
@@ -232,13 +340,21 @@ export type Database = {
       >;
       products: Table<
         Product,
-        Omit<Product, "id" | "created_at" | "updated_at"> & Partial<Pick<Product, "id">>,
+        Omit<Product, "id" | "created_at" | "updated_at" | "cost_price" | "is_ingredient" | "weight_grams"> &
+          Partial<Pick<Product, "id" | "cost_price" | "is_ingredient" | "weight_grams">>,
         [
           {
             foreignKeyName: "products_brand_id_fkey";
             columns: ["brand_id"];
             isOneToOne: false;
             referencedRelation: "brands";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "products_category_id_fkey";
+            columns: ["category_id"];
+            isOneToOne: false;
+            referencedRelation: "categories";
             referencedColumns: ["id"];
           },
         ]
@@ -264,7 +380,50 @@ export type Database = {
       >;
       stock_adjustments: Table<
         StockAdjustment,
-        Omit<StockAdjustment, "id" | "created_at"> & Partial<Pick<StockAdjustment, "id">>
+        Omit<StockAdjustment, "id" | "created_at" | "category" | "cost_impact"> &
+          Partial<Pick<StockAdjustment, "id" | "category" | "cost_impact">>,
+        [
+          {
+            foreignKeyName: "stock_adjustments_product_id_fkey";
+            columns: ["product_id"];
+            isOneToOne: false;
+            referencedRelation: "products";
+            referencedColumns: ["id"];
+          },
+        ]
+      >;
+      recipe_items: Table<
+        RecipeItem,
+        Omit<RecipeItem, "id" | "created_at"> & Partial<Pick<RecipeItem, "id">>,
+        [
+          {
+            foreignKeyName: "recipe_items_product_id_fkey";
+            columns: ["product_id"];
+            isOneToOne: false;
+            referencedRelation: "products";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "recipe_items_ingredient_product_id_fkey";
+            columns: ["ingredient_product_id"];
+            isOneToOne: false;
+            referencedRelation: "products";
+            referencedColumns: ["id"];
+          },
+        ]
+      >;
+      order_item_ingredients: Table<
+        OrderItemIngredient,
+        Omit<OrderItemIngredient, "id" | "created_at"> & Partial<Pick<OrderItemIngredient, "id">>,
+        [
+          {
+            foreignKeyName: "order_item_ingredients_order_item_id_fkey";
+            columns: ["order_item_id"];
+            isOneToOne: false;
+            referencedRelation: "order_items";
+            referencedColumns: ["id"];
+          },
+        ]
       >;
       product_site_links: Table<
         ProductSiteLink,
@@ -272,6 +431,87 @@ export type Database = {
         [
           {
             foreignKeyName: "product_site_links_product_id_fkey";
+            columns: ["product_id"];
+            isOneToOne: false;
+            referencedRelation: "products";
+            referencedColumns: ["id"];
+          },
+        ]
+      >;
+      website_product_purchase_costs: Table<
+        WebsiteProductPurchaseCost,
+        Omit<
+          WebsiteProductPurchaseCost,
+          "id" | "updated_at" | "original_cost" | "total_cost_10pct" | "extra_money" | "total_override"
+        > &
+          Partial<
+            Pick<
+              WebsiteProductPurchaseCost,
+              "id" | "updated_at" | "original_cost" | "total_cost_10pct" | "extra_money" | "total_override"
+            >
+          >
+      >;
+      sets: Table<
+        ProductSet,
+        Omit<
+          ProductSet,
+          | "id"
+          | "created_at"
+          | "updated_at"
+          | "status"
+          | "suggested_sell_price"
+          | "target_markup_pct"
+          | "labor_cost"
+          | "competitor_name"
+          | "competitor_base_price"
+          | "linked_product_id"
+        > &
+          Partial<
+            Pick<
+              ProductSet,
+              | "id"
+              | "created_at"
+              | "updated_at"
+              | "status"
+              | "suggested_sell_price"
+              | "target_markup_pct"
+              | "labor_cost"
+              | "competitor_name"
+              | "competitor_base_price"
+              | "linked_product_id"
+            >
+          >,
+        [
+          {
+            foreignKeyName: "sets_brand_id_fkey";
+            columns: ["brand_id"];
+            isOneToOne: false;
+            referencedRelation: "brands";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "sets_linked_product_id_fkey";
+            columns: ["linked_product_id"];
+            isOneToOne: false;
+            referencedRelation: "products";
+            referencedColumns: ["id"];
+          },
+        ]
+      >;
+      set_items: Table<
+        SetItem,
+        Omit<SetItem, "id" | "created_at" | "sort_order" | "unit_cost"> &
+          Partial<Pick<SetItem, "id" | "created_at" | "sort_order" | "unit_cost">>,
+        [
+          {
+            foreignKeyName: "set_items_set_id_fkey";
+            columns: ["set_id"];
+            isOneToOne: false;
+            referencedRelation: "sets";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "set_items_product_id_fkey";
             columns: ["product_id"];
             isOneToOne: false;
             referencedRelation: "products";
@@ -305,13 +545,21 @@ export type Database = {
       >;
       order_items: Table<
         OrderItem,
-        Omit<OrderItem, "id"> & Partial<Pick<OrderItem, "id">>,
+        Omit<OrderItem, "id" | "unit_cost" | "cogs" | "cost_source"> &
+          Partial<Pick<OrderItem, "id" | "unit_cost" | "cogs" | "cost_source">>,
         [
           {
             foreignKeyName: "order_items_product_id_fkey";
             columns: ["product_id"];
             isOneToOne: false;
             referencedRelation: "products";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "order_items_order_id_fkey";
+            columns: ["order_id"];
+            isOneToOne: false;
+            referencedRelation: "orders";
             referencedColumns: ["id"];
           },
         ]
@@ -348,6 +596,7 @@ export type Database = {
           p_delta: number;
           p_reason: string | null;
           p_created_by: string | null;
+          p_category?: StockAdjustmentCategory;
         };
         Returns: number;
       };

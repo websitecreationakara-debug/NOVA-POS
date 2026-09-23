@@ -1,5 +1,7 @@
 import { getCatalog } from "./catalogs";
 import type {
+  WebsiteAddon,
+  WebsiteAddonWrite,
   WebsiteCatalogId,
   WebsiteCategory,
   WebsiteProduct,
@@ -31,12 +33,13 @@ function looksLikeHtml(contentType: string | null, body: string): boolean {
   return /^\s*<(?:!doctype|html)\b/i.test(body);
 }
 
-async function requestAt<T>(
+async function request<T>(
   catalogId: WebsiteCatalogId,
-  baseUrl: string,
   path: string,
-  init?: RequestInit
+  init?: RequestInit,
+  baseUrlOverride?: string
 ): Promise<T> {
+  const baseUrl = baseUrlOverride ?? config(catalogId).baseUrl;
   const url = `${baseUrl}${path}`;
   const res = await fetch(url, {
     ...init,
@@ -108,15 +111,6 @@ async function requestAt<T>(
   }
 }
 
-async function request<T>(
-  catalogId: WebsiteCatalogId,
-  path: string,
-  init?: RequestInit
-): Promise<T> {
-  const { baseUrl } = config(catalogId);
-  return requestAt<T>(catalogId, baseUrl, path, init);
-}
-
 // Catalogs store `image_url` (and `video_url`) as a site-relative path like
 // `/media/hojicha-abc123.jpg` — the filename is derived from the product. Those
 // resolve against the storefront origin, not this app's, so make them absolute
@@ -177,7 +171,7 @@ function blankToNull(input: Partial<WebsiteProductWrite>): Partial<WebsiteProduc
 // Catalogs disagree on envelope shape: some return a bare array / object, others
 // wrap it as `{ count, products: [...] }` / `{ product: {...} }` (BOSBA Drink &
 // Snack) or `{ data: ... }` (BOSBA Premium Foods). Try each wrapper key in turn.
-function unwrap<T>(payload: unknown, keys: ("data" | "products" | "product")[]): T {
+function unwrap<T>(payload: unknown, keys: ("data" | "products" | "product" | "categories")[]): T {
   if (payload && typeof payload === "object") {
     for (const key of keys) {
       if (key in payload) return (payload as Record<string, unknown>)[key] as T;
@@ -186,14 +180,13 @@ function unwrap<T>(payload: unknown, keys: ("data" | "products" | "product")[]):
   return payload as T;
 }
 
-// Stock is an admin view, so include drafts where the catalog supports it.
-export async function listWebsiteProducts(
-  catalogId: WebsiteCatalogId
+// One page of listWebsiteProducts -- factored out so the paged and unpaged
+// paths below share the same request/unwrap/validate logic.
+async function fetchProductsPage(
+  catalogId: WebsiteCatalogId,
+  query: string
 ): Promise<WebsiteProduct[]> {
-  const { listAllParam } = getCatalog(catalogId);
-  // Always send the credential: some catalogs (sorasake.wine) require auth on
-  // every request, others use it only to widen the list to include drafts.
-  const payload = await request<unknown>(catalogId, listAllParam ? `?${listAllParam}` : "", {
+  const payload = await request<unknown>(catalogId, query ? `?${query}` : "", {
     headers: authHeaders(catalogId),
   });
   const products = unwrap<WebsiteProduct[]>(payload, ["data", "products"]);
@@ -202,39 +195,183 @@ export async function listWebsiteProducts(
       `Website products API returned an unexpected shape (expected an array or { products: [] }).`
     );
   }
+  return products;
+}
+
+// Stock is an admin view, so include drafts where the catalog supports it.
+export async function listWebsiteProducts(
+  catalogId: WebsiteCatalogId
+): Promise<WebsiteProduct[]> {
+  const { listAllParam, listPageSize } = getCatalog(catalogId);
+  // Always send the credential: some catalogs (sorasake.wine) require auth on
+  // every request, others use it only to widen the list to include drafts.
+  let products: WebsiteProduct[];
+  if (listPageSize) {
+    // Page through instead of one big request -- see listPageSize's comment.
+    products = [];
+    for (let offset = 0; ; offset += listPageSize) {
+      const base = listAllParam ? `${listAllParam}&` : "";
+      const page = await fetchProductsPage(catalogId, `${base}limit=${listPageSize}&offset=${offset}`);
+      products.push(...page);
+      if (page.length < listPageSize) break;
+    }
+  } else {
+    products = await fetchProductsPage(catalogId, listAllParam ?? "");
+  }
   return products.map((p) => absolutizeMedia(catalogId, p));
 }
 
-// Live category names for the "Category" picker/filter chips, replacing the
-// hand-maintained `categories` array in catalogs.ts wherever a catalog has a
-// real categories endpoint. Returns null (not an error) when the catalog has
-// no `categoriesUrlEnv` configured, so callers can fall back to the static
-// list -- same shape as configuredCatalogs()'s "not wired up" check.
-export async function listWebsiteCategories(
-  catalogId: WebsiteCatalogId
-): Promise<WebsiteCategory[] | null> {
+// Throws for a catalog with no add-on endpoint configured -- unlike the read
+// path below, a write action (edit/delete) should fail loudly rather than
+// silently no-op.
+function addonsBaseUrl(catalogId: WebsiteCatalogId): string {
   const catalog = getCatalog(catalogId);
-  if (!catalog.categoriesUrlEnv) return null;
-  const baseUrl = process.env[catalog.categoriesUrlEnv];
-  if (!baseUrl) return null;
+  if (!catalog.addonsUrlEnv) throw new Error(`${catalog.label} has no add-on API configured`);
+  const url = process.env[catalog.addonsUrlEnv];
+  if (!url) throw new Error(`${catalog.addonsUrlEnv} is not set`);
+  return url;
+}
 
-  const payload = await requestAt<unknown>(catalogId, baseUrl, "?limit=1000", {
+// This storefront's separate add-on catalog (rice, sauce, extra ikura, ...),
+// if it has one -- see addonsUrlEnv on the catalog config. Empty array (not
+// an error) for a catalog with no add-on endpoint configured yet, so
+// Sales/Stock just show nothing for those businesses instead of failing.
+export async function listWebsiteAddons(catalogId: WebsiteCatalogId): Promise<WebsiteAddon[]> {
+  const catalog = getCatalog(catalogId);
+  if (!catalog.addonsUrlEnv) return [];
+  const baseUrl = process.env[catalog.addonsUrlEnv];
+  if (!baseUrl) return [];
+
+  const payload = await request<unknown>(catalogId, "?status=all", {
     headers: authHeaders(catalogId),
-  });
-  const rows = unwrap<
-    { id: string; name: string; parent_id: string | null; sort_order: number }[]
-  >(payload, ["data"]);
-  if (!Array.isArray(rows)) {
+  }, baseUrl);
+  const addons = unwrap<WebsiteAddon[]>(payload, ["data"]);
+  if (!Array.isArray(addons)) {
     throw new Error(
-      `${catalog.label} categories API returned an unexpected shape (expected an array or { data: [] }).`
+      `Website add-ons API returned an unexpected shape (expected an array or { data: [] }).`
     );
   }
-  return rows.map((r) => ({
-    id: r.id,
-    label: r.name,
-    parent_id: r.parent_id ?? null,
-    sort_order: r.sort_order ?? 0,
+  const { origin } = new URL(baseUrl);
+  return addons.map((a) => ({
+    ...a,
+    image_url: a.image_url && a.image_url.startsWith("/") ? `${origin}${a.image_url}` : a.image_url,
   }));
+}
+
+// This storefront's live category list, if it has the read-only categories
+// endpoint deployed -- see categoriesUrlEnv on the catalog config. Empty array
+// (not an error) for a catalog with no categories endpoint configured yet, so
+// callers can fall back to the hardcoded `categories` label list instead of
+// failing outright.
+export async function listWebsiteCategories(catalogId: WebsiteCatalogId): Promise<WebsiteCategory[]> {
+  const catalog = getCatalog(catalogId);
+  if (!catalog.categoriesUrlEnv) return [];
+  const baseUrl = process.env[catalog.categoriesUrlEnv];
+  if (!baseUrl) return [];
+
+  const payload = await request<unknown>(catalogId, "", {
+    headers: authHeaders(catalogId),
+  }, baseUrl);
+  const categories = unwrap<WebsiteCategory[]>(payload, ["data", "categories"]);
+  if (!Array.isArray(categories)) {
+    throw new Error(
+      `Website categories API returned an unexpected shape (expected an array or { data: [] }).`
+    );
+  }
+  const { origin } = new URL(baseUrl);
+  return categories.map((c) => ({
+    ...c,
+    image_url: c.image_url && c.image_url.startsWith("/") ? `${origin}${c.image_url}` : c.image_url,
+  }));
+}
+
+// Stock's Addons modal: edit price/stock, or delete, directly against the
+// storefront's own add-on table (PATCH/DELETE /api/v1/addons/:id) -- separate
+// from the product write endpoints, so an addon id never flows through them.
+export async function updateWebsiteAddon(
+  catalogId: WebsiteCatalogId,
+  id: string,
+  input: { price?: number; stock?: number | null; status?: WebsiteAddon["status"] }
+): Promise<WebsiteAddon> {
+  const baseUrl = addonsBaseUrl(catalogId);
+  const payload = await request<unknown>(catalogId, `/${id}`, {
+    method: "PATCH",
+    headers: authHeaders(catalogId),
+    body: JSON.stringify(input),
+  }, baseUrl);
+  return unwrap<WebsiteAddon>(payload, ["data"]);
+}
+
+export async function createWebsiteAddon(
+  catalogId: WebsiteCatalogId,
+  input: WebsiteAddonWrite
+): Promise<WebsiteAddon> {
+  const baseUrl = addonsBaseUrl(catalogId);
+  const payload = await request<unknown>(catalogId, "", {
+    method: "POST",
+    headers: authHeaders(catalogId),
+    body: JSON.stringify(input),
+  }, baseUrl);
+  return unwrap<WebsiteAddon>(payload, ["data"]);
+}
+
+export async function deleteWebsiteAddon(catalogId: WebsiteCatalogId, id: string): Promise<void> {
+  const baseUrl = addonsBaseUrl(catalogId);
+  await request<void>(catalogId, `/${id}`, {
+    method: "DELETE",
+    headers: authHeaders(catalogId),
+  }, baseUrl);
+}
+
+// Add-ons ride along in the same sellable grid as regular products (Sales
+// only -- see SalesWebsiteGrid) under a synthetic "Addon" category, so tapping
+// one to sell it reuses all the existing website-product cart/link machinery
+// instead of a parallel one. Never merged into Stock's editable product panel:
+// an add-on's id lives in a different table on the storefront, so running it
+// through the product edit/delete endpoints there would silently no-op or 404.
+export const ADDON_CATEGORY_ID = "__addon__";
+
+export function addonToWebsiteProduct(addon: WebsiteAddon): WebsiteProduct {
+  return {
+    id: addon.id,
+    title: addon.title,
+    description: addon.description,
+    price: addon.price,
+    sale_price: null,
+    category_id: ADDON_CATEGORY_ID,
+    stock: addon.stock,
+    status: addon.status,
+    image_url: addon.image_url,
+    badge: null,
+    rating: null,
+    weight: null,
+    pcs: null,
+    type: "simple",
+    sort_order: addon.sort_order,
+    featured: false,
+    promotion_id: null,
+    video_url: null,
+  };
+}
+
+// Sales' sellable grid: regular products plus, if this storefront has one,
+// its add-on catalog merged in as its own "Addon" category (see
+// addonToWebsiteProduct). Used for both the initial page load and the grid's
+// own polling refresh, so add-ons don't disappear again a few seconds after
+// the page first renders them. Stock's product panel deliberately calls
+// listWebsiteProducts directly instead -- see addonToWebsiteProduct's comment
+// on why add-ons never go through the editable product list.
+export async function listSellableWebsiteProducts(
+  catalogId: WebsiteCatalogId
+): Promise<{ products: WebsiteProduct[]; addonCount: number }> {
+  const [products, addons] = await Promise.all([
+    listWebsiteProducts(catalogId),
+    listWebsiteAddons(catalogId).catch(() => []),
+  ]);
+  return {
+    products: addons.length > 0 ? [...products, ...addons.map(addonToWebsiteProduct)] : products,
+    addonCount: addons.length,
+  };
 }
 
 export async function getWebsiteProduct(

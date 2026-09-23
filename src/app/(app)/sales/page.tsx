@@ -6,7 +6,11 @@ import {
   getInvoice,
 } from "@/lib/supabase/queries";
 import { catalogForBrandSlug } from "@/lib/websiteProducts/catalogs";
-import { listWebsiteCategories, listWebsiteProducts } from "@/lib/websiteProducts/client";
+import {
+  ADDON_CATEGORY_ID,
+  listSellableWebsiteProducts,
+  listWebsiteCategories,
+} from "@/lib/websiteProducts/client";
 import type { WebsiteCatalogId, WebsiteProduct } from "@/lib/websiteProducts/types";
 import SalesClient, { type EditOrderSeed } from "./SalesClient";
 
@@ -69,22 +73,35 @@ export default async function SalesPage({
   // The brand's storefront catalog, pulled live from its own products API (same
   // source the Stock > Website tab uses). Kick the fetch off in parallel with
   // the Supabase catalog; failures here never block the sale screen -- they
-  // surface inside the Website tab.
+  // surface inside the Website tab. Add-ons (if this storefront has that
+  // endpoint configured) ride along as their own sellable entries under a
+  // synthetic "Addon" chip -- a failure fetching those alone never blocks
+  // regular products, it just means no add-ons show up this load.
   const catalog = catalogForBrandSlug(currentBrand.slug);
+  // Same "prefer the storefront's own live category list, fall back to the
+  // hand-maintained one in catalogs.ts" rule Stock's Website tab already
+  // uses (see WebsiteProductsPanel's categoryOptions) -- without this, Sales
+  // was stuck on the old hardcoded list even after categories were
+  // added/renamed/removed on the live site.
+  const liveCategoriesPromise = catalog ? listWebsiteCategories(catalog.id).catch(() => []) : Promise.resolve([]);
   const websiteCatalogPromise: Promise<SalesWebsiteCatalog | null> = catalog
-    ? Promise.all([
-        listWebsiteProducts(catalog.id),
-        // Never lets a broken/unconfigured categories endpoint take down the
-        // whole panel -- fall back to the static list from catalogs.ts.
-        listWebsiteCategories(catalog.id).catch(() => null),
-      ])
-        .then(([prods, liveCategories]) => ({
-          id: catalog.id,
-          label: catalog.label,
-          products: prods,
-          error: null,
-          categories: liveCategories ?? catalog.categories ?? [],
-        }))
+    ? Promise.all([listSellableWebsiteProducts(catalog.id), liveCategoriesPromise])
+        .then(([{ products, addonCount }, liveCategories]) => {
+          const baseCategories =
+            liveCategories.length > 0
+              ? liveCategories.map((c) => ({ id: c.id, label: c.name }))
+              : (catalog.categories ?? []);
+          return {
+            id: catalog.id,
+            label: catalog.label,
+            products,
+            error: null,
+            categories:
+              addonCount > 0
+                ? [...baseCategories, { id: ADDON_CATEGORY_ID, label: "Addon" }]
+                : baseCategories,
+          };
+        })
         .catch((e) => ({
           id: catalog.id,
           label: catalog.label,
@@ -94,9 +111,12 @@ export default async function SalesPage({
         }))
     : Promise.resolve(null);
 
-  const { categories, products } = optimisticIsValid
+  const { categories, products: allProducts } = optimisticIsValid
     ? await optimisticCatalogPromise
     : await getCatalogForBrand(currentBrand.id);
+  // Ingredients (recipe components/packaging) are managed in Stock but
+  // aren't sold on their own -- keep them out of the checkout grid.
+  const products = allProducts.filter((p) => !p.is_ingredient);
   const websiteCatalog = await websiteCatalogPromise;
 
   const editOrder: EditOrderSeed | null = editInvoice
@@ -109,6 +129,7 @@ export default async function SalesPage({
         customerAddress: editInvoice.customerAddress ?? "",
         discount: editInvoice.order.discount,
         deliveryFee: editInvoice.order.delivery_fee,
+        paymentMethod: editInvoice.order.payment_method,
         // Raw ISO -- SalesClient converts to a local datetime-local value so
         // the timezone maths happens in the browser, not on the server.
         deliveryAt: editInvoice.order.delivery_at ?? "",

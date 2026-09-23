@@ -1,15 +1,42 @@
 import {
   ALL_BUSINESSES_ID,
   getBrands,
+  getCogsSummary,
   getDailySales,
   getExpensesForDateRange,
+  getMarginReport,
   getReconciliation,
+  getStockPickerItems,
+  getWasteLog,
+  type StockPickerItem,
+  type WasteLogEntry,
 } from "@/lib/supabase/queries";
 import type { Brand } from "@/types/database";
 import AccountanceClient from "./AccountanceClient";
 
 function todayIso() {
   return new Date().toISOString().slice(0, 10);
+}
+
+function addDaysIso(dateStr: string, delta: number): string {
+  const d = new Date(`${dateStr}T00:00:00.000Z`);
+  d.setUTCDate(d.getUTCDate() + delta);
+  return d.toISOString().slice(0, 10);
+}
+
+// The immediately preceding period of the same length as [fromDate, toDate]
+// -- e.g. viewing a single day compares against yesterday, a 7-day week
+// compares against the 7 days before it. Powers the summary cards' small
+// vs-previous-period trend badges.
+function previousPeriodRange(fromDate: string, toDate: string): { from: string; to: string } {
+  const lengthDays =
+    Math.round(
+      (new Date(`${toDate}T00:00:00.000Z`).getTime() - new Date(`${fromDate}T00:00:00.000Z`).getTime()) /
+        86_400_000
+    ) + 1;
+  const to = addDaysIso(fromDate, -1);
+  const from = addDaysIso(to, -(lengthDays - 1));
+  return { from, to };
 }
 
 // "2026-09" -> the first and last calendar day of that month. Date.UTC's
@@ -149,6 +176,8 @@ export default async function AccountancePage({
         getDailySales(brandIdParam, fromDate, toDate),
         reconciliationFor(brandIdParam, fromDate, toDate),
         getExpensesForDateRange(brandIdParam, fromDate, toDate),
+        getCogsSummary(brandIdParam, fromDate, toDate),
+        getMarginReport(brandIdParam, fromDate, toDate),
       ])
     : null;
 
@@ -157,7 +186,7 @@ export default async function AccountancePage({
   if (brands.length === 0) {
     return (
       <main className="p-8">
-        <h1 className="text-2xl font-semibold">Accountance</h1>
+        <h1 className="text-2xl font-semibold">Accounting</h1>
         <p className="mt-2 text-zinc-500">No brands configured yet.</p>
       </main>
     );
@@ -168,14 +197,51 @@ export default async function AccountancePage({
       ? ALL_BUSINESSES_BRAND
       : (brands.find((b) => b.id === brandIdParam) ?? brands[0]);
 
-  const [{ summary, orders }, reconciliation, expenses] =
+  const [{ summary, orders }, reconciliation, expenses, cogsSummary, marginReport] =
     optimisticDataPromise && currentBrand.id === brandIdParam
       ? await optimisticDataPromise
       : await Promise.all([
           getDailySales(currentBrand.id, fromDate, toDate),
           reconciliationFor(currentBrand.id, fromDate, toDate),
           getExpensesForDateRange(currentBrand.id, fromDate, toDate),
+          getCogsSummary(currentBrand.id, fromDate, toDate),
+          getMarginReport(currentBrand.id, fromDate, toDate),
         ]);
+
+  // Only the COGS tab needs either of these -- skip the extra queries for
+  // every other tab. The "+ Add waste item" picker also needs one real
+  // brand's product list (waste is logged against one brand's actual stock),
+  // but the log itself reads fine for "All Businesses" too.
+  const { from: prevFromDate, to: prevToDate } = previousPeriodRange(fromDate, toDate);
+  const wasteDataPromise: Promise<[StockPickerItem[], WasteLogEntry[]]> =
+    tab === "cogs"
+      ? Promise.all([
+          currentBrand.id !== ALL_BUSINESSES_ID
+            ? getStockPickerItems(currentBrand.id, currentBrand.slug)
+            : Promise.resolve([]),
+          getWasteLog(currentBrand.id, fromDate, toDate),
+        ])
+      : Promise.resolve([[], []]);
+  const previousPeriodPromise = Promise.all([
+    getDailySales(currentBrand.id, prevFromDate, prevToDate),
+    getExpensesForDateRange(currentBrand.id, prevFromDate, prevToDate),
+    getCogsSummary(currentBrand.id, prevFromDate, prevToDate),
+  ]);
+
+  const [[wasteItems, wasteLog], [{ summary: prevSummary }, prevExpenses, prevCogsSummary]] =
+    await Promise.all([wasteDataPromise, previousPeriodPromise]);
+
+  const prevExpenseTotal = prevExpenses.reduce((sum, e) => sum + e.amount, 0);
+  const prevGrossProfit = prevSummary.total - prevCogsSummary.totalCogs;
+  const prevNetProfit = prevGrossProfit - prevExpenseTotal - prevCogsSummary.wasteCost - prevCogsSummary.promotionCost;
+  const previousPeriod = {
+    cashTotal: prevSummary.cashTotal,
+    nonCashTotal: prevSummary.nonCashTotal,
+    orderCount: prevSummary.orderCount,
+    total: prevSummary.total,
+    expenseTotal: prevExpenseTotal,
+    netProfit: prevNetProfit,
+  };
 
   return (
     <AccountanceClient
@@ -193,6 +259,11 @@ export default async function AccountancePage({
       orders={orders}
       reconciliation={reconciliation}
       expenses={expenses}
+      cogsSummary={cogsSummary}
+      marginReport={marginReport}
+      wasteItems={wasteItems}
+      wasteLog={wasteLog}
+      previousPeriod={previousPeriod}
     />
   );
 }

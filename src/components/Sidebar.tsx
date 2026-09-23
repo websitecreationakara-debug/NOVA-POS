@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
 import {
@@ -13,6 +13,8 @@ import {
   ShoppingCart,
   Users,
 } from "lucide-react";
+import { getNewOnlineOrdersCountAction } from "@/app/(app)/orders/actions";
+import { ORDERS_CHANGED } from "@/lib/ordersChanged";
 
 const topItems = [
   {
@@ -32,18 +34,26 @@ const topItems = [
 ];
 
 const bottomItems = [
-  { href: "/marketing", label: "Marketing", icon: Megaphone, roles: ["admin", "marketing"] },
   { href: "/users", label: "Staff Accounts", icon: Users, roles: ["admin"] },
 ];
+
+// Mirrors the `tab` query param the Marketing page itself reads -- kept as a
+// literal list here for the same reason ACCOUNTANCE_LINKS is (this file
+// needs to stay a plain client-safe array).
+const MARKETING_LINKS = [
+  { tab: "promotions", label: "Promotions & Customers" },
+  { tab: "cost-control", label: "Cost Control" },
+];
+const MARKETING_ROLES = ["admin", "marketing"];
 
 // Mirrors AccountanceTab from src/app/(app)/accountance/page.tsx -- kept as
 // a literal list here (rather than imported) since that file is a server
 // component and this needs to stay a plain client-safe array.
 const ACCOUNTANCE_LINKS = [
-  { tab: "reports", label: "Financial Reporting & P&L" },
-  { tab: "expenses", label: "Expense & Accounts Payable" },
-  { tab: "cogs", label: "COGS & Margin Tracking" },
   { tab: "reconciliation", label: "Cash Reconciliation" },
+  { tab: "expenses", label: "Expense & Accounts Payable" },
+  { tab: "reports", label: "Financial Reporting & P&L" },
+  { tab: "cogs", label: "COGS & Margin Tracking" },
 ];
 const ACCOUNTANCE_ROLES = ["admin", "accountance"];
 
@@ -68,6 +78,49 @@ export default function Sidebar({ role }: { role: string }) {
   }
 
   const showAccountance = ACCOUNTANCE_ROLES.includes(role);
+
+  const isOnMarketing = pathname.startsWith("/marketing");
+  const currentMarketingTab = searchParams.get("tab") ?? "promotions";
+
+  // Same open/close behavior as Accountance's dropdown above.
+  const [marketingOpen, setMarketingOpen] = useState(isOnMarketing);
+  const [wasOnMarketing, setWasOnMarketing] = useState(isOnMarketing);
+  if (isOnMarketing !== wasOnMarketing) {
+    setWasOnMarketing(isOnMarketing);
+    if (isOnMarketing) setMarketingOpen(true);
+  }
+
+  const showMarketing = MARKETING_ROLES.includes(role);
+
+  // Badge on "Orders" -- how many storefront orders are sitting unhandled,
+  // so staff notice a customer bought from the website without needing the
+  // (removed) voice announcement. No timer of its own: this count only ever
+  // changes when an order is created or its status changes, both of which
+  // LiveOrdersWatcher (mounted in TopBar) already detects and announces via
+  // ORDERS_CHANGED -- reacting to that (plus mount and window focus) keeps
+  // this accurate without adding a 4th independent poll loop running on
+  // every open tab all day.
+  const [newOnlineOrdersCount, setNewOnlineOrdersCount] = useState(0);
+  useEffect(() => {
+    let cancelled = false;
+    async function load() {
+      try {
+        const count = await getNewOnlineOrdersCountAction();
+        if (!cancelled) setNewOnlineOrdersCount(count);
+      } catch {
+        // transient network hiccup -- next event tries again
+      }
+    }
+    void load();
+    const onFocus = () => void load();
+    window.addEventListener("focus", onFocus);
+    window.addEventListener(ORDERS_CHANGED, onFocus);
+    return () => {
+      cancelled = true;
+      window.removeEventListener("focus", onFocus);
+      window.removeEventListener(ORDERS_CHANGED, onFocus);
+    };
+  }, []);
 
   function topLinkClass(active: boolean) {
     return `flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors ${
@@ -95,13 +148,21 @@ export default function Sidebar({ role }: { role: string }) {
               <Link key={item.href} href={item.href} className={topLinkClass(isActive)}>
                 <item.icon className="size-4" />
                 {item.label}
+                {item.href === "/orders" && newOnlineOrdersCount > 0 && (
+                  <span
+                    className={`ml-auto grid min-w-[1.375rem] place-items-center rounded-full bg-red-600 px-1.5 py-0.5 text-[11px] font-bold text-white shadow-sm ${
+                      isActive ? "ring-2 ring-black/15" : ""
+                    }`}
+                  >
+                    {newOnlineOrdersCount}
+                  </span>
+                )}
               </Link>
             );
           })}
 
         {/* Accountance -- header itself still links to the page (default
-            tab), same as before this session's edits; the chevron only
-            toggles the sub-list. */}
+            tab); the chevron only toggles the sub-list. */}
         {showAccountance && (
           <div>
             <div
@@ -111,13 +172,13 @@ export default function Sidebar({ role }: { role: string }) {
             >
               <Link href="/accountance" className="flex flex-1 items-center gap-3 py-2.5">
                 <Calculator className="size-4" />
-                Accountance
+                Accounting
               </Link>
               <button
                 type="button"
                 onClick={() => setAccountanceOpen((open) => !open)}
                 aria-expanded={accountanceOpen}
-                aria-label={accountanceOpen ? "Collapse Accountance" : "Expand Accountance"}
+                aria-label={accountanceOpen ? "Collapse Accounting" : "Expand Accounting"}
                 className={`rounded p-1 ${isOnAccountance ? "hover:bg-black/10" : "hover:bg-black/5 dark:hover:bg-white/10"}`}
               >
                 <ChevronDown
@@ -132,6 +193,45 @@ export default function Sidebar({ role }: { role: string }) {
                     key={l.tab}
                     href={`/accountance?tab=${l.tab}`}
                     className={subLinkClass(isOnAccountance && currentTab === l.tab)}
+                  >
+                    {l.label}
+                  </Link>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {showMarketing && (
+          <div>
+            <div
+              className={`flex items-center gap-3 rounded-lg pr-2 pl-3 text-sm font-medium transition-colors ${
+                isOnMarketing ? "bg-brand text-black" : "text-muted-foreground hover:bg-muted"
+              }`}
+            >
+              <Link href="/marketing" className="flex flex-1 items-center gap-3 py-2.5">
+                <Megaphone className="size-4" />
+                Marketing
+              </Link>
+              <button
+                type="button"
+                onClick={() => setMarketingOpen((open) => !open)}
+                aria-expanded={marketingOpen}
+                aria-label={marketingOpen ? "Collapse Marketing" : "Expand Marketing"}
+                className={`rounded p-1 ${isOnMarketing ? "hover:bg-black/10" : "hover:bg-black/5 dark:hover:bg-white/10"}`}
+              >
+                <ChevronDown
+                  className={`size-4 transition-transform ${marketingOpen ? "rotate-180" : ""}`}
+                />
+              </button>
+            </div>
+            {marketingOpen && (
+              <div className="mt-1 flex flex-col gap-0.5 border-l border-border pl-4">
+                {MARKETING_LINKS.map((l) => (
+                  <Link
+                    key={l.tab}
+                    href={`/marketing?tab=${l.tab}`}
+                    className={subLinkClass(isOnMarketing && currentMarketingTab === l.tab)}
                   >
                     {l.label}
                   </Link>

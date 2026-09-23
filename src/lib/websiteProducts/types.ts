@@ -54,15 +54,41 @@ export type WebsiteProduct = {
   tabs?: unknown[];
 };
 
-// Live category from a catalog's categories endpoint (see
-// listWebsiteCategories in ./client). `parent_id`/`sort_order` mirror the
-// storefront's own hierarchy; consumers that just need filter chips can
-// ignore both.
+// A storefront's small separate add-on catalog (rice, sauce, extra ikura,
+// ...) -- optional extras a cashier can ring up alongside (or instead of) a
+// regular product. Managed here in Stock (create/edit/delete) or on the
+// storefront's own admin -- see listWebsiteAddons/createWebsiteAddon/etc. in
+// ./client.
+export type WebsiteAddon = {
+  id: string;
+  title: string;
+  description: string | null;
+  price: number;
+  image_url: string | null;
+  stock: number | null;
+  status: WebsiteProductStatus;
+  sort_order: number;
+};
+
+// A storefront category, straight from its own `categories` table (flat,
+// self-referencing via `parent_id`) -- see listWebsiteCategories. Read-only:
+// categories are still created/edited/deleted on each storefront's own admin,
+// this app only mirrors the list so Stock's chips stay in sync automatically.
 export type WebsiteCategory = {
   id: string;
-  label: string;
+  name: string;
+  slug: string;
   parent_id: string | null;
-  sort_order: number;
+  image_url: string | null;
+};
+
+export type WebsiteAddonWrite = {
+  title: string;
+  description?: string | null;
+  price?: number;
+  image_url?: string | null;
+  stock?: number | null;
+  status?: WebsiteProductStatus;
 };
 
 export type WebsiteProductWrite = {

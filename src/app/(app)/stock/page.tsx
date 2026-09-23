@@ -1,10 +1,14 @@
 import { getBrands, getCatalogForBrand } from "@/lib/supabase/queries";
 import { catalogForBrandSlug } from "@/lib/websiteProducts/catalogs";
-import { listWebsiteCategories, listWebsiteProducts } from "@/lib/websiteProducts/client";
+import { listWebsiteAddons, listWebsiteCategories, listWebsiteProducts } from "@/lib/websiteProducts/client";
+import { getWebsitePurchaseCosts, type PurchaseCostFields } from "@/lib/websiteProducts/purchaseCosts";
 import type {
+  WebsiteAddon,
   WebsiteCatalogId,
+  WebsiteCategory,
   WebsiteProduct,
 } from "@/lib/websiteProducts/types";
+import type { ProductSiteLink } from "@/types/database";
 import StockClient from "./StockClient";
 
 export type WebsiteCatalogData = {
@@ -12,9 +16,19 @@ export type WebsiteCatalogData = {
   label: string;
   products: WebsiteProduct[] | null;
   error: string | null;
-  // Category filter/picker options. Live from the storefront's categories
-  // endpoint when configured, else the hand-maintained fallback in catalogs.ts.
-  categories: { id: string; label: string }[];
+  // Read-only -- see addonToWebsiteProduct's comment in
+  // lib/websiteProducts/client.ts for why these never go through the
+  // editable product list above. Empty for a brand with no add-on endpoint.
+  addons: WebsiteAddon[];
+  // This storefront's live category list, if it has the read-only categories
+  // endpoint deployed -- see categoriesUrlEnv. Empty for a catalog that hasn't
+  // deployed it yet, in which case the panel falls back to its old
+  // derived-from-products chip list.
+  categories: WebsiteCategory[];
+  // Manually-entered purchase-cost breakdown per storefront item (Original
+  // Cost / Total Cost 10% / Extra Money columns), keyed by purchaseCostKey --
+  // POS's own record, unrelated to the storefront's own data.
+  purchaseCosts: Record<string, PurchaseCostFields>;
 };
 
 export default async function StockPage({
@@ -47,18 +61,17 @@ export default async function StockPage({
 
   const websiteCatalogPromise: Promise<WebsiteCatalogData | null> =
     catalog
-      ? Promise.all([
-          listWebsiteProducts(catalog.id),
-          // Never lets a broken/unconfigured categories endpoint take down the
-          // whole panel -- fall back to the static list from catalogs.ts.
-          listWebsiteCategories(catalog.id).catch(() => null),
-        ])
-          .then(([prods, liveCategories]) => ({
+      ? listWebsiteProducts(catalog.id)
+          .then(async (prods) => ({
             id: catalog.id,
             label: catalog.label,
             products: prods,
             error: null,
-            categories: liveCategories ?? catalog.categories ?? [],
+            addons: await listWebsiteAddons(catalog.id).catch(() => []),
+            categories: await listWebsiteCategories(catalog.id).catch(() => []),
+            purchaseCosts: await getWebsitePurchaseCosts(
+              catalog.brandSlug as ProductSiteLink["site"]
+            ).catch(() => ({})),
           }))
           .catch((e) => ({
             id: catalog.id,
@@ -68,7 +81,9 @@ export default async function StockPage({
               e instanceof Error
                 ? e.message
                 : "Failed to load",
-            categories: catalog.categories ?? [],
+            addons: [],
+            categories: [],
+            purchaseCosts: {},
           }))
       : Promise.resolve(null);
 
