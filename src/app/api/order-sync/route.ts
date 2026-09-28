@@ -17,11 +17,17 @@ const VALID_PAYMENT_METHODS = ALL_PAYMENT_METHODS;
 // it, a variable product's siteProductId (shared across all its sizes) either
 // matches every linked size at once or, when the storefront instead sends the
 // variation's own id as siteProductId, matches nothing at all.
+// title names a brand-new POS product create_online_order() auto-creates
+// and links on the spot when siteProductId (+variationId) doesn't match any
+// existing product_site_links row -- so an unlinked product no longer just
+// silently drops its line from the order; it self-heals instead. Omitted
+// (or blank) falls back to a generic placeholder name in that product.
 type InboundItem = {
   siteProductId: string;
   quantity: number;
   unitPrice: number;
   variationId?: string;
+  title?: string;
 };
 
 // Inbound side of Phase 7's order sync: a storefront calls this right after
@@ -65,10 +71,6 @@ export async function POST(request: NextRequest) {
   }
 
   const { site, siteOrderId, items, customerName, customerPhone, customerEmail } = body;
-  // TEMP DIAGNOSTIC (2026-09-28): logging the raw items payload to figure out
-  // why Sora Sake orders come in with no matching order_items. Remove once
-  // the storefront's actual field names/values are confirmed.
-  console.log("[order-sync diag]", JSON.stringify({ site, siteOrderId, items }));
   const isValidSite = (s: unknown): s is ProductSiteLink["site"] =>
     typeof s === "string" && VALID_SITES.includes(s as ProductSiteLink["site"]);
 
@@ -82,7 +84,8 @@ export async function POST(request: NextRequest) {
     typeof (v as InboundItem).unitPrice === "number" &&
     Number.isFinite((v as InboundItem).unitPrice) &&
     (v as InboundItem).unitPrice >= 0 &&
-    ((v as InboundItem).variationId === undefined || typeof (v as InboundItem).variationId === "string");
+    ((v as InboundItem).variationId === undefined || typeof (v as InboundItem).variationId === "string") &&
+    ((v as InboundItem).title === undefined || typeof (v as InboundItem).title === "string");
 
   if (
     !isValidSite(site) ||
