@@ -120,16 +120,35 @@ export default function CostControlClient({
   isBuilderOpen: boolean;
 }) {
   const router = useRouter();
+  const [search, setSearch] = useState("");
 
   function switchBrand(brandId: string) {
     router.push(`/marketing?tab=cost-control&brand=${brandId}`);
   }
 
+  const q = search.trim().toLowerCase();
+  const filteredSets = q
+    ? sets.filter((s) => s.name.toLowerCase().includes(q) || s.code.toLowerCase().includes(q))
+    : sets;
+
   return (
     <div className="min-h-screen p-6">
       <div className="flex flex-wrap items-center gap-3">
         <h1 className="text-lg font-medium">Cost Control</h1>
-        <select className={`ml-auto ${selectClass}`} value={currentBrand.id} onChange={(e) => switchBrand(e.target.value)}>
+        {!isBuilderOpen && (
+          <input
+            type="text"
+            placeholder="Search sets..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className={`ml-auto w-56 ${inputClass}`}
+          />
+        )}
+        <select
+          className={`${isBuilderOpen ? "ml-auto" : ""} ${selectClass}`}
+          value={currentBrand.id}
+          onChange={(e) => switchBrand(e.target.value)}
+        >
           {brands.map((b) => (
             <option key={b.id} value={b.id}>
               {b.name}
@@ -141,7 +160,7 @@ export default function CostControlClient({
       {isBuilderOpen ? (
         <SetBuilder brandId={currentBrand.id} items={items} activeSet={activeSet} />
       ) : (
-        <SetsOverview brandId={currentBrand.id} sets={sets} />
+        <SetsOverview brandId={currentBrand.id} sets={filteredSets} />
       )}
     </div>
   );
