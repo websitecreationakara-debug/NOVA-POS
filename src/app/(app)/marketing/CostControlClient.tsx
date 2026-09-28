@@ -141,7 +141,7 @@ export default function CostControlClient({
             placeholder="Search sets..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            className={`ml-auto w-56 ${inputClass}`}
+            className={`ml-auto w-72 ${inputClass}`}
           />
         )}
         <select
