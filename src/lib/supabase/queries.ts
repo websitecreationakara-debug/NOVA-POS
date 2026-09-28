@@ -5,7 +5,7 @@ import { countLowStock } from "@/lib/websiteProducts/stock";
 import type { WebsiteCatalogId } from "@/lib/websiteProducts/types";
 import { formatInvoiceNumber, invoiceMonthStamp, invoiceMonthStartIso } from "@/lib/invoiceNumber";
 import { ALL_PAYMENT_METHODS, type PaymentMethod } from "@/lib/paymentMethods";
-import { aggregatePartialCogs, aggregateStrictCogs, computeGrossMargin } from "@/lib/cogs";
+import { aggregateStrictCogs, computeGrossMargin } from "@/lib/cogs";
 import { getEffectiveProductCost } from "@/lib/websiteProducts/purchaseCosts";
 import type {
   Brand,
@@ -318,7 +318,10 @@ export async function getDashboardStats(): Promise<DashboardStats> {
       .limit(5),
     // COGS -- joined to paid orders the same way the revenue query above is
     // filtered, so "this year" means the same thing for both.
-    supabaseAdmin.from("order_items").select("cogs, orders!inner(status, paid_at)").eq("orders.status", "paid"),
+    supabaseAdmin
+      .from("order_items")
+      .select("product_id, quantity, cogs, orders!inner(status, paid_at)")
+      .eq("orders.status", "paid"),
     supabaseAdmin
       .from("stock_adjustments")
       .select("category, cost_impact, created_at")
@@ -347,11 +350,16 @@ export async function getDashboardStats(): Promise<DashboardStats> {
     .reduce((sum, o) => sum + o.total, 0);
   const ordersToday = orders.filter((o) => (o.paid_at ?? "").slice(0, 10) === today).length;
 
-  type OrderItemCogsRow = { cogs: number | null; orders: { status: string; paid_at: string | null } | null };
-  const thisYearCogsValues = ((orderItemsData ?? []) as OrderItemCogsRow[])
-    .filter((i) => (i.orders?.paid_at ?? "").slice(0, 4) === currentYear)
-    .map((i) => i.cogs);
-  const { totalCogs, hasUnknownCost } = aggregatePartialCogs(thisYearCogsValues);
+  type OrderItemCogsRow = {
+    product_id: string;
+    quantity: number;
+    cogs: number | null;
+    orders: { status: string; paid_at: string | null } | null;
+  };
+  const thisYearItems = ((orderItemsData ?? []) as OrderItemCogsRow[]).filter(
+    (i) => (i.orders?.paid_at ?? "").slice(0, 4) === currentYear
+  );
+  const { totalCogs, hasUnknownCost } = await sumCogsWithFallback(thisYearItems);
   const grossProfit = round2(totalRevenue - totalCogs);
   const grossMarginPct = totalRevenue === 0 ? null : round2((grossProfit / totalRevenue) * 10000) / 100;
 
@@ -630,6 +638,41 @@ function round2(n: number): number {
   return Math.round(n * 100) / 100;
 }
 
+// A sold line with no recorded cogs (order created before COGS capture
+// existed, or before its product had a cost) falls back to that product's
+// current effective cost (Stock's Purchase Cost Total, a Set's own Total
+// Cost, or plain cost_price -- see getEffectiveProductCost) instead of being
+// dropped as "unknown". Only a product with no cost anywhere still leaves
+// the summary flagged incomplete. One lookup per distinct product, shared
+// across every line that needs it.
+async function sumCogsWithFallback(
+  items: { product_id: string; quantity: number; cogs: number | null }[]
+): Promise<{ totalCogs: number; hasUnknownCost: boolean }> {
+  const missingProductIds = [...new Set(items.filter((i) => i.cogs === null).map((i) => i.product_id))];
+  const effectiveCostByProduct = new Map<string, number | null>();
+  await Promise.all(
+    missingProductIds.map(async (id) => {
+      effectiveCostByProduct.set(id, await getEffectiveProductCost(id).catch(() => null));
+    })
+  );
+
+  let totalCogs = 0;
+  let hasUnknownCost = false;
+  for (const item of items) {
+    if (item.cogs !== null) {
+      totalCogs += item.cogs;
+      continue;
+    }
+    const effectiveCost = effectiveCostByProduct.get(item.product_id) ?? null;
+    if (effectiveCost === null) {
+      hasUnknownCost = true;
+      continue;
+    }
+    totalCogs += round2(effectiveCost * item.quantity);
+  }
+  return { totalCogs: round2(totalCogs), hasUnknownCost };
+}
+
 export type CogsSummary = {
   totalCogs: number;
   // True if some sold line in range had no cost price recorded -- totalCogs
@@ -650,7 +693,7 @@ export async function getCogsSummary(
 ): Promise<CogsSummary> {
   let itemsQuery = supabaseAdmin
     .from("order_items")
-    .select("cogs, orders!inner(status, paid_at, brand_id)")
+    .select("product_id, quantity, cogs, orders!inner(status, paid_at, brand_id)")
     .eq("orders.status", "paid")
     .gte("orders.paid_at", `${fromDate}T00:00:00.000Z`)
     .lte("orders.paid_at", `${toDate}T23:59:59.999Z`);
@@ -670,7 +713,7 @@ export async function getCogsSummary(
   if (itemsError) throw itemsError;
   if (adjError) throw adjError;
 
-  const { totalCogs, hasUnknownCost } = aggregatePartialCogs((items ?? []).map((i) => i.cogs));
+  const { totalCogs, hasUnknownCost } = await sumCogsWithFallback(items ?? []);
 
   type AdjustmentRow = {
     category: string;
