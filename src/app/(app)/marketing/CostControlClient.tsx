@@ -3,7 +3,7 @@
 import { useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { Copy, Pencil, Plus, Trash2 } from "lucide-react";
+import { ChevronLeft, ChevronRight, Copy, Pencil, Plus, Trash2 } from "lucide-react";
 import type { Brand, SetStatus } from "@/types/database";
 import type { StockPickerItem } from "@/lib/supabase/queries";
 import { computeLineTotal, computeSetTotalCost, computeUnitCostForScale, productWeightGrams } from "@/lib/costControl";
@@ -104,6 +104,8 @@ const selectClass =
 // existed), so switching to a select never silently changes existing data.
 const SCALE_OPTIONS = ["pcs", "kg", "g", "box", "pack", "set"];
 
+const PAGE_SIZE_OPTIONS = [10, 25, 50];
+
 export default function CostControlClient({
   brands,
   currentBrand,
@@ -181,6 +183,19 @@ function SetsOverview({ brandId, sets }: { brandId: string; sets: SetSummary[] }
   const [error, setError] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<SetSummary | null>(null);
   const [duplicating, setDuplicating] = useState<SetSummary | null>(null);
+
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(25);
+  const pageCount = Math.max(1, Math.ceil(sets.length / pageSize));
+  // Snap back to page 1 whenever the result set changes under the current page.
+  const filterKey = `${brandId}|${sets.length}|${pageSize}`;
+  const [prevFilterKey, setPrevFilterKey] = useState(filterKey);
+  if (filterKey !== prevFilterKey) {
+    setPrevFilterKey(filterKey);
+    setPage(1);
+  }
+  const currentPage = Math.min(page, pageCount);
+  const paged = sets.slice((currentPage - 1) * pageSize, currentPage * pageSize);
 
   // Pricing model manual inputs are edited inline, right in this table --
   // same save-on-blur pattern as the set detail page's other fields.
@@ -304,7 +319,7 @@ function SetsOverview({ brandId, sets }: { brandId: string; sets: SetSummary[] }
             </tr>
           </thead>
           <tbody className="divide-y divide-black/[.06] dark:divide-white/[.08]">
-            {sets.map((s) => (
+            {paged.map((s) => (
               <tr
                 key={s.id}
                 onClick={() => openSet(s.id)}
@@ -425,6 +440,48 @@ function SetsOverview({ brandId, sets }: { brandId: string; sets: SetSummary[] }
           </tbody>
         </table>
       </div>
+
+      {sets.length > 0 && (
+        <div className="mt-3 flex flex-wrap items-center justify-between gap-3 border-t border-black/[.08] pt-3 text-sm dark:border-white/[.145]">
+          <label className="flex items-center gap-2 text-xs text-zinc-500">
+            Items per page
+            <select
+              value={pageSize}
+              onChange={(e) => setPageSize(Number(e.target.value))}
+              className="rounded border border-black/[.15] bg-transparent px-2 py-1 text-xs dark:border-white/[.2]"
+            >
+              {PAGE_SIZE_OPTIONS.map((n) => (
+                <option key={n} value={n}>
+                  {n}
+                </option>
+              ))}
+            </select>
+          </label>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setPage(currentPage - 1)}
+              disabled={currentPage <= 1}
+              className="flex items-center gap-1 rounded border border-black/[.15] px-2.5 py-1 text-xs disabled:opacity-30 dark:border-white/[.2]"
+            >
+              <ChevronLeft className="size-3.5" />
+              Prev
+            </button>
+            <span className="tabular-nums text-zinc-500">
+              Page {currentPage} of {pageCount}
+            </span>
+            <button
+              type="button"
+              onClick={() => setPage(currentPage + 1)}
+              disabled={currentPage >= pageCount}
+              className="flex items-center gap-1 rounded border border-black/[.15] px-2.5 py-1 text-xs disabled:opacity-30 dark:border-white/[.2]"
+            >
+              Next
+              <ChevronRight className="size-3.5" />
+            </button>
+          </div>
+        </div>
+      )}
 
       {confirmDelete && (
         <div
