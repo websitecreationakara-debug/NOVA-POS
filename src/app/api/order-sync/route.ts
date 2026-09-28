@@ -10,7 +10,18 @@ const VALID_SITES: ProductSiteLink["site"][] = [
 ];
 const VALID_PAYMENT_METHODS = ALL_PAYMENT_METHODS;
 
-type InboundItem = { siteProductId: string; quantity: number; unitPrice: number };
+// variationId is the specific size/variant the customer bought, for a
+// "variable" site product -- "" or omitted for a simple product. Matched
+// against product_site_links.variation_id in create_online_order(); without
+// it, a variable product's siteProductId (shared across all its sizes) either
+// matches every linked size at once or, when the storefront instead sends the
+// variation's own id as siteProductId, matches nothing at all.
+type InboundItem = {
+  siteProductId: string;
+  quantity: number;
+  unitPrice: number;
+  variationId?: string;
+};
 
 // Inbound side of Phase 7's order sync: a storefront calls this right after
 // a checkout finishes, so the sale shows up in POS as a real paid order (with
@@ -65,7 +76,8 @@ export async function POST(request: NextRequest) {
     (v as InboundItem).quantity > 0 &&
     typeof (v as InboundItem).unitPrice === "number" &&
     Number.isFinite((v as InboundItem).unitPrice) &&
-    (v as InboundItem).unitPrice >= 0;
+    (v as InboundItem).unitPrice >= 0 &&
+    ((v as InboundItem).variationId === undefined || typeof (v as InboundItem).variationId === "string");
 
   if (
     !isValidSite(site) ||
