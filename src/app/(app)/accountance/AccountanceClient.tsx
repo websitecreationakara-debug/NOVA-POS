@@ -1256,7 +1256,7 @@ export default function AccountanceClient({
           <div className="flex items-center justify-between gap-2 text-xs font-medium text-zinc-600 dark:text-zinc-400">
             <span className="flex items-center gap-1.5">
               <Banknote className="size-3.5" />
-              Cash sales
+              Cash
             </span>
             <TrendChip pct={pctChange(summary.cashTotal, previousPeriod.cashTotal)} />
           </div>
@@ -1266,7 +1266,7 @@ export default function AccountanceClient({
           <div className="flex items-center justify-between gap-2 text-xs font-medium text-zinc-600 dark:text-zinc-400">
             <span className="flex items-center gap-1.5">
               <CreditCard className="size-3.5" />
-              Non-cash sales
+              KHQR
             </span>
             <TrendChip pct={pctChange(summary.nonCashTotal, previousPeriod.nonCashTotal)} />
           </div>
