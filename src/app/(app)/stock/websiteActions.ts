@@ -265,7 +265,16 @@ export async function setVariationStockAction(input: {
   // the target value already) -- only need an explicit adjustment if the
   // link already existed.
   if (input.alreadyLinked && input.stock !== null) {
-    const delta = input.stock - input.currentStock;
+    // Read the live quantity instead of trusting input.currentStock -- see
+    // setSimpleProductStockAction's comment on why a stale client-supplied
+    // value silently re-drifts POS and the storefront apart.
+    const { data: live } = await supabaseAdmin
+      .from("stock_levels")
+      .select("quantity")
+      .eq("product_id", linked.id)
+      .maybeSingle();
+    const currentStock = live?.quantity ?? 0;
+    const delta = input.stock - currentStock;
     if (delta !== 0) {
       // adjustStockAction pushes the resulting POS quantity straight back out
       // to the storefront (see pushStockToSites -- POS is the source of
@@ -352,7 +361,18 @@ export async function setSimpleProductStockAction(input: {
     stock: input.stock,
   });
   if (input.alreadyLinked && input.stock !== null) {
-    const delta = input.stock - input.currentStock;
+    // Read the live quantity instead of trusting input.currentStock (whatever
+    // the browser had loaded) -- an online sale (or any other write) landing
+    // between page-load and this save would otherwise make the delta below
+    // land on the wrong number, silently drifting POS and the storefront
+    // apart again right after they'd just been reconciled.
+    const { data: live } = await supabaseAdmin
+      .from("stock_levels")
+      .select("quantity")
+      .eq("product_id", linked.id)
+      .maybeSingle();
+    const currentStock = live?.quantity ?? 0;
+    const delta = input.stock - currentStock;
     if (delta !== 0) {
       // See setVariationStockAction's comment -- adjustStockAction's own
       // pushStockToSites is the single write to the storefront here; a

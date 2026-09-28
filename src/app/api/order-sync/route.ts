@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { revalidatePath } from "next/cache";
 import { supabaseAdmin } from "@/lib/supabase/server";
 import type { ProductSiteLink } from "@/types/database";
 import { ALL_PAYMENT_METHODS, type PaymentMethod } from "@/lib/paymentMethods";
@@ -136,6 +137,16 @@ export async function POST(request: NextRequest) {
   if (rpcError) {
     return NextResponse.json({ error: rpcError.message }, { status: 500 });
   }
+
+  // Without this, a brand-new online order's stock decrement is correct in
+  // the database immediately but POS's Stock/Orders pages keep serving their
+  // stale pre-order render until something unrelated happens to revalidate
+  // them -- same gap as order-status-sync's cancel/un-cancel path.
+  revalidatePath(`/invoice/${orderId}`);
+  revalidatePath(`/orders/${orderId}`);
+  revalidatePath("/orders");
+  revalidatePath("/stock");
+  revalidatePath("/sales");
 
   return NextResponse.json({ ok: true, orderId });
 }

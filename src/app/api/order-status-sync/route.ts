@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { revalidatePath } from "next/cache";
 import { supabaseAdmin } from "@/lib/supabase/server";
 import { pushStockToSites } from "@/lib/site-sync";
 import type { FulfillmentStatus, ProductSiteLink } from "@/types/database";
@@ -88,6 +89,20 @@ export async function POST(request: NextRequest) {
   }
   if (movedStock && movedStock.length > 0) {
     await pushStockToSites(movedStock);
+  }
+
+  // Mirror updateFulfillmentStatusAction's own revalidation -- without this,
+  // a status change (e.g. Cancel) pushed from the storefront leaves POS's
+  // Stock/Orders pages serving their stale pre-change render: the database
+  // is correct immediately, but nobody told Next.js to stop serving the old
+  // cached page, so a cancelled order's restocked stock doesn't visibly show
+  // up in POS until something else happens to revalidate those paths.
+  revalidatePath(`/invoice/${order.id}`);
+  revalidatePath(`/orders/${order.id}`);
+  revalidatePath("/orders");
+  if (movedStock && movedStock.length > 0) {
+    revalidatePath("/stock");
+    revalidatePath("/sales");
   }
 
   return NextResponse.json({ ok: true, orderId: order.id, status: mapped });
