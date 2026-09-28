@@ -20,6 +20,7 @@ import {
 } from "lucide-react";
 import type { Brand, Category } from "@/types/database";
 import { CHECKOUT_PAYMENT_METHODS, PAYMENT_METHOD_LABELS, type PaymentMethod } from "@/lib/paymentMethods";
+import { CHECKOUT_ORDER_SOURCES, ORDER_SOURCE_LABELS, type OrderSource } from "@/lib/orderSource";
 
 // No real brand-logo assets to license/embed for ABA Pay/Wing/KHQR/Visa --
 // a generic-but-distinct icon per method still speeds up recognition at
@@ -66,6 +67,7 @@ export type EditOrderSeed = {
   // Requested delivery as an ISO timestamp, or "" for none.
   deliveryAt: string;
   note: string;
+  orderSource: OrderSource;
   lines: CartLine[];
 };
 
@@ -167,6 +169,7 @@ export default function SalesClient({
   const [categoriesExpanded, setCategoriesExpanded] = useState(false);
   const [cart, setCart] = useState<CartLine[]>(() => editOrder?.lines ?? []);
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>(editOrder?.paymentMethod ?? "khqr");
+  const [orderSource, setOrderSource] = useState<OrderSource>(editOrder?.orderSource ?? "in_store");
   const [paymentReference, setPaymentReference] = useState("");
   const [note, setNote] = useState(() => editOrder?.note ?? "");
   const [customerName, setCustomerName] = useState(() => editOrder?.customerName ?? "");
@@ -612,6 +615,7 @@ export default function SalesClient({
             deliveryAt: deliveryAt ? new Date(deliveryAt).toISOString() : "",
             note: note.trim(),
             paymentMethod,
+            orderSource,
           });
           router.push(`/orders/${editOrder.orderId}`);
         } catch (e) {
@@ -635,6 +639,7 @@ export default function SalesClient({
           deliveryFee: deliveryFeeValue || undefined,
           deliveryAt: deliveryAt ? new Date(deliveryAt).toISOString() : undefined,
           note: note.trim() || undefined,
+          orderSource,
         });
         setReceipt(result);
         notifySaleCharged({
@@ -646,6 +651,7 @@ export default function SalesClient({
         setCart([]);
         setPaymentReference("");
         setNote("");
+        setOrderSource("in_store");
         setCustomerName("");
         setCustomerPhone("");
         setCustomerAddress("");
@@ -1191,6 +1197,33 @@ export default function SalesClient({
                     );
                   })}
                 </div>
+              </div>
+            </div>
+
+            {/* Order via (កម្មង់តាម) */}
+            <div>
+              <p className="mb-1.5 text-[11px] font-semibold tracking-wide text-zinc-400 uppercase">
+                Order via
+              </p>
+              <div className="grid grid-cols-3 gap-1.5">
+                {CHECKOUT_ORDER_SOURCES.map((src) => {
+                  const active = orderSource === src;
+                  return (
+                    <button
+                      key={src}
+                      type="button"
+                      onClick={() => setOrderSource(src)}
+                      aria-pressed={active}
+                      className={`rounded-lg border py-1.5 text-[11px] leading-tight font-medium transition-colors ${
+                        active
+                          ? "border-brand bg-brand text-black"
+                          : "border-black/[.15] hover:border-black/[.3] dark:border-white/[.2] dark:hover:border-white/[.35]"
+                      }`}
+                    >
+                      {ORDER_SOURCE_LABELS[src]}
+                    </button>
+                  );
+                })}
               </div>
             </div>
 
