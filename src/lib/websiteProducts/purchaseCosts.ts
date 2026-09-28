@@ -1,4 +1,5 @@
 import { supabaseAdmin } from "@/lib/supabase/server";
+import { computeSetPricing, computeSetTotalCost } from "@/lib/costControl";
 import type { ProductSiteLink } from "@/types/database";
 
 // Manually-entered purchase-cost inputs for one storefront item -- see
@@ -72,11 +73,35 @@ export async function getWebsitePurchaseCosts(
   return out;
 }
 
-// A product's effective stock cost for Cost Control Sets: the storefront
-// listing's purchase-cost Total when the product is linked to one and that
-// Total is fully entered, otherwise the product's own cost_price. Mirrors
-// the "null means unknown" discipline elsewhere in this file.
+// A product's effective stock cost for Cost Control Sets: when the product
+// is itself a Set's listing (Marketing > Cost Control activates a Set as a
+// sellable `products` row -- see activateSetListing), that Set's own Total
+// Cost (ingredients + Cost/Purchase + Labor, same as the Sets table's Total
+// Cost column); otherwise the storefront listing's purchase-cost Total when
+// the product is linked to one and that Total is fully entered; otherwise
+// the product's own cost_price. Mirrors the "null means unknown" discipline
+// elsewhere in this file.
 export async function getEffectiveProductCost(productId: string): Promise<number | null> {
+  const { data: set } = await supabaseAdmin
+    .from("sets")
+    .select("target_markup_pct, labor_cost, competitor_base_price, set_items(amount, unit_cost)")
+    .eq("linked_product_id", productId)
+    .maybeSingle();
+  if (set) {
+    const setCost = computeSetTotalCost(
+      (set.set_items as { amount: number; unit_cost: number | null }[]).map((i) => ({
+        amount: i.amount,
+        unitCost: i.unit_cost,
+      }))
+    );
+    return computeSetPricing({
+      setCost,
+      targetMarkupPct: set.target_markup_pct,
+      laborCost: set.labor_cost,
+      competitorBasePrice: set.competitor_base_price,
+    }).totalCost;
+  }
+
   const { data: product, error: productErr } = await supabaseAdmin
     .from("products")
     .select("cost_price")
