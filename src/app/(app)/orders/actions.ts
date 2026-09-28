@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { supabaseAdmin } from "@/lib/supabase/server";
 import { pushOrderStatusToSite, pushStockToSites } from "@/lib/site-sync";
 import { computeLineCogs, computeRecipeUnitCost } from "@/lib/cogs";
-import type { FulfillmentStatus, PaymentMethod, ProductSiteLink } from "@/types/database";
+import type { FulfillmentStatus, OrderSource, PaymentMethod, ProductSiteLink } from "@/types/database";
 
 export type DueDelivery = {
   id: string;
@@ -118,6 +118,8 @@ export type OrderEditInput = {
   paymentMethod?: PaymentMethod | "";
   // Free-text note / description. "" clears it; undefined leaves it be.
   note?: string;
+  // How the order was placed. undefined leaves it be.
+  orderSource?: OrderSource;
 };
 
 // One save for everything editable on the order detail page: the customer's
@@ -374,6 +376,16 @@ export async function updateOrderAction(
       .update({ note: input.note.trim() || null })
       .eq("id", orderId);
     if (noteErr && noteErr.code !== "42703" && noteErr.code !== "PGRST204") throw noteErr;
+  }
+
+  // order_source lives on migration 0037; same undefined-column tolerance as
+  // note above.
+  if (input.orderSource !== undefined) {
+    const { error: sourceErr } = await supabaseAdmin
+      .from("orders")
+      .update({ order_source: input.orderSource })
+      .eq("id", orderId);
+    if (sourceErr && sourceErr.code !== "42703" && sourceErr.code !== "PGRST204") throw sourceErr;
   }
 
   revalidatePath(`/invoice/${orderId}`);

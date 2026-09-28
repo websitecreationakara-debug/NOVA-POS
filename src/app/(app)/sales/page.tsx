@@ -134,6 +134,7 @@ export default async function SalesPage({
         // the timezone maths happens in the browser, not on the server.
         deliveryAt: editInvoice.order.delivery_at ?? "",
         note: editInvoice.order.note ?? "",
+        orderSource: editInvoice.order.order_source ?? "in_store",
         lines: editInvoice.items.map((i) => ({
           productId: i.productId,
           name: i.name,

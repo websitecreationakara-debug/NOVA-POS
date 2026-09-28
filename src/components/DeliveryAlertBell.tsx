@@ -202,12 +202,12 @@ export default function DeliveryAlertBell() {
         type="button"
         onClick={toggleOpen}
         aria-label={`Alerts${count ? ` (${count})` : ""}`}
-        className="relative grid size-9 place-items-center rounded-full bg-muted text-muted-foreground hover:text-foreground"
+        className="relative grid size-10 place-items-center rounded-full border border-border bg-card text-muted-foreground shadow-sm transition-colors hover:bg-muted hover:text-foreground"
       >
-        <Bell className="size-4" />
+        <Bell className="size-5" strokeWidth={2.25} />
         {count > 0 && (
           <span
-            className={`absolute -top-0.5 -right-0.5 grid min-w-4 place-items-center rounded-full px-1 text-[10px] font-bold text-white ${
+            className={`absolute top-0 right-0 grid min-w-[1.125rem] translate-x-1/4 -translate-y-1/4 place-items-center rounded-full border-2 border-card px-1 py-0.5 text-[10px] leading-none font-bold text-white shadow-sm ${
               anyUrgent ? "bg-red-600" : "bg-amber-500"
             }`}
           >

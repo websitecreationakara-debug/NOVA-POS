@@ -1,4 +1,5 @@
 import type { PaymentMethod } from "@/lib/paymentMethods";
+import type { OrderSource } from "@/lib/orderSource";
 
 export type Json = string | number | boolean | null | { [key: string]: Json | undefined } | Json[];
 
@@ -21,6 +22,7 @@ export function staffRoleLabel(role: string): string {
 // Re-exported for compatibility with existing importers -- the canonical
 // definition (plus labels/checkout list) lives in @/lib/paymentMethods.
 export type { PaymentMethod } from "@/lib/paymentMethods";
+export type { OrderSource } from "@/lib/orderSource";
 export type OrderStatus = "open" | "paid" | "voided";
 export type FulfillmentStatus =
   | "pre_order"
@@ -271,6 +273,9 @@ export type Order = {
   channel: string;
   site: string | null;
   site_order_id: string | null;
+  // How a "pos" order was placed -- in_store, telegram, or meta (migration
+  // 0037). Not meaningful for "online" orders (those show their site instead).
+  order_source: OrderSource;
 };
 
 export type OrderItem = {

@@ -2,7 +2,8 @@ import { Hanuman } from "next/font/google";
 import type { InvoiceData } from "@/lib/supabase/queries";
 import type { InvoiceBrandConfig } from "@/lib/invoiceBrands";
 import { SITE_LABEL } from "@/lib/site-sync";
-import type { ProductSiteLink } from "@/types/database";
+import { ORDER_SOURCE_LABELS } from "@/lib/orderSource";
+import type { OrderSource, ProductSiteLink } from "@/types/database";
 
 // Khmer + Latin webfont for the printed document so the bilingual labels
 // render consistently on screen and in the PDF. Defined once here (rather
@@ -79,7 +80,7 @@ export function InvoiceDoc({
   const channelLabel =
     order.channel === "online" && order.site
       ? `Online — ${SITE_LABEL[order.site as ProductSiteLink["site"]] ?? order.site}`
-      : "In-Store (POS)";
+      : (ORDER_SOURCE_LABELS[order.order_source as OrderSource] ?? "In-Store (POS)");
   const subDetails: { kh: string; en: string; value: string }[] = [
     { kh: "ពិពណ៌នា", en: "Description", value: order.note?.trim() || "—" },
     // This used to show paid_at (when the order was placed/charged) under a

@@ -3,7 +3,7 @@
 import { supabaseAdmin } from "@/lib/supabase/server";
 import { getSessionUser } from "@/lib/supabase/auth-server";
 import { pushStockToSites } from "@/lib/site-sync";
-import type { PaymentMethod } from "@/types/database";
+import type { OrderSource, PaymentMethod } from "@/types/database";
 
 export interface CartLine {
   productId: string;
@@ -126,6 +126,8 @@ export async function chargeOrder(input: {
   deliveryAt?: string;
   // Free-text note / description for the order.
   note?: string;
+  // How the order was placed -- in_store (default), telegram, or meta.
+  orderSource?: OrderSource;
 }): Promise<ChargeResult> {
   const {
     brandId,
@@ -139,6 +141,7 @@ export async function chargeOrder(input: {
     deliveryFee,
     deliveryAt,
     note,
+    orderSource,
   } = input;
 
   if (lines.length === 0) {
@@ -201,6 +204,21 @@ export async function chargeOrder(input: {
           `Order saved, but the delivery time didn't. Run the delivery_at migration, then set it on the order. (${dateError.message})`
         );
       }
+    }
+  }
+
+  // Same deal for order_source (migration 0037) -- stamp it on, warn if the
+  // column isn't there yet rather than losing the sale. "in_store" is
+  // already the column default, so skip the write when that's all we'd set.
+  if (orderSource && orderSource !== "in_store") {
+    const { error: sourceError } = await supabaseAdmin
+      .from("orders")
+      .update({ order_source: orderSource })
+      .eq("id", orderId);
+    if (sourceError) {
+      warnings.push(
+        `Order saved, but "Order via" didn't. Run the order_source migration (0037), then set it on the order. (${sourceError.message})`
+      );
     }
   }
 
