@@ -64,6 +64,10 @@ export async function POST(request: NextRequest) {
   }
 
   const { site, siteOrderId, items, customerName, customerPhone, customerEmail } = body;
+  // TEMP DIAGNOSTIC (2026-09-28): logging the raw items payload to figure out
+  // why Sora Sake orders come in with no matching order_items. Remove once
+  // the storefront's actual field names/values are confirmed.
+  console.log("[order-sync diag]", JSON.stringify({ site, siteOrderId, items }));
   const isValidSite = (s: unknown): s is ProductSiteLink["site"] =>
     typeof s === "string" && VALID_SITES.includes(s as ProductSiteLink["site"]);
 
