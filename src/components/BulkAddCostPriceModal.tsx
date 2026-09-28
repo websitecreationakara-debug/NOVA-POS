@@ -23,7 +23,11 @@ export default function BulkAddCostPriceModal({
   const [visible, setVisible] = useState(false);
   const [isPending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
-  const [costDrafts, setCostDrafts] = useState<Record<string, string>>({});
+  const [costDrafts, setCostDrafts] = useState<Record<string, string>>(() =>
+    Object.fromEntries(
+      rows.filter((r) => r.suggestedCost !== null).map((r) => [r.productId, String(r.suggestedCost)])
+    )
+  );
   const [priceDrafts, setPriceDrafts] = useState<Record<string, string>>(() =>
     Object.fromEntries(rows.map((r) => [r.productId, String(r.sellingPrice)]))
   );

@@ -1971,7 +1971,12 @@ export default function AccountanceClient({
                     {filteredMarginReport.map((r) => {
                       const editing = editingMarginId === r.productId;
                       const costValue =
-                        marginCostDrafts[r.productId] ?? (r.unitCost === null ? "" : String(r.unitCost));
+                        marginCostDrafts[r.productId] ??
+                        (r.unitCost !== null
+                          ? String(r.unitCost)
+                          : r.suggestedCost !== null
+                            ? String(r.suggestedCost)
+                            : "");
                       const priceValue = marginPriceDrafts[r.productId] ?? String(r.sellingPrice);
                       return (
                       <tr key={r.productId} className={editing ? "bg-blue-50 dark:bg-blue-950/30" : undefined}>

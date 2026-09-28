@@ -6,6 +6,7 @@ import type { WebsiteCatalogId } from "@/lib/websiteProducts/types";
 import { formatInvoiceNumber, invoiceMonthStamp, invoiceMonthStartIso } from "@/lib/invoiceNumber";
 import { ALL_PAYMENT_METHODS, type PaymentMethod } from "@/lib/paymentMethods";
 import { aggregatePartialCogs, aggregateStrictCogs, computeGrossMargin } from "@/lib/cogs";
+import { getEffectiveProductCost } from "@/lib/websiteProducts/purchaseCosts";
 import type {
   Brand,
   CashReconciliation,
@@ -938,6 +939,12 @@ export type MarginReportRow = {
   // null (not 0/undefined) whenever any sold line in range had no cost
   // price -- see hasUnknownCost. Never a silently-wrong number.
   unitCost: number | null;
+  // Prefill for the "Add cost price" input when unitCost is null -- the
+  // product's current effective cost (Stock's Purchase Cost Total when
+  // linked to a website listing, else its own cost_price). Same source
+  // Cost Control's Sets use, so filling this in matches Stock instead of
+  // requiring the number be looked up and retyped by hand.
+  suggestedCost: number | null;
   // The product's current stored price, not an average of what it actually
   // sold for over the range -- editing this here updates that same stored
   // value, so it stays put until changed again.
@@ -984,26 +991,37 @@ export async function getMarginReport(
     byProduct.set(item.product_id, entry);
   }
 
-  return Array.from(byProduct.entries())
-    .map(([productId, agg]) => {
-      const product = productById.get(productId);
-      const { totalCogs, hasUnknownCost } = aggregateStrictCogs(agg.cogsValues);
-      const { grossProfit, grossMarginPct } = computeGrossMargin(agg.revenue, totalCogs);
-      return {
-        productId,
-        name: product?.name ?? "—",
-        categoryName: (product?.categories as { name: string } | null)?.name ?? null,
-        unitsSold: round2(agg.unitsSold),
-        revenue: round2(agg.revenue),
-        unitCost: totalCogs === null ? null : round2(totalCogs / agg.unitsSold),
-        sellingPrice: product?.price ?? round2(agg.revenue / agg.unitsSold),
-        totalCogs,
-        grossProfit,
-        grossMarginPct,
-        hasUnknownCost,
-      };
-    })
-    .sort((a, b) => b.revenue - a.revenue);
+  const rows = Array.from(byProduct.entries()).map(([productId, agg]) => {
+    const product = productById.get(productId);
+    const { totalCogs, hasUnknownCost } = aggregateStrictCogs(agg.cogsValues);
+    const { grossProfit, grossMarginPct } = computeGrossMargin(agg.revenue, totalCogs);
+    return {
+      productId,
+      name: product?.name ?? "—",
+      categoryName: (product?.categories as { name: string } | null)?.name ?? null,
+      unitsSold: round2(agg.unitsSold),
+      revenue: round2(agg.revenue),
+      unitCost: totalCogs === null ? null : round2(totalCogs / agg.unitsSold),
+      suggestedCost: null as number | null,
+      sellingPrice: product?.price ?? round2(agg.revenue / agg.unitsSold),
+      totalCogs,
+      grossProfit,
+      grossMarginPct,
+      hasUnknownCost,
+    };
+  });
+
+  // Only the rows actually missing a cost need the extra lookup -- everyone
+  // else already has a real recorded unitCost and never shows this.
+  await Promise.all(
+    rows
+      .filter((r) => r.unitCost === null)
+      .map(async (r) => {
+        r.suggestedCost = await getEffectiveProductCost(r.productId).catch(() => null);
+      })
+  );
+
+  return rows.sort((a, b) => b.revenue - a.revenue);
 }
 
 export async function getExpensesForDateRange(
