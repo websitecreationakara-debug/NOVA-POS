@@ -35,6 +35,7 @@ import {
   type WasteLogEntry,
 } from "@/lib/supabase/queries";
 import { PAYMENT_METHOD_LABELS, type PaymentMethod } from "@/lib/paymentMethods";
+import { computeGrossMargin } from "@/lib/cogs";
 import { addExpenseAction, saveReconciliationAction, updateExpenseAction } from "./actions";
 import { setProductCostAction, setProductPriceAction } from "../stock/actions";
 import { exportAccountancePdf } from "@/lib/exportAccountancePdf";
@@ -798,7 +799,13 @@ export default function AccountanceClient({
   // Feeds both the top-of-report "N products are missing a cost price" bar
   // and the bulk-fill modal -- unaffected by the search/category filter, so
   // the count and the modal's list always match the whole range.
-  const missingCostRows = useMemo(() => marginReport.filter((r) => r.unitCost === null), [marginReport]);
+  // A row only truly needs manual input once Stock has no cost for it either --
+  // see suggestedCost (Stock's Purchase Cost Total / cost_price), which the
+  // table below already displays in place of the real recorded unitCost.
+  const missingCostRows = useMemo(
+    () => marginReport.filter((r) => r.unitCost === null && r.suggestedCost === null),
+    [marginReport]
+  );
 
   // Reports tab's Revenue vs Expenses chart -- hourly for a single day
   // (orders carry a real timestamp; expenses only ever carry a date, so
@@ -1978,6 +1985,15 @@ export default function AccountanceClient({
                             ? String(r.suggestedCost)
                             : "");
                       const priceValue = marginPriceDrafts[r.productId] ?? String(r.sellingPrice);
+                      // No recorded sale-time cost for this row -- fall back to the
+                      // product's current Stock cost (same value Stock's Total shows)
+                      // so the row reads as real numbers instead of "No cost price".
+                      const effectiveUnitCost = r.unitCost ?? r.suggestedCost;
+                      const effectiveTotalCogs =
+                        r.totalCogs ?? (effectiveUnitCost === null ? null : effectiveUnitCost * r.unitsSold);
+                      const effectiveMargin = computeGrossMargin(r.revenue, effectiveTotalCogs);
+                      const effectiveGrossProfit = r.grossProfit ?? effectiveMargin.grossProfit;
+                      const effectiveGrossMarginPct = r.grossMarginPct ?? effectiveMargin.grossMarginPct;
                       return (
                       <tr key={r.productId} className={editing ? "bg-blue-50 dark:bg-blue-950/30" : undefined}>
                         <td className="py-2 pr-3">{r.name}</td>
@@ -2045,7 +2061,7 @@ export default function AccountanceClient({
                         ) : (
                           <>
                             <td className="py-2 pr-3 text-right">
-                              {r.unitCost === null ? (
+                              {effectiveUnitCost === null ? (
                                 <button
                                   type="button"
                                   onClick={() => startMarginEdit(r.productId)}
@@ -2058,8 +2074,9 @@ export default function AccountanceClient({
                                   type="button"
                                   onClick={() => startMarginEdit(r.productId)}
                                   className="rounded px-1 py-0.5 hover:bg-black/[.05] dark:hover:bg-white/[.08]"
+                                  title={r.unitCost === null ? "From Stock -- click to save it as this sale's recorded cost" : undefined}
                                 >
-                                  {formatMoney(r.unitCost)}
+                                  {formatMoney(effectiveUnitCost)}
                                 </button>
                               )}
                             </td>
@@ -2075,41 +2092,41 @@ export default function AccountanceClient({
                           </>
                         )}
                         <td className="py-2 pr-3 text-right">
-                          {r.totalCogs === null ? (
+                          {effectiveTotalCogs === null ? (
                             <span className="text-amber-500">⚠ No cost price</span>
                           ) : (
-                            formatMoney(r.totalCogs)
+                            formatMoney(effectiveTotalCogs)
                           )}
                         </td>
                         <td className="py-2 pr-3 text-right">
-                          {r.grossProfit === null ? "—" : formatMoney(r.grossProfit)}
+                          {effectiveGrossProfit === null ? "—" : formatMoney(effectiveGrossProfit)}
                         </td>
                         <td className="py-2 text-right">
-                          {r.grossMarginPct === null ? (
+                          {effectiveGrossMarginPct === null ? (
                             "—"
                           ) : (
                             <div className="flex items-center justify-end gap-2">
                               <span
                                 className={`font-medium ${
-                                  r.grossMarginPct < 0
+                                  effectiveGrossMarginPct < 0
                                     ? "text-red-600 dark:text-red-400"
-                                    : r.grossMarginPct < 20
+                                    : effectiveGrossMarginPct < 20
                                       ? "text-amber-600 dark:text-amber-400"
                                       : "text-green-600 dark:text-green-400"
                                 }`}
                               >
-                                {r.grossMarginPct.toFixed(1)}%
+                                {effectiveGrossMarginPct.toFixed(1)}%
                               </span>
                               <div className="h-1.5 w-14 shrink-0 overflow-hidden rounded-full bg-black/[.08] dark:bg-white/[.1]">
                                 <div
                                   className={`h-full rounded-full ${
-                                    r.grossMarginPct < 0
+                                    effectiveGrossMarginPct < 0
                                       ? "bg-red-500"
-                                      : r.grossMarginPct < 20
+                                      : effectiveGrossMarginPct < 20
                                         ? "bg-amber-500"
                                         : "bg-green-500"
                                   }`}
-                                  style={{ width: `${Math.max(0, Math.min(100, r.grossMarginPct))}%` }}
+                                  style={{ width: `${Math.max(0, Math.min(100, effectiveGrossMarginPct))}%` }}
                                 />
                               </div>
                             </div>
