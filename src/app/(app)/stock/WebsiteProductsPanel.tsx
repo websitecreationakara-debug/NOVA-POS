@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState, useTransition, type ReactNode } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import {
   Check,
   ChevronLeft,
@@ -183,6 +183,7 @@ export default function WebsiteProductsPanel({
   purchaseCosts?: Record<string, PurchaseCostFields>;
 }) {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [products, setProducts] = useState<WebsiteProduct[] | null>(initialProducts);
   const [loadError, setLoadError] = useState<string | null>(initialError);
   const [websiteCategories, setWebsiteCategories] = useState<WebsiteCategory[]>(
@@ -191,7 +192,10 @@ export default function WebsiteProductsPanel({
   const [search, setSearch] = useState("");
   const [categoryFilter, setCategoryFilter] = useState<string>("");
   const [outOfStockOnly, setOutOfStockOnly] = useState(false);
-  const [lowStockOnly, setLowStockOnly] = useState(false);
+  // Pre-checked when linked in from the Dashboard's "Low Stock Items" card
+  // (/stock?filter=low) -- read once at mount; later manual toggling doesn't
+  // touch the URL.
+  const [lowStockOnly, setLowStockOnly] = useState(() => searchParams.get("filter") === "low");
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(25);
   // Product ids ticked for a bulk action.

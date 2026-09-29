@@ -1,7 +1,7 @@
 "use client";
 
 import { Fragment, useMemo, useState, useTransition } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { ArrowDown, ArrowUp, ArrowUpDown, X } from "lucide-react";
 import type { Brand, Category } from "@/types/database";
@@ -79,12 +79,16 @@ export default function StockClient({
   websiteCatalog: WebsiteCatalogData | null;
 }) {
   const router = useRouter();
+  const searchParams = useSearchParams();
   // Stock is managed against the storefront catalog. The POS-catalog view only
   // shows as a fallback for a brand with no storefront wired up.
   const showWebsite = websiteCatalog !== null;
   const [activeCategoryId, setActiveCategoryId] = useState<string | "all">("all");
   const [search, setSearch] = useState("");
-  const [lowStockOnly, setLowStockOnly] = useState(false);
+  // Pre-checked when linked in from the Dashboard's "Low Stock Items" card
+  // (/stock?filter=low) -- read once at mount, same as any other initial
+  // state; later manual toggling doesn't touch the URL.
+  const [lowStockOnly, setLowStockOnly] = useState(() => searchParams.get("filter") === "low");
   const [drafts, setDrafts] = useState<Record<string, Draft>>({});
   const [thresholdDrafts, setThresholdDrafts] = useState<Record<string, string>>({});
   const [adjustCategoryDrafts, setAdjustCategoryDrafts] = useState<Record<string, StockAdjustmentCategory>>({});

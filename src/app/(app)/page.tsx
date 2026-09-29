@@ -104,6 +104,7 @@ export default async function Home() {
       icon: DollarSign,
       tint: "bg-amber-400/15 text-amber-600 dark:text-amber-400",
       trend: weekTrend(stats.dailyRevenue),
+      href: "/accountance?tab=reports",
     },
     {
       label: "Orders Today",
@@ -111,6 +112,7 @@ export default async function Home() {
       icon: ShoppingCart,
       tint: "bg-blue-500/15 text-blue-600 dark:text-blue-400",
       trend: weekTrend(stats.dailyOrders),
+      href: "/orders",
     },
     {
       label: "Total Products",
@@ -122,6 +124,7 @@ export default async function Home() {
       icon: Package,
       tint: "bg-violet-500/15 text-violet-600 dark:text-violet-400",
       trend: null,
+      href: "/stock",
     },
     {
       label: "Low Stock Items",
@@ -129,6 +132,7 @@ export default async function Home() {
       icon: AlertTriangle,
       tint: "bg-rose-500/15 text-rose-600 dark:text-rose-400",
       trend: null,
+      href: "/stock?filter=low",
     },
     {
       label: `Total COGS (${currentYear})${stats.hasUnknownCost ? " ⚠" : ""}`,
@@ -136,6 +140,7 @@ export default async function Home() {
       icon: Layers,
       tint: "bg-orange-500/15 text-orange-600 dark:text-orange-400",
       trend: null,
+      href: "/accountance?tab=cogs",
     },
     {
       label: `Gross Profit (${currentYear})`,
@@ -143,6 +148,7 @@ export default async function Home() {
       icon: PiggyBank,
       tint: "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400",
       trend: null,
+      href: "/accountance?tab=cogs",
     },
     {
       label: `Gross Margin % (${currentYear})`,
@@ -150,6 +156,7 @@ export default async function Home() {
       icon: Percent,
       tint: "bg-teal-500/15 text-teal-600 dark:text-teal-400",
       trend: null,
+      href: "/accountance?tab=cogs",
     },
     {
       label: `Waste (${currentYear})`,
@@ -157,6 +164,7 @@ export default async function Home() {
       icon: Trash2,
       tint: "bg-red-500/15 text-red-600 dark:text-red-400",
       trend: null,
+      href: "/accountance?tab=cogs",
     },
     {
       label: `Promotions (${currentYear})`,
@@ -164,6 +172,7 @@ export default async function Home() {
       icon: Gift,
       tint: "bg-pink-500/15 text-pink-600 dark:text-pink-400",
       trend: null,
+      href: "/marketing?tab=promotions",
     },
   ];
 
@@ -185,7 +194,11 @@ export default async function Home() {
 
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
         {statCards.map((s) => (
-          <div key={s.label} className="rounded-2xl border border-border bg-card p-5">
+          <Link
+            key={s.label}
+            href={s.href}
+            className="rounded-2xl border border-border bg-card p-5 transition-colors hover:border-brand/50 hover:bg-muted/40"
+          >
             <div className={`mb-4 grid size-10 place-items-center rounded-xl ${s.tint}`}>
               <s.icon className="size-5" />
             </div>
@@ -194,7 +207,7 @@ export default async function Home() {
             </p>
             <p className="font-display mt-1 text-2xl font-bold">{s.value}</p>
             <Trend pct={s.trend} />
-          </div>
+          </Link>
         ))}
       </div>
 

@@ -169,7 +169,7 @@ export default function SalesClient({
   const [categoriesExpanded, setCategoriesExpanded] = useState(false);
   const [cart, setCart] = useState<CartLine[]>(() => editOrder?.lines ?? []);
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>(editOrder?.paymentMethod ?? "khqr");
-  const [orderSource, setOrderSource] = useState<OrderSource>(editOrder?.orderSource ?? "in_store");
+  const [orderSource, setOrderSource] = useState<OrderSource>(editOrder?.orderSource ?? "telegram");
   const [paymentReference, setPaymentReference] = useState("");
   const [note, setNote] = useState(() => editOrder?.note ?? "");
   const [customerName, setCustomerName] = useState(() => editOrder?.customerName ?? "");
@@ -651,7 +651,7 @@ export default function SalesClient({
         setCart([]);
         setPaymentReference("");
         setNote("");
-        setOrderSource("in_store");
+        setOrderSource("telegram");
         setCustomerName("");
         setCustomerPhone("");
         setCustomerAddress("");
@@ -1205,14 +1205,14 @@ export default function SalesClient({
               <p className="mb-1.5 text-[11px] font-semibold tracking-wide text-zinc-400 uppercase">
                 Order via
               </p>
-              <div className="grid grid-cols-3 gap-1.5">
+              <div className="grid grid-cols-2 gap-1.5">
                 {CHECKOUT_ORDER_SOURCES.map((src) => {
                   const active = orderSource === src;
                   return (
                     <button
                       key={src}
                       type="button"
-                      onClick={() => setOrderSource(src)}
+                      onClick={() => setOrderSource(active ? "in_store" : src)}
                       aria-pressed={active}
                       className={`rounded-lg border py-1.5 text-[11px] leading-tight font-medium transition-colors ${
                         active
