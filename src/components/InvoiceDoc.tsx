@@ -20,7 +20,7 @@ export function formatMoney(n: number) {
 }
 
 export function formatDateTime(iso: string | null) {
-  if (!iso) return "—";
+  if (!iso) return "...";
   return new Date(iso).toLocaleString("en-US", {
     year: "numeric",
     month: "numeric",
@@ -70,7 +70,7 @@ export function InvoiceDoc({
 
   const paymentLabel = order.payment_method
     ? (PAYMENT_LABELS[order.payment_method] ?? order.payment_method)
-    : "—";
+    : "...";
   // The KHQR block and "wire transfer only" remark print on every invoice
   // regardless of how this particular order was paid -- it's a standing
   // "here's how to pay us" notice for the brand, not a claim about this one
@@ -79,10 +79,10 @@ export function InvoiceDoc({
   const showKhqr = Boolean(brand.khqrUrl);
   const channelLabel =
     order.channel === "online" && order.site
-      ? `Online — ${SITE_LABEL[order.site as ProductSiteLink["site"]] ?? order.site}`
-      : (ORDER_SOURCE_LABELS[order.order_source as OrderSource] ?? "In-Store (POS)");
+      ? `Website ${SITE_LABEL[order.site as ProductSiteLink["site"]] ?? order.site}`
+      : (ORDER_SOURCE_LABELS[order.order_source as OrderSource] ?? "...");
   const subDetails: { kh: string; en: string; value: string }[] = [
-    { kh: "ពិពណ៌នា", en: "Description", value: order.note?.trim() || "—" },
+    { kh: "ពិពណ៌នា", en: "Description", value: order.note?.trim() || "..." },
     // This used to show paid_at (when the order was placed/charged) under a
     // label that already said "delivery time," which is why it never
     // matched the real delivery field.
@@ -146,11 +146,11 @@ export function InvoiceDoc({
 
       {/* 2. Customer & metadata grid */}
       <div className="mt-3 grid grid-cols-2 gap-x-12 gap-y-1.5 text-[15px]">
-        <Meta kh="ឈ្មោះ" value={order.customer_name || "—"} />
+        <Meta kh="ឈ្មោះ" value={order.customer_name || "..."} />
         <Meta kh="លេខវិក្កយបត្រ" value={invoiceNumber} />
-        <Meta kh="លេខទូរស័ព្ទ" value={order.customer_phone || "—"} />
+        <Meta kh="លេខទូរស័ព្ទ" value={order.customer_phone || "..."} />
         <Meta kh="ថ្ងៃបញ្ជាទិញ" value={formatDateTime(order.paid_at)} />
-        <Meta kh="អាសយដ្ឋាន" value={customerAddress || "—"} />
+        <Meta kh="អាសយដ្ឋាន" value={customerAddress || "..."} />
       </div>
 
       {/* 3 + 4. Items table with sub-details / summary footer */}
@@ -184,7 +184,7 @@ export function InvoiceDoc({
             <tr key={i}>
               <Td>{item.name}</Td>
               <Td className="text-center tabular-nums">{item.quantity.toFixed(2)}</Td>
-              <Td className="text-center">{item.unit || "—"}</Td>
+              <Td className="text-center">{item.unit || "..."}</Td>
               <Td className="text-right tabular-nums">{formatMoney(item.unitPrice)}</Td>
               <Td className="text-right tabular-nums">{formatMoney(item.lineTotal)}</Td>
             </tr>
@@ -243,7 +243,7 @@ export function InvoiceDoc({
           the KHQR. flex-1 lets it fill the rest of a short page. */}
       <div className="invoice-keep flex flex-1 flex-col">
         {/* 5. Remarks */}
-        <div className="mt-2 text-[14px] leading-snug">
+        <div className="mt-7 text-[14px] leading-snug">
           <p className="font-bold">Remarks: កំណត់ចំណាំ៖</p>
           {remarks.map((r, i) => (
             <p key={i}>- {r}</p>
