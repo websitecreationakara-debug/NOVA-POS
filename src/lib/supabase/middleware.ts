@@ -14,7 +14,8 @@ const ROLE_ALLOWED_PREFIXES: Record<StaffRole, string[]> = {
   admin: ["/", "/sales", "/stock", "/accountance", "/marketing", "/invoice", "/users", "/orders"],
   sales: ["/", "/sales", "/invoice", "/orders"],
   stock: ["/", "/stock", "/orders", "/invoice"],
-  accountance: ["/", "/accountance", "/invoice", "/orders"],
+  // "Cooperate Admin": everything except Staff Accounts (/users).
+  accountance: ["/", "/sales", "/stock", "/accountance", "/marketing", "/invoice", "/orders"],
   marketing: ["/", "/marketing", "/orders"],
 };
 

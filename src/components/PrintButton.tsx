@@ -1,12 +1,12 @@
 "use client";
 
 import { useState } from "react";
-import { Download, Loader2, Printer } from "lucide-react";
+import { Download, Image as ImageIcon, Loader2, Printer } from "lucide-react";
 import { exportInvoicePdf } from "@/lib/exportInvoicePdf";
+import { exportInvoiceImage } from "@/lib/exportInvoiceImage";
 
 export default function PrintButton({ filename }: { filename?: string }) {
   const [exporting, setExporting] = useState(false);
-
   async function handleSaveAsPdf() {
     setExporting(true);
     try {
@@ -14,6 +14,18 @@ export default function PrintButton({ filename }: { filename?: string }) {
     } catch (error) {
       console.error("PDF export failed", error);
       alert("Couldn't generate the PDF. Try Print instead and choose \"Save as PDF\" there.");
+    } finally {
+      setExporting(false);
+    }
+  }
+
+  async function handleSaveAsImage() {
+    setExporting(true);
+    try {
+      await exportInvoiceImage(filename || "Invoice");
+    } catch (error) {
+      console.error("Image export failed", error);
+      alert("Couldn't generate the image. Try Save as PDF instead.");
     } finally {
       setExporting(false);
     }
@@ -35,6 +47,14 @@ export default function PrintButton({ filename }: { filename?: string }) {
       >
         {exporting ? <Loader2 className="size-4 animate-spin" /> : <Download className="size-4" />}
         {exporting ? "Generating…" : "Save as PDF"}
+      </button>
+      <button
+        onClick={handleSaveAsImage}
+        disabled={exporting}
+        className="inline-flex items-center gap-1.5 rounded-full border border-border px-4 py-2 text-sm font-medium hover:bg-black/[.04] disabled:opacity-60 dark:hover:bg-white/[.06]"
+      >
+        <ImageIcon className="size-4" />
+        Save as PNG
       </button>
     </div>
   );

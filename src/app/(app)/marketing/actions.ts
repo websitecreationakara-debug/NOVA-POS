@@ -10,8 +10,8 @@ export async function requireMarketingAccess() {
   // Server Actions are their own endpoint and reachable independent of
   // which page rendered them, so re-check here rather than trust the route.
   const caller = await getSessionUser();
-  if (caller?.role !== "admin" && caller?.role !== "marketing") {
-    throw new Error("Only admin or marketing staff can manage promotions and customers");
+  if (caller?.role !== "admin" && caller?.role !== "marketing" && caller?.role !== "accountance") {
+    throw new Error("Only admin, marketing or Cooperate Admin staff can manage promotions and customers");
   }
 }
 
