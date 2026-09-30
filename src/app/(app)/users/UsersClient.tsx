@@ -181,7 +181,7 @@ export default function UsersClient({
           <button
             disabled={isPending}
             onClick={createAccount}
-            className="rounded-full bg-brand px-5 py-2 text-sm font-medium text-black disabled:opacity-40"
+            className="rounded-full bg-brand px-5 py-2 text-sm font-medium text-white disabled:opacity-40"
           >
             {isPending ? "Creating…" : "Create account"}
           </button>

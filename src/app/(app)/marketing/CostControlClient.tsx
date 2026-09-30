@@ -284,7 +284,7 @@ function SetsOverview({ brandId, sets }: { brandId: string; sets: SetSummary[] }
         <button
           type="button"
           onClick={newSet}
-          className="ml-auto flex items-center gap-1.5 rounded bg-brand px-3 py-1.5 text-sm font-medium text-black hover:brightness-95"
+          className="ml-auto flex items-center gap-1.5 rounded bg-brand px-3 py-1.5 text-sm font-medium text-white hover:brightness-95"
         >
           <Plus className="size-3.5" />
           New Set
@@ -569,7 +569,7 @@ function DuplicateSetDialog({ set, onClose }: { set: SetSummary; onClose: () => 
           <button type="button" disabled={isPending} onClick={onClose} className="rounded-full border border-border px-4 py-2 text-sm font-medium hover:bg-muted disabled:opacity-50">
             Cancel
           </button>
-          <button type="button" disabled={isPending} onClick={submit} className="rounded-full bg-brand px-4 py-2 text-sm font-medium text-black hover:brightness-95 disabled:opacity-50">
+          <button type="button" disabled={isPending} onClick={submit} className="rounded-full bg-brand px-4 py-2 text-sm font-medium text-white hover:brightness-95 disabled:opacity-50">
             {isPending ? "Duplicating…" : "Duplicate"}
           </button>
         </div>
@@ -645,7 +645,7 @@ function SetBuilder({
             type="button"
             disabled={isPending}
             onClick={createSet}
-            className="rounded bg-brand px-4 py-1.5 text-sm font-medium text-black hover:brightness-95 disabled:opacity-50"
+            className="rounded bg-brand px-4 py-1.5 text-sm font-medium text-white hover:brightness-95 disabled:opacity-50"
           >
             {isPending ? "Creating…" : "Create Set"}
           </button>
@@ -1085,7 +1085,7 @@ function SetEditor({
               type="button"
               disabled={isPending}
               onClick={submitManualItem}
-              className="rounded bg-brand px-3 py-1.5 text-sm font-medium text-black hover:brightness-95 disabled:opacity-50"
+              className="rounded bg-brand px-3 py-1.5 text-sm font-medium text-white hover:brightness-95 disabled:opacity-50"
             >
               Add
             </button>
@@ -1162,7 +1162,7 @@ function SetEditor({
               type="button"
               disabled={isPending}
               onClick={confirmAdd}
-              className="rounded bg-brand px-3 py-1.5 text-sm font-medium text-black hover:brightness-95 disabled:opacity-50"
+              className="rounded bg-brand px-3 py-1.5 text-sm font-medium text-white hover:brightness-95 disabled:opacity-50"
             >
               Add
             </button>
@@ -1339,7 +1339,7 @@ function SetEditor({
               type="button"
               disabled={isPending}
               onClick={saveItems}
-              className="rounded bg-brand px-4 py-1.5 text-sm font-medium text-black hover:brightness-95 disabled:cursor-not-allowed"
+              className="rounded bg-brand px-4 py-1.5 text-sm font-medium text-white hover:brightness-95 disabled:cursor-not-allowed"
             >
               {isPending ? "Saving…" : "Save"}
             </button>

@@ -33,13 +33,13 @@ type ChartPoint = {
 
 const PREV_COLOR = "hsl(252deg 60% 62%)";
 // One line color per business, by position -- picked to stay clear of both
-// metric colors (gold Revenue, blue Orders).
+// metric colors (blue Revenue, cyan Orders).
 const BIZ_COLORS = [
-  "hsl(160deg 60% 40%)",
+  "hsl(145deg 55% 38%)",
   "hsl(340deg 72% 55%)",
   "hsl(268deg 60% 60%)",
   "hsl(24deg 85% 55%)",
-  "hsl(190deg 70% 42%)",
+  "hsl(45deg 90% 45%)",
 ];
 const bizColor = (i: number) => BIZ_COLORS[i % BIZ_COLORS.length];
 // What the previous period is called per range, for the legend/tooltip/delta.
@@ -200,7 +200,7 @@ function makeTooltip(formatValue: (n: number) => string, accentColor: string) {
 // non-anchor year gets a color stepped around the hue wheel by the golden
 // angle (~137.5deg) -- a standard trick for generating N maximally-distinct
 // hues without picking each one by hand. `startHue` walks it away from the
-// anchor year's own hue (gold for Revenue, blue for Orders) so the first
+// anchor year's own hue (blue for Revenue, cyan for Orders) so the first
 // couple of comparison years don't land near-identical to it.
 const OTHER_YEAR_START_HUE: Record<Metric, number> = { money: 300, count: 20 };
 const GOLDEN_ANGLE = 137.508;
@@ -530,7 +530,7 @@ export default function PeriodBarChart({
               aria-pressed={range === r}
               className={`rounded-full px-3.5 py-1 text-sm font-medium transition-colors ${
                 range === r
-                  ? "bg-brand text-black shadow-sm"
+                  ? "bg-brand text-white shadow-sm"
                   : "text-muted-foreground hover:text-foreground"
               }`}
             >
@@ -551,7 +551,7 @@ export default function PeriodBarChart({
             aria-pressed={businessId === "all"}
             className={`rounded-full border px-3 py-1 text-xs font-medium transition-colors ${
               businessId === "all"
-                ? "border-brand bg-brand text-black"
+                ? "border-brand bg-brand text-white"
                 : "border-border text-muted-foreground hover:text-foreground"
             }`}
           >
@@ -565,7 +565,7 @@ export default function PeriodBarChart({
               aria-pressed={businessId === b.id}
               className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium transition-colors ${
                 businessId === b.id
-                  ? "border-brand bg-brand text-black"
+                  ? "border-brand bg-brand text-white"
                   : "border-border text-muted-foreground hover:text-foreground"
               }`}
             >
@@ -611,7 +611,7 @@ export default function PeriodBarChart({
             aria-pressed={compareOn}
             className={`ml-3 rounded-full border px-3 py-1 text-xs font-medium transition-colors ${
               compareOn
-                ? "border-brand bg-brand text-black"
+                ? "border-brand bg-brand text-white"
                 : "border-border text-muted-foreground hover:text-foreground"
             }`}
           >
@@ -708,7 +708,7 @@ export default function PeriodBarChart({
             type="button"
             onClick={applyRange}
             disabled={!rangeStart || !rangeEnd || Number(rangeStart) > Number(rangeEnd)}
-            className="rounded-full bg-brand px-3 py-0.5 text-xs font-semibold text-black disabled:cursor-not-allowed disabled:opacity-40"
+            className="rounded-full bg-brand px-3 py-0.5 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:opacity-40"
           >
             Compare
           </button>

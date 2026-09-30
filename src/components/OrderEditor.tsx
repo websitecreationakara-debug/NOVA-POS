@@ -206,7 +206,7 @@ export default function OrderEditor({
               type="button"
               onClick={save}
               disabled={saving}
-              className="inline-flex items-center gap-1.5 rounded-lg bg-brand px-2.5 py-1 text-xs font-semibold text-black disabled:opacity-50"
+              className="inline-flex items-center gap-1.5 rounded-lg bg-brand px-2.5 py-1 text-xs font-semibold text-white disabled:opacity-50"
             >
               {saving ? (
                 <RefreshCw className="size-3.5 animate-spin" />
