@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { ChevronLeft, ChevronRight, Trash2 } from "lucide-react";
 import type { Brand, Customer, DiscountType, Promotion } from "@/types/database";
 import DeleteCustomerDialog from "@/components/DeleteCustomerDialog";
+import ImportCustomersButton from "@/components/ImportCustomersButton";
 import {
   createPromotionAction,
   deletePromotionAction,
@@ -352,16 +353,34 @@ export default function MarketingClient({
             onChange={(e) => setSearch(e.target.value)}
             className={`ml-auto ${inputClass}`}
           />
+          <ImportCustomersButton />
         </div>
 
-        <table className="mt-4 w-full text-left text-sm">
+        {/* 18 columns don't fit at page width -- the wrapper scrolls sideways
+            instead of squashing them. */}
+        <div className="mt-4 overflow-x-auto">
+        <table className="w-full text-left text-sm whitespace-nowrap [&_td]:pr-4 [&_th]:pr-4">
           <thead>
             <tr className="border-b border-black/[.08] text-xs tracking-wide text-zinc-500 uppercase dark:border-white/[.145]">
-              <th className="py-2">Name</th>
-              <th>Phone</th>
-              <th>Label</th>
+              <th className="py-2">Phone Number</th>
+              <th>Customer Name</th>
+              <th>Email</th>
+              <th>Photo</th>
+              <th>Address</th>
+              <th>Customer Since</th>
+              <th>First Name</th>
+              <th>Last Name</th>
+              <th>Page UID</th>
               <th>Source</th>
-              <th>Customer since</th>
+              <th>Label</th>
+              <th>Capital</th>
+              <th>State</th>
+              <th>DOB</th>
+              <th>YOB</th>
+              <th>Age</th>
+              <th>Gender</th>
+              <th>Nationality</th>
+              <th>Follow-Up</th>
               <th></th>
             </tr>
           </thead>
@@ -369,11 +388,34 @@ export default function MarketingClient({
             {pagedCustomers.map((c) => (
               <Fragment key={c.id}>
                 <tr className="border-t border-black/[.06] dark:border-white/[.08]">
-                  <td className="py-2">{c.name}</td>
-                  <td>{c.phone || "—"}</td>
-                  <td>{c.label || "—"}</td>
-                  <td>{c.source || "—"}</td>
+                  <td className="py-2">{c.phone || "—"}</td>
+                  <td>{c.name}</td>
+                  <td>{c.email || "—"}</td>
+                  <td>
+                    {c.photo_url ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img src={c.photo_url} alt="" className="size-8 rounded-full object-cover" />
+                    ) : (
+                      "—"
+                    )}
+                  </td>
+                  <td className="max-w-[16rem] truncate" title={c.address ?? undefined}>
+                    {c.address || "—"}
+                  </td>
                   <td className="text-xs text-zinc-500">{c.customer_since || "—"}</td>
+                  <td>{c.first_name || "—"}</td>
+                  <td>{c.last_name || "—"}</td>
+                  <td>{c.page_uid || "—"}</td>
+                  <td>{c.source || "—"}</td>
+                  <td>{c.label || "—"}</td>
+                  <td>{c.capital || "—"}</td>
+                  <td>{c.state || "—"}</td>
+                  <td>{c.dob || "—"}</td>
+                  <td>{c.yob ?? "—"}</td>
+                  <td>{c.age ?? "—"}</td>
+                  <td>{c.gender || "—"}</td>
+                  <td>{c.nationality || "—"}</td>
+                  <td>{c.follow_up || "—"}</td>
                   <td className="text-right whitespace-nowrap">
                     <button
                       onClick={() => (editingId === c.id ? setEditingId(null) : startEdit(c))}
@@ -394,7 +436,7 @@ export default function MarketingClient({
                 </tr>
                 {editingId === c.id && (
                   <tr className="border-t border-black/[.06] dark:border-white/[.08]">
-                    <td colSpan={6} className="py-3">
+                    <td colSpan={20} className="py-3 whitespace-normal">
                       <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
                         <input
                           placeholder="Name"
@@ -484,13 +526,14 @@ export default function MarketingClient({
             ))}
             {visibleCustomers.length === 0 && (
               <tr>
-                <td colSpan={6} className="py-4 text-sm text-zinc-500">
+                <td colSpan={20} className="py-4 text-sm text-zinc-500">
                   No customers found.
                 </td>
               </tr>
             )}
           </tbody>
         </table>
+        </div>
 
         {visibleCustomers.length > 0 && (
           <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-black/[.08] pt-3 text-sm dark:border-white/[.145]">

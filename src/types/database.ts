@@ -125,9 +125,10 @@ export type Customer = {
   state: string | null;
   dob: string | null;
   yob: number | null;
-  age: number | null;
+  age: string | null;
   gender: string | null;
   nationality: string | null;
+  follow_up: string | null;
   created_at: string;
 };
 
