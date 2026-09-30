@@ -125,15 +125,26 @@ export default async function Home({
     if (ib === -1) return -1;
     return ia - ib;
   });
-  const revenueByBusiness = byBrandOrdered.map((b) => ({
+  // On "All Business" list every brand (a brand with no paid orders yet, like
+  // SORA SAKE, still gets a chip with an empty chart); when the page is already
+  // filtered to one brand, only that brand has data.
+  const chartBrands =
+    currentBrandId === ALL_BUSINESSES_ID
+      ? brandsOrdered.map((b) => ({
+          brandId: b.id,
+          brandName: b.name,
+          data: byBrandOrdered.find((x) => x.brandId === b.id),
+        }))
+      : byBrandOrdered.map((b) => ({ brandId: b.brandId, brandName: b.brandName, data: b }));
+  const revenueByBusiness = chartBrands.map((b) => ({
     id: b.brandId,
     name: b.brandName,
-    dailyData: b.dailyRevenue,
+    dailyData: b.data?.dailyRevenue ?? [],
   }));
-  const ordersByBusiness = byBrandOrdered.map((b) => ({
+  const ordersByBusiness = chartBrands.map((b) => ({
     id: b.brandId,
     name: b.brandName,
-    dailyData: b.dailyOrders,
+    dailyData: b.data?.dailyOrders ?? [],
   }));
 
   const statCards = [
@@ -290,6 +301,60 @@ export default async function Home({
           </span>
         </Link>
       )}
+
+      <div className="grid gap-4 lg:grid-cols-2">
+        <section className="rounded-2xl border border-border bg-card p-6">
+          <h2 className="font-display font-bold">Top Branch ({period})</h2>
+          <p className="mt-1 text-xs text-muted-foreground">Ranked by revenue</p>
+          {stats.topBranches.length === 0 ? (
+            <p className="mt-4 text-sm text-muted-foreground">No sales in this period.</p>
+          ) : (
+            <ol className="mt-4 space-y-3">
+              {stats.topBranches.map((b, i) => (
+                <li key={b.name} className="flex items-center gap-3 text-sm">
+                  <span
+                    className={`grid size-6 shrink-0 place-items-center rounded-full text-xs font-bold ${
+                      i === 0 ? "bg-brand text-black" : "bg-muted text-muted-foreground"
+                    }`}
+                  >
+                    {i + 1}
+                  </span>
+                  <span className="min-w-0 flex-1 truncate font-medium">{b.name}</span>
+                  <span className="text-xs text-muted-foreground">
+                    {b.orders} order{b.orders === 1 ? "" : "s"}
+                  </span>
+                  <span className="w-24 text-right font-semibold">{formatMoney(b.revenue)}</span>
+                </li>
+              ))}
+            </ol>
+          )}
+        </section>
+
+        <section className="rounded-2xl border border-border bg-card p-6">
+          <h2 className="font-display font-bold">Top Products ({period})</h2>
+          <p className="mt-1 text-xs text-muted-foreground">Ranked by units sold</p>
+          {stats.topProducts.length === 0 ? (
+            <p className="mt-4 text-sm text-muted-foreground">No sales in this period.</p>
+          ) : (
+            <ol className="mt-4 space-y-3">
+              {stats.topProducts.map((p, i) => (
+                <li key={p.name} className="flex items-center gap-3 text-sm">
+                  <span
+                    className={`grid size-6 shrink-0 place-items-center rounded-full text-xs font-bold ${
+                      i === 0 ? "bg-brand text-black" : "bg-muted text-muted-foreground"
+                    }`}
+                  >
+                    {i + 1}
+                  </span>
+                  <span className="min-w-0 flex-1 truncate font-medium">{p.name}</span>
+                  <span className="text-xs text-muted-foreground">{p.quantity} sold</span>
+                  <span className="w-24 text-right font-semibold">{formatMoney(p.revenue)}</span>
+                </li>
+              ))}
+            </ol>
+          )}
+        </section>
+      </div>
 
       <PeriodBarChart
         title="Revenue"

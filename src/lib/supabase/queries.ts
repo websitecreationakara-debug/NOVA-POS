@@ -225,6 +225,10 @@ export type DashboardStats = {
     total: number;
     paidAt: string | null;
   }[];
+  // Best sellers in the selected range: branches ranked by revenue, top 10
+  // products ranked by units sold.
+  topBranches: { name: string; revenue: number; orders: number }[];
+  topProducts: { name: string; quantity: number; revenue: number }[];
   // Same [fromDate, toDate] scope as totalRevenue/orderCount -- see
   // getCogsSummary, which this reuses the same filtering logic from, for the
   // equivalent numbers scoped to Accountance's own picker instead.
@@ -328,7 +332,7 @@ export async function getDashboardStats(
   // the same period (and the same business, via orders.brand_id here).
   let orderItemsQuery = supabaseAdmin
     .from("order_items")
-    .select("product_id, quantity, cogs, orders!inner(status, paid_at, brand_id)")
+    .select("product_id, quantity, cogs, line_total, products(name), orders!inner(status, paid_at, brand_id)")
     .eq("orders.status", "paid")
     .neq("orders.fulfillment_status", "cancelled");
   if (brandId !== ALL_BUSINESSES_ID) orderItemsQuery = orderItemsQuery.eq("orders.brand_id", brandId);
@@ -385,11 +389,39 @@ export async function getDashboardStats(
     product_id: string;
     quantity: number;
     cogs: number | null;
+    line_total: number;
+    products: { name: string } | null;
     orders: { status: string; paid_at: string | null } | null;
   };
   const itemsInRange = ((orderItemsData ?? []) as OrderItemCogsRow[]).filter((i) =>
     inRange((i.orders?.paid_at ?? "").slice(0, 10))
   );
+
+  // Best sellers in the selected range: branches by revenue, products by units
+  // sold (revenue shown alongside).
+  const branchTotals = new Map<string, { name: string; revenue: number; orders: number }>();
+  for (const o of orders) {
+    if (!o.brand_id || !inRange((o.paid_at ?? "").slice(0, 10))) continue;
+    const e = branchTotals.get(o.brand_id) ?? { name: o.brands?.name ?? "—", revenue: 0, orders: 0 };
+    e.revenue += o.total;
+    e.orders += 1;
+    branchTotals.set(o.brand_id, e);
+  }
+  const topBranches = Array.from(branchTotals.values())
+    .map((b) => ({ ...b, revenue: round2(b.revenue) }))
+    .sort((a, b) => b.revenue - a.revenue);
+
+  const productTotals = new Map<string, { name: string; quantity: number; revenue: number }>();
+  for (const i of itemsInRange) {
+    const e = productTotals.get(i.product_id) ?? { name: i.products?.name ?? "—", quantity: 0, revenue: 0 };
+    e.quantity += i.quantity;
+    e.revenue += i.line_total;
+    productTotals.set(i.product_id, e);
+  }
+  const topProducts = Array.from(productTotals.values())
+    .map((p) => ({ ...p, revenue: round2(p.revenue) }))
+    .sort((a, b) => b.quantity - a.quantity || b.revenue - a.revenue)
+    .slice(0, 10);
   const { totalCogs, hasUnknownCost } = await sumCogsWithFallback(itemsInRange);
   const grossProfit = round2(totalRevenue - totalCogs);
   const grossMarginPct = totalRevenue === 0 ? null : round2((grossProfit / totalRevenue) * 10000) / 100;
@@ -487,6 +519,8 @@ export async function getDashboardStats(
     dailyOrders,
     byBrand,
     recentOrders,
+    topBranches,
+    topProducts,
     totalCogs,
     hasUnknownCost,
     grossProfit,
