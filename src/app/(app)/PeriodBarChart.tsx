@@ -3,10 +3,9 @@
 import { useMemo, useState } from "react";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import {
-  Bar,
-  BarChart,
+  Area,
+  AreaChart,
   CartesianGrid,
-  Cell,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -16,7 +15,49 @@ import {
 type Range = "day" | "month" | "year";
 type Metric = "money" | "count";
 
-type ChartPoint = { key: string; label: string; total: number };
+// `prev`/`prevLabel` are the same slot in the previous period (last week's
+// Mon, last month's Week 1, ...) -- only set while "Compare" is on.
+// `years` holds one value per compared year (keyed `y2026`, ...) -- only set
+// while the Year view is comparing years, one line per year over Jan-Dec.
+type ChartPoint = {
+  key: string;
+  label: string;
+  total: number;
+  prev?: number;
+  prevLabel?: string;
+  years?: Record<string, number>;
+  // One value per business (keyed `b0`, `b1`, ... by prop order) -- only on
+  // "All Businesses", drawn as a thinner line per business.
+  biz?: Record<string, number>;
+};
+
+const PREV_COLOR = "hsl(252deg 60% 62%)";
+// One line color per business, by position -- picked to stay clear of both
+// metric colors (gold Revenue, blue Orders).
+const BIZ_COLORS = [
+  "hsl(160deg 60% 40%)",
+  "hsl(340deg 72% 55%)",
+  "hsl(268deg 60% 60%)",
+  "hsl(24deg 85% 55%)",
+  "hsl(190deg 70% 42%)",
+];
+const bizColor = (i: number) => BIZ_COLORS[i % BIZ_COLORS.length];
+// What the previous period is called per range, for the legend/tooltip/delta.
+const PREV_NAME: Partial<Record<Range, string>> = { day: "last week", month: "last month" };
+const CURRENT_NAME: Partial<Record<Range, string>> = { day: "This week", month: "This month" };
+
+// Split a month into the same four bands the Month view charts.
+function monthBands(monthStart: Date): [number, number][] {
+  const daysInMonth = new Date(
+    Date.UTC(monthStart.getUTCFullYear(), monthStart.getUTCMonth() + 1, 0)
+  ).getUTCDate();
+  return [
+    [1, 7],
+    [8, 14],
+    [15, 21],
+    [22, daysInMonth],
+  ];
+}
 
 const RANGE_LABEL: Record<Range, string> = { day: "Day", month: "Month", year: "Year" };
 const UNIT: Record<Range, string> = { day: "day", month: "week", year: "month" };
@@ -78,6 +119,13 @@ function fmtShort(d: Date): string {
   return d.toLocaleDateString("en", { month: "short", day: "numeric", timeZone: "UTC" });
 }
 
+// First day of the week/month the chart compares against: the one picked, or
+// else the one right before the browsed period.
+function compareStartFor(range: Range, anchor: Date, picked: Date | null): Date {
+  if (range === "day") return picked ? mondayOf(picked) : addDays(mondayOf(anchor), -7);
+  return picked ? startOfMonth(picked) : addMonths(startOfMonth(anchor), -1);
+}
+
 // Deliberately dark regardless of the site's own light/dark toggle -- a
 // tooltip floating over a chart reads as its own small surface, and a fixed
 // near-black card with a gold-lit top edge is the "premium dashboard" look
@@ -88,10 +136,39 @@ function makeTooltip(formatValue: (n: number) => string, accentColor: string) {
     payload,
   }: {
     active?: boolean;
-    payload?: readonly { value?: unknown; payload?: Record<string, unknown> }[];
+    payload?: readonly {
+      value?: unknown;
+      name?: unknown;
+      stroke?: string;
+      payload?: Record<string, unknown>;
+    }[];
   }) {
     if (!active || !payload?.length) return null;
     const point = payload[0];
+    const prev = point.payload?.prev;
+    // Year comparison: one row per year line instead of a single value.
+    if (point.payload?.years || point.payload?.biz) {
+      return (
+        <div
+          className="min-w-[9rem] rounded-xl border border-white/10 bg-[#161616] px-4 py-3 shadow-xl shadow-black/50"
+          style={{ borderTop: `2px solid ${accentColor}` }}
+        >
+          <p className="text-[11px] font-medium tracking-wide text-white/45 uppercase">
+            {String(point.payload?.label)}
+          </p>
+          {payload.map((p) => (
+            <p
+              key={String(p.name)}
+              className="mt-1 flex items-center gap-2 text-sm font-semibold text-white"
+            >
+              <span className="size-2 rounded-full" style={{ background: p.stroke }} />
+              <span className="font-medium text-white/60">{String(p.name)}</span>
+              <span className="ml-auto pl-3">{formatValue(Number(p.value))}</span>
+            </p>
+          ))}
+        </div>
+      );
+    }
     return (
       <div
         className="min-w-[9rem] rounded-xl border border-white/10 bg-[#161616] px-4 py-3 shadow-xl shadow-black/50"
@@ -100,7 +177,19 @@ function makeTooltip(formatValue: (n: number) => string, accentColor: string) {
         <p className="text-[11px] font-medium tracking-wide text-white/45 uppercase">
           {String(point.payload?.label)}
         </p>
-        <p className="mt-1 text-base font-semibold text-white">{formatValue(Number(point.value))}</p>
+        <p className="mt-1 text-base font-semibold text-white">
+          {formatValue(Number(point.value))}
+        </p>
+        {typeof prev === "number" && (
+          <>
+            <p className="mt-2 text-[11px] font-medium tracking-wide text-white/45 uppercase">
+              {String(point.payload?.prevLabel)}
+            </p>
+            <p className="mt-1 text-base font-semibold" style={{ color: PREV_COLOR }}>
+              {formatValue(prev)}
+            </p>
+          </>
+        )}
       </div>
     );
   };
@@ -215,103 +304,197 @@ export default function PeriodBarChart({
     setCompareYears(years);
   }
 
-  const ChartTooltip = useMemo(() => makeTooltip(formatValue, barColor), [formatValue, barColor]);
+  // A single selected business draws in its own chip color (green for the
+  // first, pink for the second, ...); "All Businesses" keeps the metric color.
+  const selectedBizIndex = businesses?.findIndex((b) => b.id === businessId) ?? -1;
+  const lineColor = selectedBizIndex >= 0 ? bizColor(selectedBizIndex) : barColor;
+
+  const ChartTooltip = useMemo(() => makeTooltip(formatValue, lineColor), [formatValue, lineColor]);
+
+  // Overlay the previous week (Day view) / month (Month view) on the chart --
+  // Mon vs last Mon, Week 1 vs last month's Week 1.
+  const [compareOn, setCompareOn] = useState(false);
+  const comparingPrev = compareOn && (range === "day" || range === "month");
+  // The week/month to compare against. null = the one right before the
+  // browsed period; otherwise whatever date/month staff picked (snapped to
+  // that date's week or month below).
+  const [compareAnchor, setCompareAnchor] = useState<Date | null>(null);
+  const compareStart = compareStartFor(range, anchor, compareAnchor);
+  const compareName = !compareAnchor
+    ? (PREV_NAME[range] ?? "")
+    : range === "day"
+      ? `week of ${fmtShort(compareStart)}, ${compareStart.getUTCFullYear()}`
+      : compareStart.toLocaleDateString("en", { month: "long", year: "numeric", timeZone: "UTC" });
+
+  // Years drawn as separate lines while comparing (anchor year included).
+  const shownYears = useMemo(
+    () =>
+      comparingYears
+        ? Array.from(new Set([startOfYear(anchor).getUTCFullYear(), ...compareYears]))
+            .sort((a, b) => a - b)
+            .slice(0, MAX_COMPARE_YEARS)
+        : [],
+    [comparingYears, anchor, compareYears]
+  );
+
+  // Per-business lines under the combined one -- only on "All Businesses", and
+  // not while another comparison is already drawing extra lines.
+  const showBizLines =
+    businessId === "all" && !!businesses?.length && !comparingYears && !comparingPrev;
 
   const { data, periodLabel, isCurrent } = useMemo((): {
     data: ChartPoint[];
     periodLabel: string;
     isCurrent: boolean;
   } => {
-    if (range === "day") {
-      const monday = mondayOf(anchor);
-      const days = Array.from({ length: 7 }, (_, i) => addDays(monday, i));
-      const points: ChartPoint[] = days.map((d, i) => ({
-        key: DAY_LABELS[i],
-        total: dailyMap.get(toKey(d)) ?? 0,
-        label: d.toLocaleDateString("en", {
-          weekday: "long",
-          month: "short",
-          day: "numeric",
-          timeZone: "UTC",
-        }),
-      }));
-      const sunday = days[6];
-      const label =
-        monday.getUTCFullYear() === sunday.getUTCFullYear()
-          ? `${fmtShort(monday)} - ${fmtShort(sunday)}, ${sunday.getUTCFullYear()}`
-          : `${fmtShort(monday)}, ${monday.getUTCFullYear()} - ${fmtShort(sunday)}, ${sunday.getUTCFullYear()}`;
-      return { data: points, periodLabel: label, isCurrent: monday.getTime() >= mondayOf(today).getTime() };
-    }
-
-    if (range === "month") {
-      const monthStart = startOfMonth(anchor);
-      const daysInMonth = new Date(
-        Date.UTC(monthStart.getUTCFullYear(), monthStart.getUTCMonth() + 1, 0)
-      ).getUTCDate();
-      const bands: [number, number][] = [
-        [1, 7],
-        [8, 14],
-        [15, 21],
-        [22, daysInMonth],
-      ];
-      const points: ChartPoint[] = bands.map(([from, to], i) => {
-        let total = 0;
-        for (let day = from; day <= to; day++) {
-          const key = toKey(new Date(Date.UTC(monthStart.getUTCFullYear(), monthStart.getUTCMonth(), day)));
-          total += dailyMap.get(key) ?? 0;
-        }
+    const build = (
+      dailyMap: Map<string, number>
+    ): { data: ChartPoint[]; periodLabel: string; isCurrent: boolean } => {
+      if (range === "day") {
+        const monday = mondayOf(anchor);
+        const prevMonday = compareStartFor(range, anchor, compareAnchor);
+        const days = Array.from({ length: 7 }, (_, i) => addDays(monday, i));
+        const points: ChartPoint[] = days.map((d, i) => {
+          const prevDay = addDays(prevMonday, i);
+          return {
+            key: DAY_LABELS[i],
+            total: dailyMap.get(toKey(d)) ?? 0,
+            label: d.toLocaleDateString("en", {
+              weekday: "long",
+              month: "short",
+              day: "numeric",
+              timeZone: "UTC",
+            }),
+            ...(comparingPrev && {
+              prev: dailyMap.get(toKey(prevDay)) ?? 0,
+              prevLabel: prevDay.toLocaleDateString("en", {
+                weekday: "long",
+                month: "short",
+                day: "numeric",
+                timeZone: "UTC",
+              }),
+            }),
+          };
+        });
+        const sunday = days[6];
+        const label =
+          monday.getUTCFullYear() === sunday.getUTCFullYear()
+            ? `${fmtShort(monday)} - ${fmtShort(sunday)}, ${sunday.getUTCFullYear()}`
+            : `${fmtShort(monday)}, ${monday.getUTCFullYear()} - ${fmtShort(sunday)}, ${sunday.getUTCFullYear()}`;
         return {
-          key: `Week ${i + 1}`,
-          total,
-          label: `Week ${i + 1} (day ${from === to ? from : `${from}-${to}`})`,
+          data: points,
+          periodLabel: label,
+          isCurrent: monday.getTime() >= mondayOf(today).getTime(),
         };
-      });
-      const label = monthStart.toLocaleDateString("en", { month: "long", year: "numeric", timeZone: "UTC" });
-      return {
-        data: points,
-        periodLabel: label,
-        isCurrent: monthStart.getTime() >= startOfMonth(today).getTime(),
-      };
-    }
-
-    const yearStart = startOfYear(anchor);
-    const anchorYear = yearStart.getUTCFullYear();
-    const isCurrent = yearStart.getTime() >= startOfYear(today).getTime();
-
-    if (compareYears.length === 0) {
-      // The usual view: the anchor year's 12 months.
-      const points: ChartPoint[] = MONTH_LABELS.map((m, i) => {
-        const prefix = `${anchorYear}-${String(i + 1).padStart(2, "0")}`;
-        let total = 0;
-        for (const [key, value] of dailyMap) {
-          if (key.startsWith(prefix)) total += value;
-        }
-        return { key: m, total, label: `${m} ${anchorYear}` };
-      });
-      return { data: points, periodLabel: `${anchorYear}`, isCurrent };
-    }
-
-    // Comparing years: one bar per selected year, each year's full-year
-    // total -- "how much did we earn in 2026, in 2027, ..." side by side.
-    const years = Array.from(new Set([anchorYear, ...compareYears]))
-      .sort((a, b) => a - b)
-      .slice(0, MAX_COMPARE_YEARS);
-    const points: ChartPoint[] = years.map((y) => {
-      const prefix = `${y}-`;
-      let total = 0;
-      for (const [key, value] of dailyMap) {
-        if (key.startsWith(prefix)) total += value;
       }
-      return { key: String(y), total, label: `${y}` };
-    });
-    return { data: points, periodLabel: years.join(" vs "), isCurrent };
-  }, [range, anchor, dailyMap, today, compareYears]);
+
+      if (range === "month") {
+        const monthStart = startOfMonth(anchor);
+        const bandTotal = (start: Date, from: number, to: number) => {
+          let total = 0;
+          for (let day = from; day <= to; day++) {
+            const key = toKey(new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth(), day)));
+            total += dailyMap.get(key) ?? 0;
+          }
+          return total;
+        };
+        const prevMonthStart = compareStartFor(range, anchor, compareAnchor);
+        const prevBands = monthBands(prevMonthStart);
+        const prevMonthName = prevMonthStart.toLocaleDateString("en", {
+          month: "short",
+          year: "numeric",
+          timeZone: "UTC",
+        });
+        const points: ChartPoint[] = monthBands(monthStart).map(([from, to], i) => ({
+          key: `Week ${i + 1}`,
+          total: bandTotal(monthStart, from, to),
+          label: `Week ${i + 1} (day ${from === to ? from : `${from}-${to}`})`,
+          ...(comparingPrev && {
+            prev: bandTotal(prevMonthStart, prevBands[i][0], prevBands[i][1]),
+            prevLabel: `Week ${i + 1}, ${prevMonthName}`,
+          }),
+        }));
+        const label = monthStart.toLocaleDateString("en", {
+          month: "long",
+          year: "numeric",
+          timeZone: "UTC",
+        });
+        return {
+          data: points,
+          periodLabel: label,
+          isCurrent: monthStart.getTime() >= startOfMonth(today).getTime(),
+        };
+      }
+
+      const yearStart = startOfYear(anchor);
+      const anchorYear = yearStart.getUTCFullYear();
+      const isCurrent = yearStart.getTime() >= startOfYear(today).getTime();
+
+      if (compareYears.length === 0) {
+        // The usual view: the anchor year's 12 months.
+        const points: ChartPoint[] = MONTH_LABELS.map((m, i) => {
+          const prefix = `${anchorYear}-${String(i + 1).padStart(2, "0")}`;
+          let total = 0;
+          for (const [key, value] of dailyMap) {
+            if (key.startsWith(prefix)) total += value;
+          }
+          return { key: m, total, label: `${m} ${anchorYear}` };
+        });
+        return { data: points, periodLabel: `${anchorYear}`, isCurrent };
+      }
+
+      // Comparing years: one line per selected year over Jan-Dec, so the same
+      // month lines up across years. `total` is the month's sum over all years.
+      const points: ChartPoint[] = MONTH_LABELS.map((m, i) => {
+        const monthPart = String(i + 1).padStart(2, "0");
+        const perYear: Record<string, number> = {};
+        let total = 0;
+        for (const y of shownYears) {
+          const prefix = `${y}-${monthPart}`;
+          let sum = 0;
+          for (const [key, value] of dailyMap) {
+            if (key.startsWith(prefix)) sum += value;
+          }
+          perYear[`y${y}`] = sum;
+          total += sum;
+        }
+        return { key: m, total, label: m, years: perYear };
+      });
+      return { data: points, periodLabel: shownYears.join(" vs "), isCurrent };
+    };
+
+    const main = build(dailyMap);
+    if (showBizLines) {
+      businesses?.forEach((b, bi) => {
+        const bMap = new Map(b.dailyData.map((d) => [d.date, d.total]));
+        const bData = build(bMap).data;
+        main.data.forEach((p, i) => {
+          p.biz = { ...p.biz, [`b${bi}`]: bData[i].total };
+        });
+      });
+    }
+    return main;
+  }, [
+    range,
+    anchor,
+    dailyMap,
+    today,
+    compareYears,
+    comparingPrev,
+    compareAnchor,
+    shownYears,
+    businesses,
+    showBizLines,
+  ]);
 
   // Sum of whatever bars are currently on screen -- the day toggle's week,
   // the month toggle's four weeks, or the year toggle's twelve months (or
   // its compared years), so switching Day/Month/Year always reads as "total
   // earned this day-range/month/year", not just a per-bar breakdown.
   const periodTotal = useMemo(() => data.reduce((sum, d) => sum + d.total, 0), [data]);
+  const prevTotal = useMemo(() => data.reduce((sum, d) => sum + (d.prev ?? 0), 0), [data]);
+  // null when the previous period had nothing to compare against.
+  const deltaPct = prevTotal > 0 ? ((periodTotal - prevTotal) / prevTotal) * 100 : null;
 
   // Only call out a best/worst when there's an actual spread to report --
   // an all-zero period (nothing happened yet) has no "best day" worth
@@ -374,18 +557,19 @@ export default function PeriodBarChart({
           >
             All Businesses
           </button>
-          {businesses.map((b) => (
+          {businesses.map((b, bi) => (
             <button
               key={b.id}
               type="button"
               onClick={() => setBusinessId(b.id)}
               aria-pressed={businessId === b.id}
-              className={`rounded-full border px-3 py-1 text-xs font-medium transition-colors ${
+              className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium transition-colors ${
                 businessId === b.id
                   ? "border-brand bg-brand text-black"
                   : "border-border text-muted-foreground hover:text-foreground"
               }`}
             >
+              <span className="size-2 rounded-full" style={{ background: bizColor(bi) }} />
               {b.name}
             </button>
           ))}
@@ -420,6 +604,46 @@ export default function PeriodBarChart({
             Today
           </button>
         )}
+        {(range === "day" || range === "month") && (
+          <button
+            type="button"
+            onClick={() => setCompareOn((v) => !v)}
+            aria-pressed={compareOn}
+            className={`ml-3 rounded-full border px-3 py-1 text-xs font-medium transition-colors ${
+              compareOn
+                ? "border-brand bg-brand text-black"
+                : "border-border text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            Compare
+          </button>
+        )}
+        {comparingPrev && (
+          <span className="ml-1 inline-flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
+            with
+            <input
+              type={range === "day" ? "date" : "month"}
+              value={range === "day" ? toKey(compareStart) : toKey(compareStart).slice(0, 7)}
+              onChange={(e) => {
+                const v = e.target.value;
+                if (!v) return;
+                setCompareAnchor(new Date(`${range === "day" ? v : `${v}-01`}T00:00:00Z`));
+              }}
+              aria-label={range === "day" ? "Compare with the week of" : "Compare with month"}
+              className="rounded-full border border-border bg-transparent px-2.5 py-0.5 text-xs text-foreground outline-none focus:border-brand"
+            />
+            {range === "day" && <span>(its whole week)</span>}
+            {compareAnchor && (
+              <button
+                type="button"
+                onClick={() => setCompareAnchor(null)}
+                className="font-medium text-brand hover:underline"
+              >
+                Reset to {PREV_NAME[range]}
+              </button>
+            )}
+          </span>
+        )}
       </div>
 
       {/* The headline number this card exists for -- how much this exact
@@ -432,6 +656,31 @@ export default function PeriodBarChart({
           {comparingYears ? "combined total" : `total this ${TOTAL_UNIT[range]}`}
         </span>
       </p>
+
+      {comparingPrev && (
+        <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs">
+          <span className="inline-flex items-center gap-1.5 font-medium text-foreground">
+            <span className="size-2 rounded-full" style={{ background: lineColor }} />
+            {CURRENT_NAME[range]} · {formatValue(periodTotal)}
+          </span>
+          <span className="inline-flex items-center gap-1.5 font-medium text-foreground">
+            <span className="size-2 rounded-full" style={{ background: PREV_COLOR }} />
+            {compareName[0].toUpperCase() + compareName.slice(1)} · {formatValue(prevTotal)}
+          </span>
+          {deltaPct !== null && (
+            <span
+              className={`font-semibold ${
+                deltaPct >= 0
+                  ? "text-emerald-600 dark:text-emerald-400"
+                  : "text-rose-600 dark:text-rose-400"
+              }`}
+            >
+              {deltaPct >= 0 ? "+" : ""}
+              {deltaPct.toFixed(1)}% vs {compareName}
+            </span>
+          )}
+        </div>
+      )}
 
       {/* Faster than clicking each chip for a wide span -- fills in every
           year between the two endpoints (minus the anchor year) in one go. */}
@@ -480,16 +729,19 @@ export default function PeriodBarChart({
           the exact numbers easy to read off without hovering each bar. */}
       {comparingYears && (
         <div className="mt-3 flex flex-wrap gap-2 text-xs">
-          {data.map((d) => (
+          {shownYears.map((y) => (
             <span
-              key={d.key}
+              key={y}
               className="inline-flex items-center gap-1.5 rounded-full bg-muted px-2.5 py-1 font-medium text-foreground"
             >
               <span
                 className="size-1.5 rounded-full"
-                style={{ background: yearColors[Number(d.key)] ?? barColor }}
+                style={{ background: yearColors[y] ?? barColor }}
               />
-              {d.key}: <span className="font-semibold">{formatValue(d.total)}</span>
+              {y}:{" "}
+              <span className="font-semibold">
+                {formatValue(data.reduce((sum, d) => sum + (d.years?.[`y${y}`] ?? 0), 0))}
+              </span>
             </span>
           ))}
         </div>
@@ -514,33 +766,32 @@ export default function PeriodBarChart({
 
       <div className="mt-6 h-64">
         <ResponsiveContainer width="100%" height="100%">
-          <BarChart data={data} margin={{ top: 4, right: 4, left: 4, bottom: 0 }} barCategoryGap="20%">
+          <AreaChart data={data} margin={{ top: 8, right: 12, left: 4, bottom: 0 }}>
             <defs>
-              {/* A glowing gradient per bar color actually in use this
-                  render -- the metric color always, plus one per comparison
-                  year while comparing. */}
+              {/* Soft fade from the line color down to transparent. */}
               <linearGradient id={gradientIdFor("primary")} x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stopColor={barColor} stopOpacity={1} />
-                <stop offset="100%" stopColor={barColor} stopOpacity={0.35} />
+                <stop offset="0%" stopColor={lineColor} stopOpacity={0.28} />
+                <stop offset="100%" stopColor={lineColor} stopOpacity={0.02} />
               </linearGradient>
-              {comparingYears &&
-                data.map((d) => {
-                  const c = yearColors[Number(d.key)] ?? barColor;
-                  return (
-                    <linearGradient key={d.key} id={gradientIdFor(d.key)} x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%" stopColor={c} stopOpacity={1} />
-                      <stop offset="100%" stopColor={c} stopOpacity={0.35} />
-                    </linearGradient>
-                  );
-                })}
+              {shownYears.map((y) => (
+                <linearGradient key={y} id={gradientIdFor(y)} x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor={yearColors[y] ?? barColor} stopOpacity={0.22} />
+                  <stop offset="100%" stopColor={yearColors[y] ?? barColor} stopOpacity={0.02} />
+                </linearGradient>
+              ))}
+              <linearGradient id={gradientIdFor("prev")} x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stopColor={PREV_COLOR} stopOpacity={0.2} />
+                <stop offset="100%" stopColor={PREV_COLOR} stopOpacity={0.02} />
+              </linearGradient>
             </defs>
-            <CartesianGrid vertical={false} stroke="var(--chart-grid)" strokeDasharray="0" />
+            <CartesianGrid vertical={false} stroke="var(--chart-grid)" strokeDasharray="3 4" />
             <XAxis
               dataKey="key"
               tickLine={false}
               axisLine={false}
               tick={{ fill: "var(--muted-foreground)", fontSize: 11 }}
               interval={0}
+              padding={{ left: 16, right: 16 }}
             />
             <YAxis
               tickLine={false}
@@ -550,21 +801,64 @@ export default function PeriodBarChart({
               tickFormatter={formatTick}
               allowDecimals={allowDecimalTicks}
             />
-            <Tooltip cursor={{ fill: "var(--muted)" }} content={ChartTooltip} />
-            <Bar
-              dataKey="total"
-              fill={`url(#${gradientIdFor("primary")})`}
-              radius={[6, 6, 0, 0]}
-              maxBarSize={40}
-              // Subtle lift on the hovered bar -- a soft white outline over the
-              // same gradient, rather than swapping to a flat highlight color.
-              activeBar={{ stroke: "rgba(255,255,255,0.5)", strokeWidth: 1.5 }}
-            >
-              {/* One gradient per year when comparing years -- otherwise the
-                  single metric gradient above covers every bar as before. */}
-              {comparingYears && data.map((d) => <Cell key={d.key} fill={`url(#${gradientIdFor(d.key)})`} />)}
-            </Bar>
-          </BarChart>
+            <Tooltip
+              cursor={{ stroke: "var(--border)", strokeDasharray: "3 4" }}
+              content={ChartTooltip}
+            />
+            {shownYears.map((y) => (
+              <Area
+                key={y}
+                type="monotone"
+                name={String(y)}
+                dataKey={`years.y${y}`}
+                stroke={yearColors[y] ?? barColor}
+                strokeWidth={2.5}
+                fill={`url(#${gradientIdFor(y)})`}
+                activeDot={{
+                  r: 5,
+                  stroke: "var(--card)",
+                  strokeWidth: 2,
+                  fill: yearColors[y] ?? barColor,
+                }}
+              />
+            ))}
+            {showBizLines &&
+              businesses?.map((b, bi) => (
+                <Area
+                  key={b.id}
+                  type="monotone"
+                  name={b.name}
+                  dataKey={`biz.b${bi}`}
+                  stroke={bizColor(bi)}
+                  strokeWidth={2}
+                  fill="none"
+                  activeDot={{ r: 4, stroke: "var(--card)", strokeWidth: 2, fill: bizColor(bi) }}
+                />
+              ))}
+            {!comparingYears && (
+              <Area
+                type="monotone"
+                name={showBizLines ? "All Businesses" : undefined}
+                dataKey="total"
+                stroke={lineColor}
+                strokeWidth={2.5}
+                fill={`url(#${gradientIdFor("primary")})`}
+                activeDot={{ r: 5, stroke: "var(--card)", strokeWidth: 2, fill: lineColor }}
+              />
+            )}
+            {/* Declared after the main series so the tooltip's first payload
+                entry stays the current period. */}
+            {comparingPrev && (
+              <Area
+                type="monotone"
+                dataKey="prev"
+                stroke={PREV_COLOR}
+                strokeWidth={2.5}
+                fill={`url(#${gradientIdFor("prev")})`}
+                activeDot={{ r: 5, stroke: "var(--card)", strokeWidth: 2, fill: PREV_COLOR }}
+              />
+            )}
+          </AreaChart>
         </ResponsiveContainer>
       </div>
     </section>
