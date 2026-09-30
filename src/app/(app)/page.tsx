@@ -266,7 +266,7 @@ export default async function Home({
       <div className="flex flex-wrap gap-3">
         <Link
           href="/sales"
-          className="inline-flex items-center gap-2 rounded-full bg-brand px-4 py-2 text-sm font-semibold text-black hover:brightness-95"
+          className="inline-flex items-center gap-2 rounded-full bg-brand px-4 py-2 text-sm font-semibold text-white hover:brightness-95"
         >
           <Plus className="size-4" />
           New Order
@@ -314,7 +314,7 @@ export default async function Home({
                 <li key={b.name} className="flex items-center gap-3 text-sm">
                   <span
                     className={`grid size-6 shrink-0 place-items-center rounded-full text-xs font-bold ${
-                      i === 0 ? "bg-brand text-black" : "bg-muted text-muted-foreground"
+                      i === 0 ? "bg-brand text-white" : "bg-muted text-muted-foreground"
                     }`}
                   >
                     {i + 1}
@@ -341,7 +341,7 @@ export default async function Home({
                 <li key={p.name} className="flex items-center gap-3 text-sm">
                   <span
                     className={`grid size-6 shrink-0 place-items-center rounded-full text-xs font-bold ${
-                      i === 0 ? "bg-brand text-black" : "bg-muted text-muted-foreground"
+                      i === 0 ? "bg-brand text-white" : "bg-muted text-muted-foreground"
                     }`}
                   >
                     {i + 1}

@@ -1073,7 +1073,7 @@ export default function AccountanceClient({
               onClick={() => switchMode(m)}
               aria-pressed={mode === m}
               className={`rounded-full px-3 py-1 text-xs font-medium capitalize transition-colors ${
-                mode === m ? "bg-brand text-black" : "text-zinc-500 hover:text-foreground"
+                mode === m ? "bg-brand text-white" : "text-zinc-500 hover:text-foreground"
               }`}
             >
               {m}
@@ -1226,7 +1226,7 @@ export default function AccountanceClient({
         <div className="ml-auto flex items-center gap-2">
           <button
             onClick={exportPdf}
-            className="rounded-full bg-brand px-4 py-1.5 text-sm font-semibold text-black hover:brightness-95"
+            className="rounded-full bg-brand px-4 py-1.5 text-sm font-semibold text-white hover:brightness-95"
           >
             Save as PDF
           </button>
@@ -1250,7 +1250,7 @@ export default function AccountanceClient({
             onClick={() => switchTab(t)}
             aria-pressed={tab === t}
             className={`rounded-full px-3.5 py-1.5 text-xs font-medium transition-colors ${
-              tab === t ? "bg-brand text-black shadow-sm" : "text-zinc-500 hover:text-foreground"
+              tab === t ? "bg-brand text-white shadow-sm" : "text-zinc-500 hover:text-foreground"
             }`}
           >
             {TAB_LABELS[t]}
@@ -1473,7 +1473,7 @@ export default function AccountanceClient({
             <button
               disabled={isPending}
               onClick={saveExpense}
-              className="rounded-full bg-brand px-4 py-1.5 text-sm font-semibold text-black hover:brightness-95 disabled:opacity-40"
+              className="rounded-full bg-brand px-4 py-1.5 text-sm font-semibold text-white hover:brightness-95 disabled:opacity-40"
             >
               {editingExpenseId ? "Save changes" : "+ Add Expense"}
             </button>
@@ -1635,7 +1635,7 @@ export default function AccountanceClient({
                         onClick={() => setChartType(t)}
                         aria-pressed={chartType === t}
                         className={`rounded-full px-2.5 py-1 text-xs font-medium capitalize transition-colors ${
-                          chartType === t ? "bg-brand text-black" : "text-zinc-500 hover:text-foreground"
+                          chartType === t ? "bg-brand text-white" : "text-zinc-500 hover:text-foreground"
                         }`}
                       >
                         {t}
@@ -1770,7 +1770,7 @@ export default function AccountanceClient({
                 type="button"
                 onClick={() => setWasteModalOpen(true)}
                 disabled={currentBrand.id === ALL_BUSINESSES_ID}
-                className="shrink-0 rounded-full bg-brand px-3 py-1.5 text-sm font-medium text-black shadow-sm hover:brightness-95 disabled:opacity-40 disabled:shadow-none"
+                className="shrink-0 rounded-full bg-brand px-3 py-1.5 text-sm font-medium text-white shadow-sm hover:brightness-95 disabled:opacity-40 disabled:shadow-none"
               >
                 + Add waste item
               </button>

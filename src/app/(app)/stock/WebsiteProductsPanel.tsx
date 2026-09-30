@@ -992,7 +992,7 @@ export default function WebsiteProductsPanel({
           className={`shrink-0 rounded px-3 py-1.5 text-sm font-medium ${
             showForm
               ? "border border-black/[.15] dark:border-white/[.2]"
-              : "bg-brand text-black hover:brightness-95"
+              : "bg-brand text-white hover:brightness-95"
           }`}
         >
           {showForm ? "Cancel" : "+ Add product"}

@@ -1187,7 +1187,7 @@ export default function SalesClient({
                         onClick={() => setDeliveryAt(target)}
                         className={`rounded-full border px-2 py-0.5 text-[11px] ${
                           deliveryAt.slice(0, 10) === dateOffset(n)
-                            ? "border-brand bg-brand text-black"
+                            ? "border-brand bg-brand text-white"
                             : "border-black/[.15] dark:border-white/[.2]"
                         }`}
                       >
@@ -1215,7 +1215,7 @@ export default function SalesClient({
                       aria-pressed={active}
                       className={`rounded-lg border py-1.5 text-[11px] leading-tight font-medium transition-colors ${
                         active
-                          ? "border-brand bg-brand text-black"
+                          ? "border-brand bg-brand text-white"
                           : "border-black/[.15] hover:border-black/[.3] dark:border-white/[.2] dark:hover:border-white/[.35]"
                       }`}
                     >
@@ -1243,7 +1243,7 @@ export default function SalesClient({
                       aria-pressed={active}
                       className={`flex flex-col items-center gap-0.5 rounded-lg border py-1.5 text-[11px] leading-tight font-medium transition-colors ${
                         active
-                          ? "border-brand bg-brand text-black"
+                          ? "border-brand bg-brand text-white"
                           : "border-black/[.15] hover:border-black/[.3] dark:border-white/[.2] dark:hover:border-white/[.35]"
                       }`}
                     >

@@ -43,7 +43,7 @@ export default function ResetPasswordPage() {
           <button
             type="submit"
             disabled={isPending}
-            className="mt-3 rounded-full bg-brand py-2.5 text-sm font-medium text-black disabled:opacity-40"
+            className="mt-3 rounded-full bg-brand py-2.5 text-sm font-medium text-white disabled:opacity-40"
           >
             {isPending ? "Saving…" : "Set password"}
           </button>

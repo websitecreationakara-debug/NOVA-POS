@@ -124,7 +124,7 @@ export default function DashboardRangeBar({
           aria-pressed={brandId === ALL_BUSINESSES_ID}
           className={`rounded-full border px-2.5 py-1 text-xs font-medium transition-colors ${
             brandId === ALL_BUSINESSES_ID
-              ? "border-brand bg-brand text-black"
+              ? "border-brand bg-brand text-white"
               : "border-border bg-muted/60 text-muted-foreground hover:text-foreground"
           }`}
         >
@@ -138,7 +138,7 @@ export default function DashboardRangeBar({
             aria-pressed={brandId === b.id}
             className={`rounded-full border px-2.5 py-1 text-xs font-medium transition-colors ${
               brandId === b.id
-                ? "border-brand bg-brand text-black"
+                ? "border-brand bg-brand text-white"
                 : "border-border bg-muted/60 text-muted-foreground hover:text-foreground"
             }`}
           >
@@ -157,7 +157,7 @@ export default function DashboardRangeBar({
               aria-pressed={mode === m}
               className={`rounded-full px-3 py-1 text-xs font-medium capitalize transition-colors ${
                 mode === m
-                  ? "bg-brand text-black"
+                  ? "bg-brand text-white"
                   : "text-zinc-500 hover:text-foreground"
               }`}
             >

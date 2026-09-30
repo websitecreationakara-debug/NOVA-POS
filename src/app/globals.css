@@ -17,16 +17,17 @@
   --muted: #f4f4f5;
   --muted-foreground: #71717a;
   --border: #e4e4e7;
-  --brand: #c9a84c;
-  /* A darker step of the brand gold, used only for large chart fills (bars) --
-     the brand token itself is ~2.3:1 on a white card, under the 3:1 mark
-     threshold; this clears 3.6:1 while staying in the same hue family. */
-  --chart-revenue: #a97f2d;
-  /* A second chart bar hue (for Orders) distinct from revenue's gold, and from
+  /* Brand blue, taken from the NOVA logo's blue-to-cyan gradient. */
+  --brand: #2879bd;
+  /* A darker step of the brand blue, used only for large chart fills/lines --
+     the brand token itself is under the 3:1 mark threshold on a white card;
+     this clears 4:1 while staying in the same hue family. */
+  --chart-revenue: #2b7fc4;
+  /* A second chart hue (for Orders) distinct from revenue's blue, and from
      the success/warning tokens the best/slowest callouts already use in the
      same card -- clears 3:1 on both a white and dark card at this one value,
      so it doesn't need a dark-mode override. */
-  --chart-orders: #2a78d6;
+  --chart-orders: #0891b2;
   /* Extra bar hues for the year-over-year compare mode (3rd/4th year picked)
      -- distinct from revenue/orders and from the success/warning tokens,
      chosen at a saturation/lightness that (like orders) clears 3:1 on both a
@@ -42,7 +43,7 @@
   --warning-bg: #fef3c7;
   --success: #15803d;
   --success-bg: #dcfce7;
-  --accent-bg: #f0e7d1;
+  --accent-bg: #e0f0fa;
 }
 
 @theme inline {
@@ -71,13 +72,13 @@
   --muted: #18181b;
   --muted-foreground: #a1a1aa;
   --border: rgba(255, 255, 255, 0.145);
-  /* The base brand gold already clears 8.5:1 on the dark card, so dark mode
+  /* The base brand blue already clears 5:1 on the dark card, so dark mode
      doesn't need the darkened light-mode step. */
   --chart-revenue: var(--brand);
   --chart-grid: #262626;
   --warning-bg: rgba(180, 83, 9, 0.2);
   --success-bg: rgba(21, 128, 61, 0.2);
-  --accent-bg: rgba(201, 168, 76, 0.15);
+  --accent-bg: rgba(58, 155, 210, 0.15);
 }
 
 body {

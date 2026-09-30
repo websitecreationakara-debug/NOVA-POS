@@ -16,6 +16,10 @@ import {
 import { getNewOnlineOrdersCountAction } from "@/app/(app)/orders/actions";
 import { ORDERS_CHANGED } from "@/lib/ordersChanged";
 
+// Active nav item: the logo's blue-to-cyan gradient.
+const NAV_ACTIVE = "bg-gradient-to-r from-[#2879bd] to-[#3f9fd0] text-white shadow-sm";
+const NAV_ACTIVE_TEXT = "font-medium text-[#2b7fc4] dark:text-[#4ab3d3]";
+
 const topItems = [
   {
     href: "/",
@@ -124,20 +128,21 @@ export default function Sidebar({ role }: { role: string }) {
 
   function topLinkClass(active: boolean) {
     return `flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors ${
-      active ? "bg-brand text-black" : "text-muted-foreground hover:bg-muted"
+      active ? NAV_ACTIVE : "text-muted-foreground hover:bg-muted"
     }`;
   }
 
   function subLinkClass(active: boolean) {
     return `rounded-lg px-3 py-1.5 text-sm transition-colors ${
-      active ? "font-medium text-brand" : "text-muted-foreground hover:bg-muted"
+      active ? NAV_ACTIVE_TEXT : "text-muted-foreground hover:bg-muted"
     }`;
   }
 
   return (
     <aside className="print:hidden flex min-h-screen w-64 shrink-0 flex-col gap-8 border-r border-border bg-card p-6">
-      <Link href="/" className="font-display text-lg font-bold">
-        NOVA POS
+      <Link href="/" aria-label="NOVA POS">
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src="/logos/nova-pos.png" alt="NOVA POS" className="h-20 w-auto" />
       </Link>
       <nav className="flex flex-col gap-1">
         {topItems
@@ -167,7 +172,7 @@ export default function Sidebar({ role }: { role: string }) {
           <div>
             <div
               className={`flex items-center gap-3 rounded-lg pr-2 pl-3 text-sm font-medium transition-colors ${
-                isOnAccountance ? "bg-brand text-black" : "text-muted-foreground hover:bg-muted"
+                isOnAccountance ? NAV_ACTIVE : "text-muted-foreground hover:bg-muted"
               }`}
             >
               <Link href="/accountance" className="flex flex-1 items-center gap-3 py-2.5">
@@ -179,7 +184,7 @@ export default function Sidebar({ role }: { role: string }) {
                 onClick={() => setAccountanceOpen((open) => !open)}
                 aria-expanded={accountanceOpen}
                 aria-label={accountanceOpen ? "Collapse Accounting" : "Expand Accounting"}
-                className={`rounded p-1 ${isOnAccountance ? "hover:bg-black/10" : "hover:bg-black/5 dark:hover:bg-white/10"}`}
+                className={`rounded p-1 ${isOnAccountance ? "hover:bg-white/20" : "hover:bg-black/5 dark:hover:bg-white/10"}`}
               >
                 <ChevronDown
                   className={`size-4 transition-transform ${accountanceOpen ? "rotate-180" : ""}`}
@@ -206,7 +211,7 @@ export default function Sidebar({ role }: { role: string }) {
           <div>
             <div
               className={`flex items-center gap-3 rounded-lg pr-2 pl-3 text-sm font-medium transition-colors ${
-                isOnMarketing ? "bg-brand text-black" : "text-muted-foreground hover:bg-muted"
+                isOnMarketing ? NAV_ACTIVE : "text-muted-foreground hover:bg-muted"
               }`}
             >
               <Link href="/marketing" className="flex flex-1 items-center gap-3 py-2.5">
@@ -218,7 +223,7 @@ export default function Sidebar({ role }: { role: string }) {
                 onClick={() => setMarketingOpen((open) => !open)}
                 aria-expanded={marketingOpen}
                 aria-label={marketingOpen ? "Collapse Marketing" : "Expand Marketing"}
-                className={`rounded p-1 ${isOnMarketing ? "hover:bg-black/10" : "hover:bg-black/5 dark:hover:bg-white/10"}`}
+                className={`rounded p-1 ${isOnMarketing ? "hover:bg-white/20" : "hover:bg-black/5 dark:hover:bg-white/10"}`}
               >
                 <ChevronDown
                   className={`size-4 transition-transform ${marketingOpen ? "rotate-180" : ""}`}
