@@ -501,7 +501,9 @@ export async function renameProductAction(input: { productId: string; name: stri
 
   const { error } = await supabaseAdmin
     .from("products")
-    .update({ name: trimmed })
+    // Renaming is how staff confirm an auto-created website product is real,
+    // so it also clears its "review" flag.
+    .update({ name: trimmed, auto_created: false })
     .eq("id", productId);
 
   if (error) throw error;
