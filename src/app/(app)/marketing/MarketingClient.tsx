@@ -2,7 +2,9 @@
 
 import { Fragment, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
+import { ChevronLeft, ChevronRight, Trash2 } from "lucide-react";
 import type { Brand, Customer, DiscountType, Promotion } from "@/types/database";
+import DeleteCustomerDialog from "@/components/DeleteCustomerDialog";
 import {
   createPromotionAction,
   deletePromotionAction,
@@ -20,6 +22,8 @@ function formatWindow(p: Promotion) {
   const end = p.ends_at ? p.ends_at.slice(0, 10) : "…";
   return `${start} → ${end}`;
 }
+
+const PAGE_SIZE_OPTIONS = [10, 25, 50];
 
 export default function MarketingClient({
   brands,
@@ -51,6 +55,37 @@ export default function MarketingClient({
   const [search, setSearch] = useState(searchTerm);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editFields, setEditFields] = useState<Record<string, string>>({});
+  const [deletingCustomer, setDeletingCustomer] = useState<Customer | null>(null);
+
+  // Dynamic (type-as-you-go) filter over the up-to-200 rows the server already
+  // sent for the last applied search -- instant, no round trip. The Search
+  // button/Enter still exist to re-query the server (e.g. to go beyond the
+  // 200-row cap with a different term).
+  const searchLower = search.trim().toLowerCase();
+  const visibleCustomers = searchLower
+    ? customers.filter(
+        (c) =>
+          c.name.toLowerCase().includes(searchLower) ||
+          (c.phone ?? "").toLowerCase().includes(searchLower)
+      )
+    : customers;
+
+  // Customer list pagination -- over visibleCustomers (see above).
+  const [customerPage, setCustomerPage] = useState(1);
+  const [customerPageSize, setCustomerPageSize] = useState(25);
+  const customerPageCount = Math.max(1, Math.ceil(visibleCustomers.length / customerPageSize));
+  // Snap back to page 1 whenever the search or page size changes.
+  const customerFilterKey = `${search}|${customerPageSize}`;
+  const [prevCustomerFilterKey, setPrevCustomerFilterKey] = useState(customerFilterKey);
+  if (customerFilterKey !== prevCustomerFilterKey) {
+    setPrevCustomerFilterKey(customerFilterKey);
+    setCustomerPage(1);
+  }
+  const currentCustomerPage = Math.min(customerPage, customerPageCount);
+  const pagedCustomers = visibleCustomers.slice(
+    (currentCustomerPage - 1) * customerPageSize,
+    currentCustomerPage * customerPageSize
+  );
 
   function withBrandParam(brandId: string) {
     const params = new URLSearchParams();
@@ -59,12 +94,6 @@ export default function MarketingClient({
     router.push(`/marketing?${params.toString()}`);
   }
 
-  function runSearch() {
-    const params = new URLSearchParams();
-    if (currentBrandId) params.set("brand", currentBrandId);
-    if (search.trim()) params.set("q", search.trim());
-    router.push(`/marketing?${params.toString()}`);
-  }
 
   function createPromotion() {
     const value = parseFloat(discountValue);
@@ -321,12 +350,8 @@ export default function MarketingClient({
             placeholder="Search name or phone"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && runSearch()}
             className={`ml-auto ${inputClass}`}
           />
-          <button onClick={runSearch} className={inputClass}>
-            Search
-          </button>
         </div>
 
         <table className="mt-4 w-full text-left text-sm">
@@ -341,7 +366,7 @@ export default function MarketingClient({
             </tr>
           </thead>
           <tbody>
-            {customers.map((c) => (
+            {pagedCustomers.map((c) => (
               <Fragment key={c.id}>
                 <tr className="border-t border-black/[.06] dark:border-white/[.08]">
                   <td className="py-2">{c.name}</td>
@@ -349,12 +374,21 @@ export default function MarketingClient({
                   <td>{c.label || "—"}</td>
                   <td>{c.source || "—"}</td>
                   <td className="text-xs text-zinc-500">{c.customer_since || "—"}</td>
-                  <td className="text-right">
+                  <td className="text-right whitespace-nowrap">
                     <button
                       onClick={() => (editingId === c.id ? setEditingId(null) : startEdit(c))}
                       className="text-zinc-400 hover:text-black dark:hover:text-white"
                     >
                       {editingId === c.id ? "Cancel" : "Edit"}
+                    </button>
+                    <button
+                      onClick={() => setDeletingCustomer(c)}
+                      disabled={isPending}
+                      title="Delete customer"
+                      aria-label="Delete customer"
+                      className="ml-3 inline-flex size-7 items-center justify-center rounded-md text-red-600 transition-colors hover:bg-red-50 disabled:opacity-40 dark:text-red-400 dark:hover:bg-red-950"
+                    >
+                      <Trash2 className="size-4" />
                     </button>
                   </td>
                 </tr>
@@ -448,7 +482,7 @@ export default function MarketingClient({
                 )}
               </Fragment>
             ))}
-            {customers.length === 0 && (
+            {visibleCustomers.length === 0 && (
               <tr>
                 <td colSpan={6} className="py-4 text-sm text-zinc-500">
                   No customers found.
@@ -457,7 +491,58 @@ export default function MarketingClient({
             )}
           </tbody>
         </table>
+
+        {visibleCustomers.length > 0 && (
+          <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-black/[.08] pt-3 text-sm dark:border-white/[.145]">
+            <label className="flex items-center gap-2 text-xs text-zinc-500">
+              Items per page
+              <select
+                value={customerPageSize}
+                onChange={(e) => setCustomerPageSize(Number(e.target.value))}
+                className="rounded border border-black/[.15] bg-card px-2 py-1 text-xs text-foreground dark:border-white/[.2]"
+              >
+                {PAGE_SIZE_OPTIONS.map((n) => (
+                  <option key={n} value={n}>
+                    {n}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setCustomerPage(currentCustomerPage - 1)}
+                disabled={currentCustomerPage <= 1}
+                className="flex items-center gap-1 rounded border border-black/[.15] px-2.5 py-1 text-xs disabled:opacity-30 dark:border-white/[.2]"
+              >
+                <ChevronLeft className="size-3.5" />
+                Prev
+              </button>
+              <span className="tabular-nums text-zinc-500">
+                Page {currentCustomerPage} of {customerPageCount}
+              </span>
+              <button
+                onClick={() => setCustomerPage(currentCustomerPage + 1)}
+                disabled={currentCustomerPage >= customerPageCount}
+                className="flex items-center gap-1 rounded border border-black/[.15] px-2.5 py-1 text-xs disabled:opacity-30 dark:border-white/[.2]"
+              >
+                Next
+                <ChevronRight className="size-3.5" />
+              </button>
+            </div>
+          </div>
+        )}
       </section>
+
+      {deletingCustomer && (
+        <DeleteCustomerDialog
+          customerId={deletingCustomer.id}
+          name={deletingCustomer.name}
+          onClose={() => setDeletingCustomer(null)}
+          onDeleted={() => {
+            if (editingId === deletingCustomer.id) setEditingId(null);
+          }}
+        />
+      )}
     </div>
   );
 }

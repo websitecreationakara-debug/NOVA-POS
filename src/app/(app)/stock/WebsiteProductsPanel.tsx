@@ -31,6 +31,7 @@ import type {
   WebsiteProductWrite,
 } from "@/lib/websiteProducts/types";
 import {
+  createWebsiteCategoryAction,
   createWebsiteProductAction,
   deleteWebsiteProductAction,
   deleteWebsiteProductVariationAction,
@@ -205,6 +206,12 @@ export default function WebsiteProductsPanel({
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState<WebsiteProductWrite>(emptyForm);
   const [formError, setFormError] = useState<string | null>(null);
+  // "+ Create new category…" picked from the Category dropdown -- shows an
+  // inline name field instead of immediately touching form.category_id.
+  const [showNewCategory, setShowNewCategory] = useState(false);
+  const [newCategoryName, setNewCategoryName] = useState("");
+  const [categoryError, setCategoryError] = useState<string | null>(null);
+  const [creatingCategory, setCreatingCategory] = useState(false);
   const [uploadingImage, setUploadingImage] = useState(false);
   const [imageError, setImageError] = useState<string | null>(null);
   const [pendingId, setPendingId] = useState<string | null>(null);
@@ -504,6 +511,34 @@ export default function WebsiteProductsPanel({
         load();
       } catch (e) {
         setFormError(e instanceof Error ? e.message : "Failed to create product");
+      }
+    });
+  }
+
+  // Creates the category on the storefront (see createWebsiteCategoryAction),
+  // then selects it on the in-progress product form and drops it into the
+  // local category list so it's usable immediately, without waiting for the
+  // next poll.
+  function submitNewCategory() {
+    const name = newCategoryName.trim();
+    if (!name) {
+      setCategoryError("Name is required");
+      return;
+    }
+    setCategoryError(null);
+    setCreatingCategory(true);
+    startTransition(async () => {
+      try {
+        const category = await createWebsiteCategoryAction(catalogId, { name });
+        setWebsiteCategories((prev) => [...prev, category]);
+        setForm((f) => ({ ...f, category_id: category.id }));
+        setNewCategoryName("");
+        setShowNewCategory(false);
+        notify(`Created category “${category.name}”`);
+      } catch (e) {
+        setCategoryError(e instanceof Error ? e.message : "Failed to create category");
+      } finally {
+        setCreatingCategory(false);
       }
     });
   }
@@ -1175,13 +1210,60 @@ export default function WebsiteProductsPanel({
             </Field>
             <Field label="Category" hint="optional">
               <Dropdown
-                value={form.category_id ?? ""}
-                onChange={(v) => setForm((f) => ({ ...f, category_id: v }))}
+                value={showNewCategory ? "__new__" : (form.category_id ?? "")}
+                onChange={(v) => {
+                  if (v === "__new__") {
+                    setShowNewCategory(true);
+                    setCategoryError(null);
+                    return;
+                  }
+                  setShowNewCategory(false);
+                  setForm((f) => ({ ...f, category_id: v }));
+                }}
                 options={[
                   { value: "", label: "— No category —" },
                   ...categoryOptions.map((c) => ({ value: c.id, label: c.label })),
+                  { value: "__new__", label: "+ Create new category…" },
                 ]}
               />
+              {showNewCategory && (
+                <div className="mt-2 flex flex-wrap items-center gap-2">
+                  <input
+                    type="text"
+                    autoFocus
+                    placeholder="New category name"
+                    value={newCategoryName}
+                    onChange={(e) => setNewCategoryName(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        submitNewCategory();
+                      }
+                    }}
+                    className={`${fieldInputClass} min-w-[10rem] flex-1`}
+                  />
+                  <button
+                    type="button"
+                    disabled={creatingCategory}
+                    onClick={submitNewCategory}
+                    className="rounded border border-black/[.15] px-3 py-1.5 text-sm disabled:opacity-50 dark:border-white/[.2]"
+                  >
+                    {creatingCategory ? "Adding…" : "Add"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowNewCategory(false);
+                      setNewCategoryName("");
+                      setCategoryError(null);
+                    }}
+                    className="rounded border border-black/[.15] px-3 py-1.5 text-sm dark:border-white/[.2]"
+                  >
+                    Cancel
+                  </button>
+                  {categoryError && <p className="w-full text-xs text-red-500">{categoryError}</p>}
+                </div>
+              )}
             </Field>
             <Field label="Image" hint="optional" className="col-span-2 md:col-span-4">
               <div className="flex flex-wrap items-center gap-3">

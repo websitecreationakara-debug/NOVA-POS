@@ -4,6 +4,7 @@ import type {
   WebsiteAddonWrite,
   WebsiteCatalogId,
   WebsiteCategory,
+  WebsiteCategoryWrite,
   WebsiteProduct,
   WebsiteProductWrite,
 } from "./types";
@@ -258,11 +259,11 @@ export async function listWebsiteAddons(catalogId: WebsiteCatalogId): Promise<We
   }));
 }
 
-// This storefront's live category list, if it has the read-only categories
-// endpoint deployed -- see categoriesUrlEnv on the catalog config. Empty array
-// (not an error) for a catalog with no categories endpoint configured yet, so
-// callers can fall back to the hardcoded `categories` label list instead of
-// failing outright.
+// This storefront's live category list, if it has the categories endpoint
+// deployed -- see categoriesUrlEnv on the catalog config. Empty array (not an
+// error) for a catalog with no categories endpoint configured yet, so callers
+// can fall back to the hardcoded `categories` label list instead of failing
+// outright.
 export async function listWebsiteCategories(catalogId: WebsiteCatalogId): Promise<WebsiteCategory[]> {
   const catalog = getCatalog(catalogId);
   if (!catalog.categoriesUrlEnv) return [];
@@ -283,6 +284,47 @@ export async function listWebsiteCategories(catalogId: WebsiteCatalogId): Promis
     ...c,
     image_url: c.image_url && c.image_url.startsWith("/") ? `${origin}${c.image_url}` : c.image_url,
   }));
+}
+
+// Throws for a catalog with no categories endpoint configured -- unlike the
+// read path above, a write action should fail loudly rather than silently no-op.
+function categoriesBaseUrl(catalogId: WebsiteCatalogId): string {
+  const catalog = getCatalog(catalogId);
+  if (!catalog.categoriesUrlEnv) throw new Error(`${catalog.label} has no categories API configured`);
+  const url = process.env[catalog.categoriesUrlEnv];
+  if (!url) throw new Error(`${catalog.categoriesUrlEnv} is not set`);
+  return url;
+}
+
+// bosbapremiumfoods.com's categories API 400s without a `slug` -- it doesn't
+// derive one from `name` server-side the way the products API does. Mirror
+// what a storefront admin's own "new category" form would send.
+function slugify(name: string): string {
+  return name
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
+// Creates a category directly on the storefront's own table -- the new
+// category then shows up on the website the same as one added there, and
+// listWebsiteCategories picks it up on the next poll.
+export async function createWebsiteCategory(
+  catalogId: WebsiteCatalogId,
+  input: WebsiteCategoryWrite
+): Promise<WebsiteCategory> {
+  const baseUrl = categoriesBaseUrl(catalogId);
+  const body: WebsiteCategoryWrite & { slug: string } = {
+    slug: slugify(input.name),
+    ...input,
+  };
+  const payload = await request<unknown>(catalogId, "", {
+    method: "POST",
+    headers: authHeaders(catalogId),
+    body: JSON.stringify(body),
+  }, baseUrl);
+  return unwrap<WebsiteCategory>(payload, ["data", "categories"]);
 }
 
 // Stock's Addons modal: edit price/stock, or delete, directly against the

@@ -203,7 +203,7 @@ export async function getReconciliation(
 
 export type DashboardStats = {
   totalRevenue: number;
-  ordersToday: number;
+  orderCount: number;
   totalProducts: number;
   lowStockCount: number;
   dailyRevenue: { date: string; total: number }[];
@@ -224,9 +224,9 @@ export type DashboardStats = {
     total: number;
     paidAt: string | null;
   }[];
-  // Same "current calendar year" scope as totalRevenue, so these agree with
-  // it -- see getCogsSummary for the same numbers scoped to Accountance's
-  // own date range instead.
+  // Same [fromDate, toDate] scope as totalRevenue/orderCount -- see
+  // getCogsSummary, which this reuses the same filtering logic from, for the
+  // equivalent numbers scoped to Accountance's own picker instead.
   totalCogs: number;
   hasUnknownCost: boolean;
   grossProfit: number;
@@ -296,8 +296,48 @@ async function getLowStockCount(): Promise<number> {
   return websiteLowStock + internalLowStock;
 }
 
-export async function getDashboardStats(): Promise<DashboardStats> {
-  const today = new Date().toISOString().slice(0, 10);
+export async function getDashboardStats(
+  brandId: string,
+  fromDate: string,
+  toDate: string
+): Promise<DashboardStats> {
+  let ordersQuery = supabaseAdmin
+    .from("orders")
+    .select("total, paid_at, brand_id, brands(name)")
+    .eq("status", "paid");
+  if (brandId !== ALL_BUSINESSES_ID) ordersQuery = ordersQuery.eq("brand_id", brandId);
+
+  let productsQuery = supabaseAdmin
+    .from("products")
+    .select("id", { count: "exact", head: true })
+    .eq("is_active", true);
+  if (brandId !== ALL_BUSINESSES_ID) productsQuery = productsQuery.eq("brand_id", brandId);
+
+  let recentOrdersQuery = supabaseAdmin
+    .from("orders")
+    .select("id, status, total, paid_at, brands(name)")
+    .eq("status", "paid")
+    .order("paid_at", { ascending: false })
+    .limit(5);
+  if (brandId !== ALL_BUSINESSES_ID) recentOrdersQuery = recentOrdersQuery.eq("brand_id", brandId);
+
+  // COGS -- joined to paid orders; filtered down to the selected range below
+  // with the same inRange() check as the revenue query above, so both mean
+  // the same period (and the same business, via orders.brand_id here).
+  let orderItemsQuery = supabaseAdmin
+    .from("order_items")
+    .select("product_id, quantity, cogs, orders!inner(status, paid_at, brand_id)")
+    .eq("orders.status", "paid");
+  if (brandId !== ALL_BUSINESSES_ID) orderItemsQuery = orderItemsQuery.eq("orders.brand_id", brandId);
+
+  // Waste/promotions -- joined to the product they were logged against so
+  // this can be scoped to one business the same way getCogsSummary's
+  // equivalent query is (see its comment for why cost_impact is required).
+  let adjustmentsQuery = supabaseAdmin
+    .from("stock_adjustments")
+    .select("category, cost_impact, created_at, products!inner(brand_id)")
+    .not("cost_impact", "is", null);
+  if (brandId !== ALL_BUSINESSES_ID) adjustmentsQuery = adjustmentsQuery.eq("products.brand_id", brandId);
 
   const [
     { data: paidOrders, error: ordersError },
@@ -307,25 +347,12 @@ export async function getDashboardStats(): Promise<DashboardStats> {
     { data: orderItemsData, error: itemsError },
     { data: adjustmentsData, error: adjError },
   ] = await Promise.all([
-    supabaseAdmin.from("orders").select("total, paid_at, brand_id, brands(name)").eq("status", "paid"),
-    supabaseAdmin.from("products").select("id", { count: "exact", head: true }).eq("is_active", true),
+    ordersQuery,
+    productsQuery,
     getLowStockCount(),
-    supabaseAdmin
-      .from("orders")
-      .select("id, status, total, paid_at, brands(name)")
-      .eq("status", "paid")
-      .order("paid_at", { ascending: false })
-      .limit(5),
-    // COGS -- joined to paid orders the same way the revenue query above is
-    // filtered, so "this year" means the same thing for both.
-    supabaseAdmin
-      .from("order_items")
-      .select("product_id, quantity, cogs, orders!inner(status, paid_at)")
-      .eq("orders.status", "paid"),
-    supabaseAdmin
-      .from("stock_adjustments")
-      .select("category, cost_impact, created_at")
-      .not("cost_impact", "is", null),
+    recentOrdersQuery,
+    orderItemsQuery,
+    adjustmentsQuery,
   ]);
 
   if (ordersError) throw ordersError;
@@ -341,14 +368,15 @@ export async function getDashboardStats(): Promise<DashboardStats> {
     brands: { name: string } | null;
   };
   const orders = (paidOrders ?? []) as PaidOrderRow[];
-  // Scoped to the current calendar year, not all-time -- so the dashboard's
-  // headline number resets to $0 each January instead of only ever growing,
-  // matching how the Revenue chart's year view treats "this year".
-  const currentYear = today.slice(0, 4);
+  // Scoped to the selected [fromDate, toDate] range (the Dashboard's own
+  // Day/Week/Month/Quarter/Year picker, same semantics as Accountance's) --
+  // not all-time, so these headline numbers match whatever period is picked
+  // instead of only ever growing.
+  const inRange = (dateStr: string) => dateStr >= fromDate && dateStr <= toDate;
   const totalRevenue = orders
-    .filter((o) => (o.paid_at ?? "").slice(0, 4) === currentYear)
+    .filter((o) => inRange((o.paid_at ?? "").slice(0, 10)))
     .reduce((sum, o) => sum + o.total, 0);
-  const ordersToday = orders.filter((o) => (o.paid_at ?? "").slice(0, 10) === today).length;
+  const orderCount = orders.filter((o) => inRange((o.paid_at ?? "").slice(0, 10))).length;
 
   type OrderItemCogsRow = {
     product_id: string;
@@ -356,22 +384,22 @@ export async function getDashboardStats(): Promise<DashboardStats> {
     cogs: number | null;
     orders: { status: string; paid_at: string | null } | null;
   };
-  const thisYearItems = ((orderItemsData ?? []) as OrderItemCogsRow[]).filter(
-    (i) => (i.orders?.paid_at ?? "").slice(0, 4) === currentYear
+  const itemsInRange = ((orderItemsData ?? []) as OrderItemCogsRow[]).filter((i) =>
+    inRange((i.orders?.paid_at ?? "").slice(0, 10))
   );
-  const { totalCogs, hasUnknownCost } = await sumCogsWithFallback(thisYearItems);
+  const { totalCogs, hasUnknownCost } = await sumCogsWithFallback(itemsInRange);
   const grossProfit = round2(totalRevenue - totalCogs);
   const grossMarginPct = totalRevenue === 0 ? null : round2((grossProfit / totalRevenue) * 10000) / 100;
 
   type AdjustmentRow = { category: string; cost_impact: number | null; created_at: string };
-  const thisYearAdjustments = ((adjustmentsData ?? []) as AdjustmentRow[]).filter(
-    (a) => a.created_at.slice(0, 4) === currentYear
+  const adjustmentsInRange = ((adjustmentsData ?? []) as AdjustmentRow[]).filter((a) =>
+    inRange(a.created_at.slice(0, 10))
   );
   const wasteCost = round2(
-    thisYearAdjustments.filter((a) => a.category === "waste").reduce((sum, a) => sum + (a.cost_impact ?? 0), 0)
+    adjustmentsInRange.filter((a) => a.category === "waste").reduce((sum, a) => sum + (a.cost_impact ?? 0), 0)
   );
   const promotionCost = round2(
-    thisYearAdjustments.filter((a) => a.category === "promotion").reduce((sum, a) => sum + (a.cost_impact ?? 0), 0)
+    adjustmentsInRange.filter((a) => a.category === "promotion").reduce((sum, a) => sum + (a.cost_impact ?? 0), 0)
   );
 
   // One row per calendar day that had any revenue -- the client buckets this
@@ -449,7 +477,7 @@ export async function getDashboardStats(): Promise<DashboardStats> {
 
   return {
     totalRevenue,
-    ordersToday,
+    orderCount,
     totalProducts: totalProducts ?? 0,
     lowStockCount,
     dailyRevenue,

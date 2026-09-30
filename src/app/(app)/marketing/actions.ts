@@ -144,3 +144,19 @@ export async function updateCustomerAction(
 
   revalidatePath("/marketing");
 }
+
+export async function deleteCustomerAction(id: string): Promise<void> {
+  await requireMarketingAccess();
+
+  const { error } = await supabaseAdmin.from("customers").delete().eq("id", id);
+  if (error) {
+    // 23503 = foreign key violation -- this customer still has orders
+    // pointing at it (orders.customer_id has no ON DELETE clause).
+    if (error.code === "23503") {
+      throw new Error("Can't delete — this customer has past orders");
+    }
+    throw new Error(error.message);
+  }
+
+  revalidatePath("/marketing");
+}

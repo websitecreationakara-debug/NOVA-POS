@@ -71,15 +71,22 @@ export type WebsiteAddon = {
 };
 
 // A storefront category, straight from its own `categories` table (flat,
-// self-referencing via `parent_id`) -- see listWebsiteCategories. Read-only:
-// categories are still created/edited/deleted on each storefront's own admin,
-// this app only mirrors the list so Stock's chips stay in sync automatically.
+// self-referencing via `parent_id`) -- see listWebsiteCategories. Categories
+// can also be created from here (see createWebsiteCategory) -- it POSTs to
+// the same storefront table, so a category added in POS shows up on the
+// website too, same as one added on the storefront's own admin.
 export type WebsiteCategory = {
   id: string;
   name: string;
   slug: string;
   parent_id: string | null;
   image_url: string | null;
+};
+
+export type WebsiteCategoryWrite = {
+  name: string;
+  parent_id?: string | null;
+  image_url?: string | null;
 };
 
 export type WebsiteAddonWrite = {

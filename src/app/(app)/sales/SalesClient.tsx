@@ -699,7 +699,6 @@ export default function SalesClient({
         </div>
         <Link
           href={`/invoice/${receipt.orderId}`}
-          target="_blank"
           className="rounded-full border border-black/[.15] px-6 py-2 text-center dark:border-white/[.2]"
         >
           View / print invoice
