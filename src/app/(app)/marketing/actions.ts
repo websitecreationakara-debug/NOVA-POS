@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { supabaseAdmin } from "@/lib/supabase/server";
 import { getSessionUser } from "@/lib/supabase/auth-server";
 import type { Customer, DiscountType, Promotion } from "@/types/database";
+import type { CustomerImportRow } from "@/lib/customerCsv";
 
 export async function requireMarketingAccess() {
   // Defense in depth: /marketing is already role-gated in proxy.ts, but
@@ -159,4 +160,147 @@ export async function deleteCustomerAction(id: string): Promise<void> {
   }
 
   revalidatePath("/marketing");
+}
+
+// ---- CSV import ----------------------------------------------------------
+
+const IMPORT_BATCH_LIMIT = 1000;
+
+export type CustomerImportResult = {
+  created: number;
+  updated: number;
+  errors: { row: number; message: string }[];
+};
+
+const clean = (v: unknown, max = 500) => (typeof v === "string" ? v.trim().slice(0, max) : "");
+const cleanDate = (v: unknown) => {
+  const s = clean(v, 10);
+  return /^\d{4}-\d{2}-\d{2}$/.test(s) && !Number.isNaN(Date.parse(s)) ? s : null;
+};
+const cleanInt = (v: unknown, min: number, max: number) =>
+  typeof v === "number" && Number.isInteger(v) && v >= min && v <= max ? v : null;
+
+// Matches customers by phone number (unique): a phone already on file has its
+// EMPTY-in-the-file fields left alone and its filled ones updated; anything
+// else is created. Rows with no phone can't be matched, so they always create.
+// commit=false only counts, so the dialog can preview before writing.
+export async function importCustomersAction(
+  rows: CustomerImportRow[],
+  commit: boolean
+): Promise<CustomerImportResult> {
+  await requireMarketingAccess();
+  if (!Array.isArray(rows)) throw new Error("Invalid import data");
+  if (rows.length > IMPORT_BATCH_LIMIT) throw new Error("Too many rows in one batch");
+
+  const result: CustomerImportResult = { created: 0, updated: 0, errors: [] };
+
+  type Clean = { row: number; phone: string; fields: Record<string, string | number | null> };
+  const cleaned: Clean[] = [];
+  for (const r of rows) {
+    const name = clean(r.name);
+    if (!name) {
+      result.errors.push({ row: r.row, message: "Missing customer name" });
+      continue;
+    }
+    cleaned.push({
+      row: r.row,
+      phone: clean(r.phone, 50),
+      fields: {
+        name,
+        second_phone: clean(r.secondPhone, 50),
+        email: clean(r.email),
+        photo_url: clean(r.photoUrl, 2000),
+        address: clean(r.address, 1000),
+        customer_since: cleanDate(r.customerSince),
+        first_name: clean(r.firstName),
+        last_name: clean(r.lastName),
+        page_uid: clean(r.pageUid),
+        source: clean(r.source),
+        label: clean(r.label),
+        capital: clean(r.capital),
+        state: clean(r.state),
+        dob: cleanDate(r.dob),
+        yob: cleanInt(r.yob, 1900, 2100),
+        age: clean(r.age, 20),
+        gender: clean(r.gender),
+        nationality: clean(r.nationality),
+        follow_up: clean(r.followUp),
+      },
+    });
+  }
+
+  // Which phones are already customers?
+  const phones = [...new Set(cleaned.map((c) => c.phone).filter(Boolean))];
+  const existing = new Map<string, string>();
+  for (let i = 0; i < phones.length; i += 100) {
+    const { data, error } = await supabaseAdmin
+      .from("customers")
+      .select("id, phone")
+      .in("phone", phones.slice(i, i + 100));
+    if (error) throw new Error(error.message);
+    for (const c of data ?? []) if (c.phone) existing.set(c.phone, c.id);
+  }
+
+  const toInsert: Clean[] = [];
+  const toUpdate: { c: Clean; id: string }[] = [];
+  for (const c of cleaned) {
+    const id = c.phone ? existing.get(c.phone) : undefined;
+    if (id) toUpdate.push({ c, id });
+    else toInsert.push(c);
+  }
+
+  if (!commit) {
+    result.created = toInsert.length;
+    result.updated = toUpdate.length;
+    return result;
+  }
+
+  // "" means "not in the file" -> null on insert, untouched on update.
+  const asNullable = (f: Clean["fields"]) =>
+    Object.fromEntries(Object.entries(f).map(([k, v]) => [k, v === "" ? null : v]));
+  const nonEmpty = (f: Clean["fields"]) =>
+    Object.fromEntries(Object.entries(f).filter(([, v]) => v !== "" && v !== null));
+
+  for (let i = 0; i < toInsert.length; i += 200) {
+    const chunk = toInsert.slice(i, i + 200);
+    const payload = chunk.map((c) => ({
+      ...asNullable(c.fields),
+      name: c.fields.name as string,
+      phone: c.phone || null,
+    }));
+    const { error } = await supabaseAdmin.from("customers").insert(payload);
+    if (!error) {
+      result.created += chunk.length;
+      continue;
+    }
+    // One bad row shouldn't sink the batch -- retry row by row to find it.
+    for (const c of chunk) {
+      const { error: rowError } = await supabaseAdmin.from("customers").insert({
+        ...asNullable(c.fields),
+        name: c.fields.name as string,
+        phone: c.phone || null,
+      });
+      if (rowError) {
+        result.errors.push({
+          row: c.row,
+          message: rowError.code === "23505" ? "Phone number already in use" : rowError.message,
+        });
+      } else {
+        result.created++;
+      }
+    }
+  }
+
+  for (let i = 0; i < toUpdate.length; i += 20) {
+    await Promise.all(
+      toUpdate.slice(i, i + 20).map(async ({ c, id }) => {
+        const { error } = await supabaseAdmin.from("customers").update(nonEmpty(c.fields) as Partial<Omit<Customer, "id" | "created_at">>).eq("id", id);
+        if (error) result.errors.push({ row: c.row, message: error.message });
+        else result.updated++;
+      })
+    );
+  }
+
+  revalidatePath("/marketing");
+  return result;
 }
