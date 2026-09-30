@@ -15,13 +15,21 @@ export default function OrderRowMenu({ orderId }: { orderId: string }) {
   const [confirmDelete, setConfirmDelete] = useState(false);
   const btnRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
-  const [pos, setPos] = useState<{ top: number; right: number } | null>(null);
+  const [pos, setPos] = useState<{ top?: number; bottom?: number; right: number } | null>(null);
 
   useEffect(() => {
     if (!open) return;
     function place() {
       const r = btnRef.current?.getBoundingClientRect();
-      if (r) setPos({ top: r.bottom + 4, right: window.innerWidth - r.right });
+      if (!r) return;
+      const right = window.innerWidth - r.right;
+      // Flip above the button when the menu wouldn't fit below it.
+      const h = menuRef.current?.offsetHeight ?? 130;
+      if (r.bottom + 4 + h > window.innerHeight) {
+        setPos({ bottom: window.innerHeight - r.top + 4, right });
+      } else {
+        setPos({ top: r.bottom + 4, right });
+      }
     }
     place();
     function onDoc(e: MouseEvent) {
@@ -68,7 +76,7 @@ export default function OrderRowMenu({ orderId }: { orderId: string }) {
         <div
           ref={menuRef}
           role="menu"
-          style={{ position: "fixed", top: pos.top, right: pos.right, zIndex: 50 }}
+          style={{ position: "fixed", top: pos.top, bottom: pos.bottom, right: pos.right, zIndex: 50 }}
           className="min-w-[10rem] overflow-hidden rounded-lg border border-border bg-card py-1 text-xs shadow-lg"
         >
           <Link
