@@ -23,8 +23,8 @@ const topItems = [
     icon: LayoutDashboard,
     roles: ["admin", "sales", "stock", "accountance", "marketing"],
   },
-  { href: "/sales", label: "Sales", icon: ShoppingCart, roles: ["admin", "sales"] },
-  { href: "/stock", label: "Stock", icon: Package, roles: ["admin", "stock"] },
+  { href: "/sales", label: "Sales", icon: ShoppingCart, roles: ["admin", "sales", "accountance"] },
+  { href: "/stock", label: "Stock", icon: Package, roles: ["admin", "stock", "accountance"] },
   {
     href: "/orders",
     label: "Orders",
@@ -44,7 +44,7 @@ const MARKETING_LINKS = [
   { tab: "promotions", label: "Promotions & Customers" },
   { tab: "cost-control", label: "Cost Control" },
 ];
-const MARKETING_ROLES = ["admin", "marketing"];
+const MARKETING_ROLES = ["admin", "marketing", "accountance"];
 
 // Mirrors AccountanceTab from src/app/(app)/accountance/page.tsx -- kept as
 // a literal list here (rather than imported) since that file is a server
