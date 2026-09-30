@@ -202,9 +202,9 @@ export function InvoiceDoc({
                 >
                   <dl className="flex flex-col gap-1">
                     {subDetails.map((d) => (
-                      <div key={d.en} className="flex flex-wrap gap-x-1.5">
-                        <dt className="font-bold">{d.kh}:</dt>
-                        <dd>{d.value}</dd>
+                      <div key={d.en}>
+                        <dt className="font-bold inline">{d.kh}:</dt>{" "}
+                        <dd className="inline">{d.value}</dd>
                       </div>
                     ))}
                   </dl>

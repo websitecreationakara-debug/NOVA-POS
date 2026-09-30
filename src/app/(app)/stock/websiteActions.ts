@@ -6,6 +6,7 @@ import { ensurePosProductForSiteProduct } from "@/app/(app)/sales/websiteActions
 import { getCatalog } from "@/lib/websiteProducts/catalogs";
 import {
   createWebsiteAddon,
+  createWebsiteCategory,
   createWebsiteProduct,
   deleteWebsiteAddon,
   deleteWebsiteProduct,
@@ -23,6 +24,7 @@ import type {
   WebsiteAddonWrite,
   WebsiteCatalogId,
   WebsiteCategory,
+  WebsiteCategoryWrite,
   WebsiteProduct,
   WebsiteProductWrite,
 } from "@/lib/websiteProducts/types";
@@ -68,6 +70,18 @@ export async function listWebsiteCategoriesAction(
 ): Promise<WebsiteCategory[]> {
   await requireStockAccess();
   return listWebsiteCategories(catalogId);
+}
+
+// Creates the category on the storefront itself, so it's available there too
+// -- not just a POS-local label.
+export async function createWebsiteCategoryAction(
+  catalogId: WebsiteCatalogId,
+  input: WebsiteCategoryWrite
+): Promise<WebsiteCategory> {
+  await requireStockAccess();
+  const category = await createWebsiteCategory(catalogId, input);
+  revalidatePath("/stock");
+  return category;
 }
 
 // Sales' grid only -- see listSellableWebsiteProducts for why this merges in

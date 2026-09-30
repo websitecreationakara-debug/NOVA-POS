@@ -15,7 +15,14 @@ import {
   TrendingDown,
   TrendingUp,
 } from "lucide-react";
-import { getDashboardStats, getWebsiteProductTotal } from "@/lib/supabase/queries";
+import {
+  ALL_BUSINESSES_ID,
+  getBrands,
+  getDashboardStats,
+  getWebsiteProductTotal,
+} from "@/lib/supabase/queries";
+import { rangeLabel, resolveRange } from "@/lib/dateRange";
+import DashboardRangeBar from "./DashboardRangeBar";
 import PeriodBarChart from "./PeriodBarChart";
 import RecentOrdersRows from "./RecentOrdersRows";
 
@@ -71,10 +78,34 @@ async function WebsiteProductCount() {
   return <>{total ?? "—"}</>;
 }
 
-export default async function Home() {
-  const stats = await getDashboardStats();
+export default async function Home({
+  searchParams,
+}: {
+  searchParams: Promise<{
+    brand?: string;
+    mode?: string;
+    from?: string;
+    to?: string;
+    week?: string;
+    month?: string;
+    quarter?: string;
+    year?: string;
+  }>;
+}) {
+  const params = await searchParams;
+  const { mode, week, month, quarter, year, fromDate, toDate } = resolveRange(params);
+  const brandParam = params.brand;
+  const brands = await getBrands();
+  // Same fixed display order as the chips themselves (see brandsOrdered
+  // below) -- an unrecognized/stale ?brand= falls back to "All Business"
+  // rather than erroring.
+  const currentBrandId =
+    brandParam === ALL_BUSINESSES_ID || brands.some((b) => b.id === brandParam)
+      ? (brandParam ?? ALL_BUSINESSES_ID)
+      : ALL_BUSINESSES_ID;
+  const stats = await getDashboardStats(currentBrandId, fromDate, toDate);
 
-  const currentYear = new Date().getUTCFullYear();
+  const period = rangeLabel(fromDate, toDate);
 
   // Same brand order as the header chips, not whatever order orders happened
   // to come back in.
@@ -82,6 +113,14 @@ export default async function Home() {
     const ia = BRANDS.indexOf(a.brandName);
     const ib = BRANDS.indexOf(b.brandName);
     if (ia === -1 && ib === -1) return a.brandName.localeCompare(b.brandName);
+    if (ia === -1) return 1;
+    if (ib === -1) return -1;
+    return ia - ib;
+  });
+  const brandsOrdered = brands.toSorted((a, b) => {
+    const ia = BRANDS.indexOf(a.name);
+    const ib = BRANDS.indexOf(b.name);
+    if (ia === -1 && ib === -1) return a.name.localeCompare(b.name);
     if (ia === -1) return 1;
     if (ib === -1) return -1;
     return ia - ib;
@@ -99,7 +138,7 @@ export default async function Home() {
 
   const statCards = [
     {
-      label: `Total Revenue (${currentYear})`,
+      label: `Total Revenue (${period})`,
       value: formatMoney(stats.totalRevenue),
       icon: DollarSign,
       tint: "bg-amber-400/15 text-amber-600 dark:text-amber-400",
@@ -107,8 +146,8 @@ export default async function Home() {
       href: "/accountance?tab=reports",
     },
     {
-      label: "Orders Today",
-      value: stats.ordersToday,
+      label: `Orders (${period})`,
+      value: stats.orderCount,
       icon: ShoppingCart,
       tint: "bg-blue-500/15 text-blue-600 dark:text-blue-400",
       trend: weekTrend(stats.dailyOrders),
@@ -135,7 +174,7 @@ export default async function Home() {
       href: "/stock?filter=low",
     },
     {
-      label: `Total COGS (${currentYear})${stats.hasUnknownCost ? " ⚠" : ""}`,
+      label: `Total COGS (${period})${stats.hasUnknownCost ? " ⚠" : ""}`,
       value: formatMoney(stats.totalCogs),
       icon: Layers,
       tint: "bg-orange-500/15 text-orange-600 dark:text-orange-400",
@@ -143,7 +182,7 @@ export default async function Home() {
       href: "/accountance?tab=cogs",
     },
     {
-      label: `Gross Profit (${currentYear})`,
+      label: `Gross Profit (${period})`,
       value: formatMoney(stats.grossProfit),
       icon: PiggyBank,
       tint: "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400",
@@ -151,7 +190,7 @@ export default async function Home() {
       href: "/accountance?tab=cogs",
     },
     {
-      label: `Gross Margin % (${currentYear})`,
+      label: `Gross Margin % (${period})`,
       value: stats.grossMarginPct === null ? "—" : `${stats.grossMarginPct.toFixed(1)}%`,
       icon: Percent,
       tint: "bg-teal-500/15 text-teal-600 dark:text-teal-400",
@@ -159,7 +198,7 @@ export default async function Home() {
       href: "/accountance?tab=cogs",
     },
     {
-      label: `Waste (${currentYear})`,
+      label: `Waste (${period})`,
       value: formatMoney(stats.wasteCost),
       icon: Trash2,
       tint: "bg-red-500/15 text-red-600 dark:text-red-400",
@@ -167,7 +206,7 @@ export default async function Home() {
       href: "/accountance?tab=cogs",
     },
     {
-      label: `Promotions (${currentYear})`,
+      label: `Promotions (${period})`,
       value: formatMoney(stats.promotionCost),
       icon: Gift,
       tint: "bg-pink-500/15 text-pink-600 dark:text-pink-400",
@@ -180,16 +219,17 @@ export default async function Home() {
     <main className="mx-auto w-full max-w-7xl space-y-8 p-8">
       <header>
         <h1 className="font-display text-3xl font-bold">NOVA POS</h1>
-        <div className="mt-2 flex flex-wrap gap-2">
-          {BRANDS.map((b) => (
-            <span
-              key={b}
-              className="rounded-full border border-border bg-muted/60 px-2.5 py-1 text-xs font-medium text-muted-foreground"
-            >
-              {b}
-            </span>
-          ))}
-        </div>
+        <DashboardRangeBar
+          brands={brandsOrdered}
+          brandId={currentBrandId}
+          mode={mode}
+          week={week}
+          month={month}
+          quarter={quarter}
+          year={year}
+          fromDate={fromDate}
+          toDate={toDate}
+        />
       </header>
 
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
