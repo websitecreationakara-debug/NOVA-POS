@@ -149,6 +149,7 @@ export async function getDailySales(
     .from("orders")
     .select("*")
     .eq("status", "paid")
+    .neq("fulfillment_status", "cancelled")
     .gte("paid_at", `${fromDate}T00:00:00.000Z`)
     .lte("paid_at", `${toDate}T23:59:59.999Z`)
     .order("paid_at", { ascending: false });
@@ -304,7 +305,8 @@ export async function getDashboardStats(
   let ordersQuery = supabaseAdmin
     .from("orders")
     .select("total, paid_at, brand_id, brands(name)")
-    .eq("status", "paid");
+    .eq("status", "paid")
+    .neq("fulfillment_status", "cancelled");
   if (brandId !== ALL_BUSINESSES_ID) ordersQuery = ordersQuery.eq("brand_id", brandId);
 
   let productsQuery = supabaseAdmin
@@ -327,7 +329,8 @@ export async function getDashboardStats(
   let orderItemsQuery = supabaseAdmin
     .from("order_items")
     .select("product_id, quantity, cogs, orders!inner(status, paid_at, brand_id)")
-    .eq("orders.status", "paid");
+    .eq("orders.status", "paid")
+    .neq("orders.fulfillment_status", "cancelled");
   if (brandId !== ALL_BUSINESSES_ID) orderItemsQuery = orderItemsQuery.eq("orders.brand_id", brandId);
 
   // Waste/promotions -- joined to the product they were logged against so
@@ -723,6 +726,7 @@ export async function getCogsSummary(
     .from("order_items")
     .select("product_id, quantity, cogs, orders!inner(status, paid_at, brand_id)")
     .eq("orders.status", "paid")
+    .neq("orders.fulfillment_status", "cancelled")
     .gte("orders.paid_at", `${fromDate}T00:00:00.000Z`)
     .lte("orders.paid_at", `${toDate}T23:59:59.999Z`);
   if (brandId !== ALL_BUSINESSES_ID) itemsQuery = itemsQuery.eq("orders.brand_id", brandId);
@@ -1037,6 +1041,7 @@ export async function getMarginReport(
     .from("order_items")
     .select("product_id, quantity, line_total, cogs, orders!inner(status, paid_at, brand_id)")
     .eq("orders.status", "paid")
+    .neq("orders.fulfillment_status", "cancelled")
     .gte("orders.paid_at", `${fromDate}T00:00:00.000Z`)
     .lte("orders.paid_at", `${toDate}T23:59:59.999Z`);
   if (brandId !== ALL_BUSINESSES_ID) query = query.eq("orders.brand_id", brandId);

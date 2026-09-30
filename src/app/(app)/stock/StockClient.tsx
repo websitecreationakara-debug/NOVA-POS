@@ -910,6 +910,11 @@ export default function StockClient({
                       className="w-full min-w-0 rounded border border-transparent bg-transparent px-1 py-0.5 font-medium hover:border-black/[.15] focus:border-black/[.3] dark:hover:border-white/[.2] dark:focus:border-white/[.4]"
                     />
                     {p.sku && <div className="text-xs text-zinc-400">{p.sku}</div>}
+                    {p.auto_created && (
+                      <div className="mt-1 text-xs text-amber-600 dark:text-amber-500">
+                        ⚠ Auto-created from a website order — check price, cost &amp; stock, then rename to confirm
+                      </div>
+                    )}
                     <button
                       type="button"
                       onClick={() => openRecipePanel(p.id)}

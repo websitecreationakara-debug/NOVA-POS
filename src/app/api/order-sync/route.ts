@@ -11,6 +11,29 @@ const VALID_SITES: ProductSiteLink["site"][] = [
 ];
 const VALID_PAYMENT_METHODS = ALL_PAYMENT_METHODS;
 
+// Strip the punctuation people type into a phone field so "012 345 678",
+// "012-345-678" and "012345678" resolve to ONE customer. Anything that isn't
+// then 8-15 digits (optional leading +) is treated as no phone at all, rather
+// than saved as junk or rejecting a paid order over a bad contact field.
+function normalizePhone(raw: unknown): string | null {
+  if (typeof raw !== "string") return null;
+  const cleaned = raw.replace(/[\s\-().]/g, "");
+  return /^\+?\d{8,15}$/.test(cleaned) ? cleaned : null;
+}
+
+const round2 = (n: number) => Math.round((n + Number.EPSILON) * 100) / 100;
+
+// Sanity bounds. order_items.quantity / unit_price / line_total are
+// numeric(12,2): quantity is stored to 2 decimals (so < 0.01 rounds to 0 and
+// trips the quantity > 0 check), and MAX_QUANTITY * MAX_UNIT_PRICE stays well
+// under the ~10 billion the column holds. Anything outside these is a
+// storefront bug, not a real sale -- reject it here as a clean 400 instead of
+// writing absurd stock movements (or hitting a DB overflow).
+const MIN_QUANTITY = 0.01;
+const MAX_QUANTITY = 10_000;
+const MAX_UNIT_PRICE = 100_000;
+const MAX_ORDER_AMOUNT = 1_000_000_000;
+
 // variationId is the specific size/variant the customer bought, for a
 // "variable" site product -- "" or omitted for a simple product. Matched
 // against product_site_links.variation_id in create_online_order(); without
@@ -80,10 +103,12 @@ export async function POST(request: NextRequest) {
     typeof (v as InboundItem).siteProductId === "string" &&
     typeof (v as InboundItem).quantity === "number" &&
     Number.isFinite((v as InboundItem).quantity) &&
-    (v as InboundItem).quantity > 0 &&
+    (v as InboundItem).quantity >= MIN_QUANTITY &&
+    (v as InboundItem).quantity <= MAX_QUANTITY &&
     typeof (v as InboundItem).unitPrice === "number" &&
     Number.isFinite((v as InboundItem).unitPrice) &&
     (v as InboundItem).unitPrice >= 0 &&
+    (v as InboundItem).unitPrice <= MAX_UNIT_PRICE &&
     ((v as InboundItem).variationId === undefined || typeof (v as InboundItem).variationId === "string") &&
     ((v as InboundItem).title === undefined || typeof (v as InboundItem).title === "string");
 
@@ -98,11 +123,36 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Invalid payload" }, { status: 400 });
   }
 
-  const paymentMethod =
-    typeof body.paymentMethod === "string" &&
-    VALID_PAYMENT_METHODS.includes(body.paymentMethod as PaymentMethod)
-      ? (body.paymentMethod as PaymentMethod)
-      : null;
+  // Order-level amounts are optional (POS derives them from the items when
+  // omitted), but when sent they must be real, non-negative money -- a
+  // negative discount or total would otherwise inflate/deflate a "paid" order
+  // and the revenue reports built on it.
+  const isValidAmount = (v: unknown) =>
+    v === undefined ||
+    v === null ||
+    (typeof v === "number" && Number.isFinite(v) && v >= 0 && v <= MAX_ORDER_AMOUNT);
+  if (
+    !isValidAmount(body.subtotal) ||
+    !isValidAmount(body.discount) ||
+    !isValidAmount(body.deliveryFee) ||
+    !isValidAmount(body.total)
+  ) {
+    return NextResponse.json({ error: "Invalid amount" }, { status: 400 });
+  }
+
+  // Absent / null / "" means "method unknown" and is stored as NULL; a
+  // non-empty value that isn't one of ours used to be silently dropped to
+  // NULL too, leaving a "paid" order with no method -- reject it instead.
+  const rawPaymentMethod = body.paymentMethod;
+  if (
+    rawPaymentMethod !== undefined &&
+    rawPaymentMethod !== null &&
+    rawPaymentMethod !== "" &&
+    !VALID_PAYMENT_METHODS.includes(rawPaymentMethod as PaymentMethod)
+  ) {
+    return NextResponse.json({ error: "Invalid paymentMethod" }, { status: 400 });
+  }
+  const paymentMethod = rawPaymentMethod ? (rawPaymentMethod as PaymentMethod) : null;
 
   let deliveryAt: string | null = null;
   if (typeof body.deliveryAt === "string" && body.deliveryAt.trim()) {
@@ -111,6 +161,29 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Invalid deliveryAt" }, { status: 400 });
     }
     deliveryAt = parsed.toISOString();
+  }
+
+  const phone = normalizePhone(customerPhone);
+  const name = typeof customerName === "string" ? customerName.trim() : "";
+
+  // create_online_order() recomputes subtotal/total from the lines and ignores
+  // the storefront's own figures; log when they disagreed so a storefront bug
+  // doesn't go unnoticed.
+  const itemsSubtotal = (items as InboundItem[]).reduce(
+    (sum, i) => sum + round2(round2(i.unitPrice) * round2(i.quantity)),
+    0
+  );
+  const expectedTotal = Math.max(itemsSubtotal - (body.discount ?? 0) + (body.deliveryFee ?? 0), 0);
+  if (
+    (typeof body.subtotal === "number" && Math.abs(body.subtotal - itemsSubtotal) > 0.01) ||
+    (typeof body.total === "number" && Math.abs(body.total - expectedTotal) > 0.01)
+  ) {
+    console.warn("order-sync: storefront totals differ from its items; POS recomputed", {
+      site,
+      siteOrderId,
+      sent: { subtotal: body.subtotal, total: body.total },
+      recomputed: { subtotal: round2(itemsSubtotal), total: round2(expectedTotal) },
+    });
   }
 
   const { data: brand, error: brandError } = await supabaseAdmin
@@ -127,8 +200,11 @@ export async function POST(request: NextRequest) {
     p_site: site,
     p_site_order_id: siteOrderId,
     p_items: items as InboundItem[],
-    p_customer_name: customerName ?? null,
-    p_customer_phone: customerPhone ?? null,
+    // No name and no usable phone -> a readable placeholder instead of a
+    // blank customer on the invoice. (Name-less with a phone keeps working as
+    // before: create_online_order() names the customer by their number.)
+    p_customer_name: name || (phone ? null : "Website customer"),
+    p_customer_phone: phone,
     p_customer_email: customerEmail ?? null,
     p_subtotal: body.subtotal ?? null,
     p_discount: body.discount ?? 0,
@@ -138,6 +214,13 @@ export async function POST(request: NextRequest) {
     p_delivery_at: deliveryAt,
   });
   if (rpcError) {
+    // SQLSTATE class 22 (data exception, e.g. numeric overflow) and 23514
+    // (check violation, e.g. a quantity that rounds to 0) mean the payload
+    // itself was bad in a way the checks above can't foresee -- the caller's
+    // fault, so 400 rather than a 500 that reads like a POS outage.
+    if (rpcError.code?.startsWith("22") || rpcError.code === "23514") {
+      return NextResponse.json({ error: "Invalid payload" }, { status: 400 });
+    }
     return NextResponse.json({ error: rpcError.message }, { status: 500 });
   }
 

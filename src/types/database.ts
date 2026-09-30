@@ -78,6 +78,11 @@ export type Product = {
   // Grams one unit of this product (e.g. one "pcs") weighs -- lets Cost
   // Control Set lines convert Scale to kg/g. null = unknown.
   weight_grams: number | null;
+  // True for a product create_online_order() made on the fly because a website
+  // order's item wasn't linked to any POS product (migration 0046). Shown as
+  // "review me" on Stock; cleared when staff rename it. Its stock isn't
+  // deducted by sales while flagged.
+  auto_created: boolean;
 };
 
 export type RecipeItem = {
@@ -345,8 +350,8 @@ export type Database = {
       >;
       products: Table<
         Product,
-        Omit<Product, "id" | "created_at" | "updated_at" | "cost_price" | "is_ingredient" | "weight_grams"> &
-          Partial<Pick<Product, "id" | "cost_price" | "is_ingredient" | "weight_grams">>,
+        Omit<Product, "id" | "created_at" | "updated_at" | "cost_price" | "is_ingredient" | "weight_grams" | "auto_created"> &
+          Partial<Pick<Product, "id" | "cost_price" | "is_ingredient" | "weight_grams" | "auto_created">>,
         [
           {
             foreignKeyName: "products_brand_id_fkey";
