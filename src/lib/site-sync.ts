@@ -1,6 +1,8 @@
 import { supabaseAdmin } from "@/lib/supabase/server";
 import { catalogForBrandSlug } from "@/lib/websiteProducts/catalogs";
-import { updateWebsiteProductVariation } from "@/lib/websiteProducts/client";
+import { getWebsiteProduct, updateWebsiteProductVariation } from "@/lib/websiteProducts/client";
+import { isStockUntracked } from "@/lib/websiteProducts/stockTracking";
+import type { WebsiteProduct } from "@/lib/websiteProducts/types";
 import type { FulfillmentStatus, ProductSiteLink } from "@/types/database";
 
 // POS is the source of truth for stock on the ~28 products that also exist on a
@@ -88,14 +90,47 @@ export async function linkProductToSite(
   }
 }
 
+// Which of these links point at an untracked website product, by checking the
+// website itself. If the website can't be reached or doesn't answer for a
+// product, it's treated as tracked, i.e. the push proceeds exactly as before.
+async function untrackedLinkKeys(
+  links: { site: ProductSiteLink["site"]; site_product_id: string; variation_id: string }[]
+): Promise<Set<string>> {
+  const products = new Map<string, Promise<WebsiteProduct | null>>();
+  for (const l of links) {
+    const catalog = catalogForBrandSlug(l.site);
+    if (!catalog) continue;
+    const key = `${l.site}|${l.site_product_id}`;
+    if (!products.has(key)) {
+      products.set(key, getWebsiteProduct(catalog.id, l.site_product_id).catch(() => null));
+    }
+  }
+  const untracked = new Set<string>();
+  for (const l of links) {
+    const product = await products.get(`${l.site}|${l.site_product_id}`);
+    if (product && isStockUntracked(product, l.variation_id)) {
+      untracked.add(`${l.site}|${l.site_product_id}|${l.variation_id}`);
+    }
+  }
+  return untracked;
+}
+
 export async function pushStockToSites(productIds: string[]): Promise<StockSyncFailure[]> {
   if (productIds.length === 0) return [];
 
-  const { data: links, error } = await supabaseAdmin
+  const { data: allLinks, error } = await supabaseAdmin
     .from("product_site_links")
     .select("product_id, site, site_product_id, variation_id")
     .in("product_id", productIds);
-  if (error || !links || links.length === 0) return [];
+  if (error || !allLinks || allLinks.length === 0) return [];
+
+  // Leave untracked ("—") products alone: only products with a real stock
+  // number on the website get their count calculated and pushed.
+  const untracked = await untrackedLinkKeys(allLinks);
+  const links = allLinks.filter(
+    (l) => !untracked.has(`${l.site}|${l.site_product_id}|${l.variation_id}`)
+  );
+  if (links.length === 0) return [];
 
   const { data: stockRows } = await supabaseAdmin
     .from("stock_levels")
