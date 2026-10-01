@@ -76,6 +76,11 @@ const HEADER_ALIASES: Record<string, keyof Omit<CustomerImportRow, "row">> = {
   followup: "followUp",
 };
 
+/** True when a column heading is one of the customer fields (any spelling in HEADER_ALIASES). */
+export function isKnownCustomerHeader(h: string): boolean {
+  return !!HEADER_ALIASES[h.normalize("NFKC").toLowerCase().replace(/[^a-z0-9]/g, "")];
+}
+
 export const CUSTOMER_CSV_HEADERS = [
   "Phone Number",
   "Customer Name",
@@ -99,9 +104,73 @@ export const CUSTOMER_CSV_HEADERS = [
   "Follow-Up",
 ];
 
+/**
+ * Bytes -> text, whatever encoding the spreadsheet app saved. UTF-8 (with or
+ * without BOM) covers Khmer, Chinese, Thai, etc. as-is; Excel's "Unicode Text"
+ * is UTF-16; only a file that isn't valid UTF-8 falls back to Windows-1252.
+ */
+export function decodeCsvBytes(buf: ArrayBuffer): string {
+  const b = new Uint8Array(buf);
+  const decode = (label: string, start = 0) =>
+    new TextDecoder(label).decode(b.subarray(start));
+  if (b[0] === 0xef && b[1] === 0xbb && b[2] === 0xbf) return decode("utf-8", 3);
+  if (b[0] === 0xff && b[1] === 0xfe) return decode("utf-16le", 2);
+  if (b[0] === 0xfe && b[1] === 0xff) return decode("utf-16be", 2);
+  // UTF-16 without a BOM: mostly-ASCII text has a zero byte every other byte.
+  const n = Math.min(b.length, 400);
+  let nulEven = 0;
+  let nulOdd = 0;
+  for (let i = 0; i < n; i++) {
+    if (b[i] !== 0) continue;
+    if (i % 2) nulOdd++;
+    else nulEven++;
+  }
+  if (nulOdd > n / 8 && nulEven === 0) return decode("utf-16le");
+  if (nulEven > n / 8 && nulOdd === 0) return decode("utf-16be");
+  try {
+    return new TextDecoder("utf-8", { fatal: true }).decode(b);
+  } catch {
+    return decode("windows-1252");
+  }
+}
+
+/** Any Unicode decimal digit (Khmer ០១២, Arabic-Indic, Thai, fullwidth…) -> ASCII 0-9. */
+export function toAsciiDigits(s: string): string {
+  return s.replace(/\p{Nd}/gu, (ch) => {
+    if (ch >= "0" && ch <= "9") return ch;
+    const cp = ch.codePointAt(0)!;
+    let start = cp;
+    while (/\p{Nd}/u.test(String.fromCodePoint(start - 1))) start--;
+    return String((cp - start) % 10);
+  });
+}
+
+// Excel turns a long number saved in a number column into 8.55979E+11 and
+// throws the remaining digits away -- the real phone number can't be recovered.
+const SCIENTIFIC = /^\d(?:\.\d+)?e[+-]?\d+$/i;
+export function isDamagedNumber(s: string): boolean {
+  return SCIENTIFIC.test(s.trim());
+}
+
+/**
+ * Phone text -> digits only (+ leading +): non-ASCII digits converted, spaces /
+ * dashes / zero-width characters removed. "85596 9999 394", "០៩៦៩៩៩៩៣៩៤" and
+ * "855969559690/087589718" all work; the last gives the first number as the
+ * phone and the second as `extra`.
+ */
+function cleanPhone(raw: string): { phone: string; extra: string; damaged: boolean } {
+  const v = toAsciiDigits(raw.normalize("NFC")).replace(/[\u200B-\u200D\uFEFF\u00A0]/g, "").trim();
+  if (isDamagedNumber(v)) return { phone: "", extra: "", damaged: true };
+  const parts = v
+    .split(/[/,;|]+/)
+    .map((p) => p.replace(/[\s\-.()]/g, ""))
+    .filter(Boolean);
+  return { phone: parts[0] ?? "", extra: parts[1] ?? "", damaged: false };
+}
+
 /** RFC 4180-ish: quoted fields, "" escapes, CRLF/LF, BOM, and comma/semicolon/tab delimiters. */
 export function parseCsv(input: string): string[][] {
-  const text = input.replace(/^﻿/, "");
+  const text = input.replace(/^\uFEFF/, "");
   const firstLine = text.split(/\r?\n/, 1)[0] ?? "";
   const delimiter = [",", ";", "\t"]
     .map((d) => ({ d, n: firstLine.split(d).length }))
@@ -158,7 +227,7 @@ function isRealDate(y: number, m: number, d: number) {
  * own mm/dd/yyyy date pickers).
  */
 export function normalizeDate(value: string): string | null {
-  const v = value.trim();
+  const v = toAsciiDigits(value).trim();
   if (!v) return "";
   const pad = (n: number) => String(n).padStart(2, "0");
   let m = v.match(/^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})(?:[ T].*)?$/);
@@ -178,7 +247,7 @@ export function normalizeDate(value: string): string | null {
 }
 
 function normalizeInt(value: string, min: number, max: number): number | null | "invalid" {
-  const v = value.trim();
+  const v = toAsciiDigits(value).trim();
   if (!v) return null;
   if (!/^\d+$/.test(v)) return "invalid";
   const n = Number(v);
@@ -196,9 +265,16 @@ export type ParsedCustomerCsv = {
   recognizedColumns: string[];
   /** Headers in the file that don't match any customer field (ignored). */
   ignoredColumns: string[];
+  /** Rows skipped because Excel had turned the phone into 8.55979E+11. */
+  damagedPhones: number;
 };
 
 export function parseCustomerCsv(text: string): ParsedCustomerCsv {
+  return parseCustomerTable(parseCsv(text));
+}
+
+/** Rows already split into cells (first row = headings) -- from a CSV or a PDF table. */
+export function parseCustomerTable(table: string[][]): ParsedCustomerCsv {
   const empty = (fatal: string): ParsedCustomerCsv => ({
     rows: [],
     errors: [],
@@ -206,12 +282,14 @@ export function parseCustomerCsv(text: string): ParsedCustomerCsv {
     fatal,
     recognizedColumns: [],
     ignoredColumns: [],
+    damagedPhones: 0,
   });
 
-  const table = parseCsv(text);
   if (table.length < 2) return empty("The file has no customer rows.");
 
-  const header = table[0].map((h) => HEADER_ALIASES[h.toLowerCase().replace(/[^a-z0-9]/g, "")]);
+  const header = table[0].map(
+    (h) => HEADER_ALIASES[h.normalize("NFKC").toLowerCase().replace(/[^a-z0-9]/g, "")]
+  );
   const recognizedColumns = table[0].filter((_, i) => header[i]);
   const ignoredColumns = table[0].filter((h, i) => !header[i] && h.trim());
   if (!header.includes("name") && !header.includes("firstName") && !header.includes("lastName")) {
@@ -224,6 +302,7 @@ export function parseCustomerCsv(text: string): ParsedCustomerCsv {
   const errors: CustomerImportError[] = [];
   const warnings: CustomerImportError[] = [];
   const seenPhones = new Map<string, number>();
+  let damagedPhones = 0;
 
   for (let r = 1; r < table.length; r++) {
     const cells = table[r];
@@ -232,25 +311,55 @@ export function parseCustomerCsv(text: string): ParsedCustomerCsv {
 
     const get = (key: keyof Omit<CustomerImportRow, "row">) => {
       const idx = header.indexOf(key);
-      return idx >= 0 ? (cells[idx] ?? "").trim() : "";
+      // NFC so the same Khmer/Vietnamese/etc. text always compares and stores
+      // one way; NULs can't be stored in Postgres text.
+      return idx >= 0 ? (cells[idx] ?? "").replace(/\u0000/g, "").normalize("NFC").trim() : "";
     };
 
     const firstName = get("firstName");
     const lastName = get("lastName");
-    const name = get("name") || `${firstName} ${lastName}`.trim();
-    if (!name) {
-      errors.push({ row: rowNo, message: "Missing customer name" });
-      continue;
-    }
 
-    const phone = get("phone");
+    // Phones first -- they decide the name fallback and duplicate handling below.
+    const cleaned = cleanPhone(get("phone"));
+    let phone = cleaned.phone;
+    if (cleaned.damaged) {
+      // Excel destroyed the digits; keep the customer, just without a (fake) phone.
+      damagedPhones++;
+      warnings.push({
+        row: rowNo,
+        message: `Phone "${get("phone")}" was damaged by Excel — imported without a phone number`,
+      });
+    }
+    const second = cleanPhone(get("secondPhone"));
+    if (second.damaged) {
+      warnings.push({ row: rowNo, message: `2nd phone "${get("secondPhone")}" was damaged by Excel — left blank` });
+    }
+    let secondPhone = second.phone || cleaned.extra;
+
+    // Every row with anything in it becomes a customer. A phone number can only
+    // belong to one customer, so a later row reusing one is still imported --
+    // without that phone, the number kept as its 2nd phone when that is free.
     if (phone) {
       const firstSeen = seenPhones.get(phone);
       if (firstSeen !== undefined) {
-        errors.push({ row: rowNo, message: `Same phone number as row ${firstSeen} — skipped` });
-        continue;
+        warnings.push({
+          row: rowNo,
+          message: `Same phone number as row ${firstSeen} — imported as a separate customer without it${
+            secondPhone ? "" : " (kept as 2nd phone)"
+          }`,
+        });
+        if (!secondPhone) secondPhone = phone;
+        phone = "";
+      } else {
+        seenPhones.set(phone, rowNo);
       }
-      seenPhones.set(phone, rowNo);
+    }
+
+    // No name: fall back to whatever identifies the row, so it can be found and renamed later.
+    let name = get("name") || `${firstName} ${lastName}`.trim();
+    if (!name) {
+      name = phone || secondPhone || get("email") || get("pageUid") || get("address").split("\n")[0] || "Unnamed customer";
+      warnings.push({ row: rowNo, message: `No name — using "${name}" as the name` });
     }
 
     const customerSince = normalizeDate(get("customerSince"));
@@ -266,32 +375,39 @@ export function parseCustomerCsv(text: string): ParsedCustomerCsv {
       warnings.push({ row: rowNo, message: `YOB "${get("yob")}" isn't a valid year — left blank` });
     }
 
+    // Same Excel scientific-notation damage as phones -- a UID isn't worth keeping half-lost.
+    let pageUid = get("pageUid");
+    if (isDamagedNumber(pageUid)) {
+      warnings.push({ row: rowNo, message: `Page UID "${pageUid}" was damaged by Excel — left blank` });
+      pageUid = "";
+    }
+
     rows.push({
       row: rowNo,
       phone,
       name,
-      secondPhone: get("secondPhone"),
+      secondPhone,
       email: get("email"),
       photoUrl: get("photoUrl"),
       address: get("address"),
       customerSince: customerSince ?? "",
       firstName,
       lastName,
-      pageUid: get("pageUid"),
+      pageUid,
       source: get("source"),
       label: get("label"),
       capital: get("capital"),
       state: get("state"),
       dob: dob ?? "",
       yob: yob === "invalid" ? null : yob,
-      age: get("age"),
+      age: toAsciiDigits(get("age")),
       gender: get("gender"),
       nationality: get("nationality"),
       followUp: get("followUp"),
     });
   }
 
-  return { rows, errors, warnings, fatal: null, recognizedColumns, ignoredColumns };
+  return { rows, errors, warnings, fatal: null, recognizedColumns, ignoredColumns, damagedPhones };
 }
 
 export function customerCsvTemplate(): string {
