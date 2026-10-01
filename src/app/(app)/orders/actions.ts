@@ -54,22 +54,16 @@ export async function getLiveChangeStampAction(): Promise<string> {
   return `fallback|${orders.map((o) => `${o.id}:${o.fulfillmentStatus}`).join(",")}|${categories}`;
 }
 
-// How many storefront (channel="online") orders came in *today* and are
-// still sitting unhandled (fulfillment_status="new_order") -- the sidebar's
-// "Orders" badge, so sales staff notice a customer bought from the website
-// without needing the removed voice announcement. Scoped to today so it
-// reads like a fresh count each day (Monday's 10 don't pile onto Tuesday's
-// 5) rather than an ever-growing backlog. POS-charged orders never count
-// here; the cashier who charged one is already looking at it.
+// How many orders are still waiting to be picked up by staff -- the sidebar's
+// "Orders" badge. Every order counts, whether it was charged in the POS or came
+// in from a website, and from any day, as long as its status is still
+// "pre_order" or "new_order". Moving it on to Processing / Delivered /
+// Complete / Cancel drops it from the count.
 export async function getNewOnlineOrdersCountAction(): Promise<number> {
-  const today = new Date().toISOString().slice(0, 10);
   const { count, error } = await supabaseAdmin
     .from("orders")
     .select("id", { count: "exact", head: true })
-    .eq("channel", "online")
-    .eq("fulfillment_status", "new_order")
-    .gte("created_at", `${today}T00:00:00.000Z`)
-    .lte("created_at", `${today}T23:59:59.999Z`);
+    .in("fulfillment_status", ["pre_order", "new_order"]);
   if (error) throw error;
   return count ?? 0;
 }

@@ -28,3 +28,9 @@ export const STATUS_STYLES: Record<FulfillmentStatus, string> = {
   cancelled: "bg-red-100 text-red-700 dark:bg-red-950 dark:text-red-300",
   complete: "bg-green-100 text-green-700 dark:bg-green-950 dark:text-green-300",
 };
+
+// Only orders that have moved past Pre-Order / New Order count towards money:
+// revenue, orders, COGS, profit, the daily sales and cash reconciliation, and
+// the margin report. A Pre-Order or New Order hasn't been taken on yet, and a
+// Cancelled one never counts.
+export const COUNTED_FULFILLMENT_STATUSES: FulfillmentStatus[] = ["processing", "delivered", "complete"];
