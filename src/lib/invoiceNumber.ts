@@ -1,5 +1,5 @@
 // Invoice numbers are derived from the order's creation date rather than
-// stored -- `YYYYMM` for the first order of the month, `YYYYMM-2`, `-3` …
+// stored -- `YYYYMM-1` for the first order of the month, `YYYYMM-2`, `-3` …
 // for the rest. Computed at read time (see getInvoice / getOrdersList) so it
 // needs no schema change; the stored `orders.invoice_number` (old
 // `INV-000045` values) is just ignored for display.
@@ -25,9 +25,8 @@ export function invoiceMonthStartIso(iso: string): string {
   return new Date(Date.UTC(y, m, 1) - PP_OFFSET_MIN * 60_000).toISOString();
 }
 
-// YYYYMM, plus `-N` when this is the Nth (N > 1) order of that month.
+// YYYYMM-N, where N is the order's position in that month (first order = 1).
 export function formatInvoiceNumber(iso: string | null, seqInMonth: number): string | null {
   if (!iso) return null;
-  const stamp = invoiceMonthStamp(iso);
-  return seqInMonth <= 1 ? stamp : `${stamp}-${seqInMonth}`;
+  return `${invoiceMonthStamp(iso)}-${Math.max(seqInMonth, 1)}`;
 }
