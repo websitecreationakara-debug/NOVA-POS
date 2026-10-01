@@ -586,7 +586,7 @@ export async function getOrdersList(status?: FulfillmentStatus): Promise<OrderLi
     deliveryAt: o.delivery_at ?? null,
   }));
 
-  // Date-based invoice numbers (YYYYMM[-N]). Group by Phnom Penh month,
+  // Date-based invoice numbers (YYYYMM-N). Group by Phnom Penh month,
   // number oldest-first. Every month in this window is fully present except
   // possibly the oldest one -- if the 200-row cap truncated it, one count
   // query recovers how many earlier same-month orders were left out.
@@ -621,7 +621,7 @@ export async function getOrdersList(status?: FulfillmentStatus): Promise<OrderLi
 
 export type InvoiceData = {
   order: Order;
-  // Date-based number (YYYYMM[-N]) computed from paid_at -- see
+  // Date-based number (YYYYMM-N) computed from paid_at -- see
   // src/lib/invoiceNumber.ts. Falls back to a short order-id tag if the order
   // has no paid_at yet.
   invoiceNumber: string;
@@ -669,7 +669,7 @@ export async function getInvoice(orderId: string): Promise<InvoiceData | null> {
   };
 
   // Date-based invoice number: its position among that Phnom Penh month's
-  // paid orders decides the -N suffix (1st of the month = bare YYYYMM).
+  // paid orders decides the -N suffix (1st of the month = YYYYMM-1).
   let invoiceNumber = `#${orderFields.id.slice(0, 8)}`;
   if (orderFields.paid_at) {
     const { count } = await supabaseAdmin

@@ -5,6 +5,7 @@ import { supabaseAdmin } from "@/lib/supabase/server";
 import { getSessionUser } from "@/lib/supabase/auth-server";
 import type { Customer, DiscountType, Promotion } from "@/types/database";
 import type { CustomerImportRow } from "@/lib/customerCsv";
+import { formatInvoiceNumber, invoiceMonthStartIso } from "@/lib/invoiceNumber";
 
 export async function requireMarketingAccess() {
   // Defense in depth: /marketing is already role-gated in proxy.ts, but
@@ -206,12 +207,27 @@ export async function getCustomerPurchaseHistoryAction(
 
   const { data: orders, error: ordersErr } = await supabaseAdmin
     .from("orders")
-    .select("id, created_at, invoice_number, total")
+    .select("id, created_at, paid_at, status, total")
     .or(filters.join(","))
     .neq("fulfillment_status", "cancelled")
     .neq("status", "voided")
     .order("created_at", { ascending: false });
   if (ordersErr) throw new Error(ordersErr.message);
+
+  // Same date-based number the Orders page and the invoice show (YYYYMM-N):
+  // N is the order's position among that month's paid orders.
+  const invoiceNumbers = await Promise.all(
+    (orders ?? []).map(async (o) => {
+      if (o.status !== "paid" || !o.paid_at) return null;
+      const { count } = await supabaseAdmin
+        .from("orders")
+        .select("id", { count: "exact", head: true })
+        .eq("status", "paid")
+        .gte("paid_at", invoiceMonthStartIso(o.paid_at))
+        .lt("paid_at", o.paid_at);
+      return formatInvoiceNumber(o.paid_at, (count ?? 0) + 1);
+    })
+  );
 
   const history: CustomerPurchaseHistory = {
     orderCount: orders?.length ?? 0,
@@ -219,9 +235,9 @@ export async function getCustomerPurchaseHistoryAction(
     totalSpent: 0,
     firstOrderAt: orders?.[orders.length - 1]?.created_at ?? null,
     lastOrderAt: orders?.[0]?.created_at ?? null,
-    orders: (orders ?? []).map((o) => ({
+    orders: (orders ?? []).map((o, idx) => ({
       id: o.id,
-      invoiceNumber: o.invoice_number,
+      invoiceNumber: invoiceNumbers[idx],
       createdAt: o.created_at,
       total: o.total,
     })),
@@ -246,7 +262,7 @@ export async function getCustomerPurchaseHistoryAction(
       history.items.push({
         orderId: o.id,
         boughtAt: o.created_at,
-        invoiceNumber: o.invoice_number,
+        invoiceNumber: invoiceNumbers[orders.indexOf(o)],
         name: (l.products as { name: string } | null)?.name ?? "(deleted product)",
         quantity: l.quantity,
         spent: l.line_total,
