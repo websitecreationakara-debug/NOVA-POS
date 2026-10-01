@@ -234,6 +234,18 @@ export default function OrderEditor({
 
       <div className="mt-3 grid grid-cols-2 gap-x-4 gap-y-3 text-sm sm:grid-cols-3">
         <div>
+          <p className="mb-1 text-muted-foreground">Customer name</p>
+          {editing ? (
+            <input
+              value={dName}
+              onChange={(e) => setDName(e.target.value)}
+              className={fieldCls}
+            />
+          ) : (
+            <p className="font-medium">{customerName || "—"}</p>
+          )}
+        </div>
+        <div>
           <p className="mb-1 text-muted-foreground">Phone Number</p>
           {editing ? (
             <input
@@ -275,16 +287,6 @@ export default function OrderEditor({
             <p className="font-medium">{brandName}</p>
           )}
         </div>
-        {editing && (
-          <div className="col-span-2 sm:col-span-3">
-            <p className="mb-1 text-muted-foreground">Customer name</p>
-            <input
-              value={dName}
-              onChange={(e) => setDName(e.target.value)}
-              className={`${fieldCls} max-w-xs`}
-            />
-          </div>
-        )}
         {(editing || deliveryLabel) && (
           <div>
             <p className="mb-1 text-muted-foreground">Requested delivery</p>

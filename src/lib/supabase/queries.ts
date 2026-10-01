@@ -4,6 +4,7 @@ import { listWebsiteAddons, listWebsiteProducts } from "@/lib/websiteProducts/cl
 import { countLowStock } from "@/lib/websiteProducts/stock";
 import type { WebsiteCatalogId } from "@/lib/websiteProducts/types";
 import { formatInvoiceNumber, invoiceMonthStamp, invoiceMonthStartIso } from "@/lib/invoiceNumber";
+import { COUNTED_FULFILLMENT_STATUSES } from "@/lib/orderStatus";
 import { ALL_PAYMENT_METHODS, type PaymentMethod } from "@/lib/paymentMethods";
 import { aggregateStrictCogs, computeGrossMargin } from "@/lib/cogs";
 import { getEffectiveProductCost } from "@/lib/websiteProducts/purchaseCosts";
@@ -149,7 +150,7 @@ export async function getDailySales(
     .from("orders")
     .select("*")
     .eq("status", "paid")
-    .neq("fulfillment_status", "cancelled")
+    .in("fulfillment_status", COUNTED_FULFILLMENT_STATUSES)
     .gte("paid_at", `${fromDate}T00:00:00.000Z`)
     .lte("paid_at", `${toDate}T23:59:59.999Z`)
     .order("paid_at", { ascending: false });
@@ -316,7 +317,7 @@ export async function getDashboardStats(
     .from("orders")
     .select("total, delivery_fee, paid_at, brand_id, brands(name)")
     .eq("status", "paid")
-    .neq("fulfillment_status", "cancelled");
+    .in("fulfillment_status", COUNTED_FULFILLMENT_STATUSES);
   if (brandId !== ALL_BUSINESSES_ID) ordersQuery = ordersQuery.eq("brand_id", brandId);
 
   let productsQuery = supabaseAdmin
@@ -340,7 +341,7 @@ export async function getDashboardStats(
     .from("order_items")
     .select("product_id, quantity, unit_price, cogs, line_total, products(name), orders!inner(status, paid_at, brand_id)")
     .eq("orders.status", "paid")
-    .neq("orders.fulfillment_status", "cancelled");
+    .in("orders.fulfillment_status", COUNTED_FULFILLMENT_STATUSES);
   if (brandId !== ALL_BUSINESSES_ID) orderItemsQuery = orderItemsQuery.eq("orders.brand_id", brandId);
 
   // Waste/promotions -- joined to the product they were logged against so
@@ -791,7 +792,7 @@ export async function getCogsSummary(
     .from("order_items")
     .select("product_id, quantity, cogs, orders!inner(status, paid_at, brand_id)")
     .eq("orders.status", "paid")
-    .neq("orders.fulfillment_status", "cancelled")
+    .in("orders.fulfillment_status", COUNTED_FULFILLMENT_STATUSES)
     .gte("orders.paid_at", `${fromDate}T00:00:00.000Z`)
     .lte("orders.paid_at", `${toDate}T23:59:59.999Z`);
   if (brandId !== ALL_BUSINESSES_ID) itemsQuery = itemsQuery.eq("orders.brand_id", brandId);
@@ -1106,7 +1107,7 @@ export async function getMarginReport(
     .from("order_items")
     .select("product_id, quantity, line_total, cogs, orders!inner(status, paid_at, brand_id)")
     .eq("orders.status", "paid")
-    .neq("orders.fulfillment_status", "cancelled")
+    .in("orders.fulfillment_status", COUNTED_FULFILLMENT_STATUSES)
     .gte("orders.paid_at", `${fromDate}T00:00:00.000Z`)
     .lte("orders.paid_at", `${toDate}T23:59:59.999Z`);
   if (brandId !== ALL_BUSINESSES_ID) query = query.eq("orders.brand_id", brandId);

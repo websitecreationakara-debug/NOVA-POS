@@ -49,6 +49,7 @@ import {
 import { updateOrderAction } from "@/app/(app)/orders/actions";
 import { ensurePosProductForSiteProduct, syncPosProductName } from "./websiteActions";
 import { notifySaleCharged } from "@/lib/saleCharged";
+import { notifyOrdersChanged } from "@/lib/ordersChanged";
 import { parseGrams, sizedLine } from "@/lib/weight";
 import { COUNTRY_PREFIX, toFullPhone } from "@/lib/phone";
 
@@ -854,6 +855,7 @@ export default function SalesClient({
           orderSource,
         });
         setReceipt(result);
+        notifyOrdersChanged(); // refresh the sidebar's Orders badge right away
         notifySaleCharged({
           orderId: result.orderId,
           amount: result.total,
