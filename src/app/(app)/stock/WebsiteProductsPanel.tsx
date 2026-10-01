@@ -1034,13 +1034,13 @@ export default function WebsiteProductsPanel({
 
   return (
     <div className="flex h-full flex-col">
-      <div className="flex items-center gap-3 border-b border-black/[.08] px-6 py-3 dark:border-white/[.145]">
+      <div className="flex flex-wrap items-center gap-3 border-b border-black/[.08] px-3 py-3 sm:px-6 dark:border-white/[.145]">
         <input
           type="text"
           placeholder="Search products…"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          className="min-w-0 flex-1 rounded border border-black/[.15] bg-transparent px-3 py-1.5 text-sm dark:border-white/[.2]"
+          className="min-w-[12rem] flex-1 rounded border border-black/[.15] bg-transparent px-3 py-1.5 text-sm dark:border-white/[.2]"
         />
         <button
           onClick={() => setShowForm((v) => !v)}

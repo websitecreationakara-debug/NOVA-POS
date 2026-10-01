@@ -1662,7 +1662,7 @@ export default function AccountanceClient({
               )}
             </section>
 
-            <div className="grid gap-6 lg:grid-cols-2">
+            <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
               <section className="rounded-lg border border-black/[.08] p-4 dark:border-white/[.145]">
                 <h2 className="font-medium">Profit &amp; Loss</h2>
                 <p className="mt-1 text-xs text-zinc-500">{rangeLabel}</p>
