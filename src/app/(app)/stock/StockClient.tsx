@@ -617,8 +617,8 @@ export default function StockClient({
   }
 
   return (
-    <div className="flex h-full flex-col">
-      <header className="flex items-center gap-3 border-b border-black/[.08] px-6 py-3 dark:border-white/[.145]">
+    <div className="flex flex-col lg:h-full">
+      <header className="flex flex-wrap items-center gap-3 border-b border-black/[.08] px-3 py-3 sm:px-6 dark:border-white/[.145]">
         <select
           className="rounded border border-black/[.15] bg-card px-3 py-1.5 text-sm text-foreground dark:border-white/[.2]"
           value={currentBrand.id}
@@ -632,13 +632,13 @@ export default function StockClient({
         </select>
         <h1 className="text-lg font-medium">Stock</h1>
         {!showWebsite && (
-        <div className="ml-auto flex items-center gap-3">
+        <div className="flex w-full flex-wrap items-center gap-3 sm:ml-auto sm:w-auto">
           <input
             type="text"
             placeholder="Search name or SKU…"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            className="w-56 rounded border border-black/[.15] bg-transparent px-3 py-1.5 text-sm dark:border-white/[.2]"
+            className="min-w-0 flex-1 rounded sm:w-56 sm:flex-none border border-black/[.15] bg-transparent px-3 py-1.5 text-sm dark:border-white/[.2]"
           />
           <label className="flex items-center gap-1.5 text-sm text-zinc-500">
             <input
@@ -776,7 +776,7 @@ export default function StockClient({
         {categoryError && <p className="w-full text-xs text-red-500">{categoryError}</p>}
       </div>
 
-      <div className="flex-1 overflow-auto">
+      <div className="overflow-x-auto lg:flex-1 lg:overflow-auto">
         <table className="w-full border-collapse text-sm">
           <thead className="sticky top-0 bg-zinc-50 dark:bg-zinc-900">
             <tr className="border-b border-black/[.08] text-left text-xs text-zinc-500 dark:border-white/[.145]">

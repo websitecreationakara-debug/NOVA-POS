@@ -1033,7 +1033,7 @@ export default function WebsiteProductsPanel({
   }
 
   return (
-    <div className="flex h-full flex-col">
+    <div className="flex flex-col lg:h-full">
       <div className="flex flex-wrap items-center gap-3 border-b border-black/[.08] px-3 py-3 sm:px-6 dark:border-white/[.145]">
         <input
           type="text"
@@ -1109,7 +1109,8 @@ export default function WebsiteProductsPanel({
         </button>
       </div>
 
-      <div className="flex flex-wrap gap-2 border-b border-black/[.08] px-6 py-3 dark:border-white/[.145]">
+      {/* Phones: one swipeable row instead of a wall of wrapped chips. */}
+      <div className="flex gap-2 overflow-x-auto border-b border-black/[.08] px-3 py-3 sm:flex-wrap sm:overflow-visible sm:px-6 dark:border-white/[.145] [&>button]:shrink-0">
         <button
           type="button"
           onClick={() => setCategoryFilter("")}
@@ -1388,7 +1389,7 @@ export default function WebsiteProductsPanel({
         </div>
       )}
 
-      <div className="flex-1 overflow-auto">
+      <div className="overflow-x-auto lg:flex-1 lg:overflow-auto">
         {categoryFilter === ADDONS_FILTER_ID ? (
           <WebsiteAddonsTable catalogId={catalogId} addons={filteredAddons} />
         ) : (
@@ -1863,7 +1864,7 @@ export default function WebsiteProductsPanel({
       </div>
 
       {categoryFilter !== ADDONS_FILTER_ID && products && filtered.length > 0 && (
-        <div className="flex flex-wrap items-center justify-between gap-3 border-t border-black/[.08] px-6 py-3 text-sm dark:border-white/[.145]">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-t border-black/[.08] px-3 py-3 text-sm sm:px-6 dark:border-white/[.145]">
           <label className="flex items-center gap-2 text-xs text-zinc-500">
             Items per page
             <select
