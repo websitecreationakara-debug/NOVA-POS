@@ -142,9 +142,9 @@ export default function OrdersTable({
     "rounded-lg border border-border bg-transparent px-2.5 py-1.5 text-sm text-foreground [color-scheme:light] dark:[color-scheme:dark]";
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
-      <div className="flex flex-wrap items-center gap-2 px-6 pb-3">
-        <div className="relative min-w-[14rem] flex-1 sm:max-w-xs">
+    <div className="flex flex-col lg:min-h-0 lg:flex-1">
+      <div className="flex flex-wrap items-center gap-2 px-3 pb-3 sm:px-6">
+        <div className="relative min-w-0 basis-full sm:max-w-xs sm:min-w-[14rem] sm:flex-1 sm:basis-auto">
           <Search className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
           <input
             type="text"
@@ -207,7 +207,7 @@ export default function OrdersTable({
       </div>
 
       {selected.size > 0 && (
-        <div className="mx-6 mb-3 flex flex-wrap items-center gap-2 rounded-lg border border-brand/30 bg-brand/10 px-4 py-2.5 text-sm">
+        <div className="mx-3 mb-3 flex flex-wrap items-center gap-2 rounded-lg border border-brand/30 sm:mx-6 bg-brand/10 px-4 py-2.5 text-sm">
           <span className="font-semibold">{selected.size} selected</span>
           <span className="text-xs text-muted-foreground">Mark as</span>
           {FULFILLMENT_STATUSES.map((s) => (
@@ -241,13 +241,75 @@ export default function OrdersTable({
         </div>
       )}
 
-      <div className="flex-1 overflow-auto px-6 pb-6">
+      <div className="px-3 pb-6 sm:px-6 lg:flex-1 lg:overflow-auto">
         {filtered.length === 0 ? (
           <p className="text-sm text-muted-foreground">
             {orders.length === 0 ? "No orders found." : "No orders match your filters."}
           </p>
         ) : (
-          <table className="w-full text-sm">
+          <>
+          {/* Phones: one card per order -- a wide table is unreadable there. */}
+          <ul className="space-y-2 md:hidden">
+            {paged.map((o) => (
+              <li
+                key={o.id}
+                onClick={() => router.push(`/orders/${o.id}`)}
+                className={`cursor-pointer rounded-xl border border-border bg-card p-3 ${
+                  selected.has(o.id) ? "border-brand/50 bg-brand/5" : ""
+                }`}
+              >
+                <div className="flex items-start gap-3">
+                  <input
+                    type="checkbox"
+                    aria-label={`Select ${o.invoiceNumber ?? o.id}`}
+                    checked={selected.has(o.id)}
+                    onClick={(e) => e.stopPropagation()}
+                    onChange={() => toggle(o.id)}
+                    className="mt-1 accent-[var(--brand)]"
+                  />
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-baseline justify-between gap-2">
+                      <Link
+                        href={`/orders/${o.id}`}
+                        onClick={(e) => e.stopPropagation()}
+                        className="font-semibold text-brand hover:underline"
+                      >
+                        {o.invoiceNumber ?? `#${o.id.slice(0, 8)}`}
+                      </Link>
+                      <span className="font-semibold tabular-nums">{formatMoney(o.total)}</span>
+                    </div>
+                    <p className="mt-0.5 truncate text-sm">{o.customerName || "—"}</p>
+                    <p className="truncate text-xs text-muted-foreground">
+                      {o.customerPhone || "—"} · {o.brandName}
+                    </p>
+                  </div>
+                  <div onClick={(e) => e.stopPropagation()}>
+                    <OrderRowMenu orderId={o.id} />
+                  </div>
+                </div>
+                <div className="mt-2.5 flex flex-wrap items-center justify-between gap-2 border-t border-border pt-2.5">
+                  <div onClick={(e) => e.stopPropagation()}>
+                    <OrderStatusControl
+                      key={`${o.id}-${o.fulfillmentStatus}`}
+                      orderId={o.id}
+                      status={o.fulfillmentStatus}
+                      variant="compact"
+                    />
+                  </div>
+                  <div className="text-right text-xs text-muted-foreground">
+                    <div>{o.paidAt ? new Date(o.paidAt).toLocaleDateString() : "—"}</div>
+                    {o.deliveryAt && (
+                      <div className="mt-0.5 flex items-center justify-end gap-1">
+                        <Truck className="size-3" />
+                        {formatDeliveryAt(o.deliveryAt)}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </li>
+            ))}
+          </ul>
+          <table className="hidden w-full text-sm md:table">
             <thead>
               <tr className="border-b border-border text-left text-xs font-semibold text-muted-foreground">
                 <th className="w-8 py-2">
@@ -341,11 +403,12 @@ export default function OrdersTable({
               ))}
             </tbody>
           </table>
+          </>
         )}
       </div>
 
       {filtered.length > 0 && (
-        <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border px-6 py-3 text-sm">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border px-3 py-3 text-sm sm:px-6">
           <label className="flex items-center gap-2 text-xs text-muted-foreground">
             Items per page
             <select

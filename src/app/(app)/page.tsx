@@ -302,7 +302,7 @@ export default async function Home({
         </Link>
       )}
 
-      <div className="grid gap-4 lg:grid-cols-2">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         <section className="rounded-2xl border border-border bg-card p-6">
           <h2 className="font-display font-bold">Top Branch ({period})</h2>
           <p className="mt-1 text-xs text-muted-foreground">Ranked by revenue</p>

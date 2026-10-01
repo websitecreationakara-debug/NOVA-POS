@@ -204,6 +204,8 @@ export default function SalesClient({
   // phone input, so the checkout panel's own `overflow-y-auto` scroll
   // container can't clip it.
   const phoneInputRef = useRef<HTMLDivElement>(null);
+  // The order panel, so the phone/tablet "View order" button can jump to it.
+  const orderPanelRef = useRef<HTMLElement>(null);
   const [phonePos, setPhonePos] = useState<{ bottom: number; left: number; width: number } | null>(
     null
   );
@@ -929,12 +931,24 @@ export default function SalesClient({
           </div>
         </div>
       )}
+      {/* Phones/tablets stack the order panel under the products, so give the
+          cashier a way to reach it without scrolling the whole grid. */}
+      {cart.length > 0 && (
+        <button
+          type="button"
+          onClick={() => orderPanelRef.current?.scrollIntoView({ behavior: "smooth", block: "start" })}
+          className="fixed right-4 bottom-4 z-30 flex items-center gap-2 rounded-full bg-brand px-4 py-2.5 text-sm font-semibold text-white shadow-lg lg:hidden"
+        >
+          <ShoppingCart className="size-4" />
+          View order · {formatMoney(finalTotal)}
+        </button>
+      )}
       {/* Portaled into the shared TopBar's left side (see TopBarSlot) instead
           of its own row below it -- Sales' product grid benefits the most of
           any page from that extra row of vertical space. */}
       <TopBarSlot>
         <select
-          className="rounded border border-black/[.15] bg-card px-3 py-1.5 text-sm text-foreground disabled:opacity-50 dark:border-white/[.2]"
+          className="min-w-0 max-w-[9.5rem] rounded border border-black/[.15] bg-card px-3 py-1.5 text-sm text-foreground disabled:opacity-50 sm:max-w-none dark:border-white/[.2]"
           value={currentBrand.id}
           onChange={(e) => switchBrand(e.target.value)}
           disabled={!!editOrder}
@@ -945,14 +959,14 @@ export default function SalesClient({
             </option>
           ))}
         </select>
-        <h1 className="text-sm font-semibold text-foreground">Sales</h1>
+        <h1 className="hidden text-sm font-semibold text-foreground sm:block">Sales</h1>
         {!showWebsite && (
           <input
             type="text"
             placeholder="Search name or SKU…"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            className="ml-auto w-64 rounded border border-black/[.15] bg-transparent px-3 py-1.5 text-sm dark:border-white/[.2]"
+            className="min-w-0 flex-1 rounded border border-black/[.15] bg-transparent px-3 py-1.5 text-sm sm:ml-auto sm:w-64 sm:flex-none dark:border-white/[.2]"
           />
         )}
       </TopBarSlot>
@@ -972,7 +986,7 @@ export default function SalesClient({
         </div>
       )}
 
-      <div className="flex flex-1 overflow-hidden">
+      <div className="flex flex-1 flex-col overflow-y-auto lg:flex-row lg:overflow-hidden">
         {showWebsite && websiteCatalog ? (
           <SalesWebsiteGrid
             key={websiteCatalog.id}
@@ -986,7 +1000,7 @@ export default function SalesClient({
             khmerNames={khmerNamesBySiteProduct}
           />
         ) : (
-        <main className="flex-1 overflow-y-auto p-6">
+        <main className="flex-none p-3 sm:p-6 lg:flex-1 lg:overflow-y-auto">
           {/* Category chips wrap onto a few rows -- no horizontal scrolling.
               Capped at ~3 rows with a toggle so a long list doesn't push the
               products down. */}
@@ -1103,7 +1117,7 @@ export default function SalesClient({
         </main>
         )}
 
-        <aside className="flex w-[34rem] flex-col border-l border-black/[.08] dark:border-white/[.145]">
+        <aside ref={orderPanelRef} className="flex w-full shrink-0 flex-col border-t border-black/[.08] lg:w-[34rem] lg:border-t-0 lg:border-l dark:border-white/[.145]">
           <div className="border-b border-black/[.08] px-4 py-3 font-medium dark:border-white/[.145]">
             Order
           </div>

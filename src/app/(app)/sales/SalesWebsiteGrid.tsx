@@ -251,7 +251,7 @@ export default function SalesWebsiteGrid({
   }, [currentPage]);
 
   return (
-    <main ref={scrollerRef} className="flex-1 overflow-y-auto p-6">
+    <main ref={scrollerRef} className="flex-none p-3 sm:p-6 lg:flex-1 lg:overflow-y-auto">
       {showChips && (
         // Plain wrap, no cap/collapse -- same as Stock's Website tab.
         <div className="mb-4 flex flex-wrap gap-2">

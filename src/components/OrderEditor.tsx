@@ -344,10 +344,10 @@ export default function OrderEditor({
           </span>
         </div>
         <div className="overflow-x-auto">
-          <table className="w-full text-sm">
+          <table className="w-full text-sm [&_td]:pr-3 [&_th]:pr-3">
             <thead>
               <tr className="border-b border-border text-left text-xs font-semibold text-muted-foreground">
-                <th className="py-2">Product Name</th>
+                <th className="min-w-[8rem] py-2">Product Name</th>
                 <th className="py-2 text-right">Amount</th>
                 <th className="py-2">Unit</th>
                 <th className="py-2 text-right">Unit Price</th>

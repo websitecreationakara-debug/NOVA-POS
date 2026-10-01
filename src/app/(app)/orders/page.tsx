@@ -46,10 +46,10 @@ export default async function OrdersPage({
   ];
 
   return (
-    <main className="flex h-full flex-col">
-      <header className="flex items-baseline gap-3 border-b border-black/[.08] px-6 py-3 dark:border-white/[.145]">
+    <main className="flex flex-col lg:h-full">
+      <header className="flex flex-wrap items-baseline gap-x-3 gap-y-1 border-b border-black/[.08] px-3 py-3 sm:px-6 dark:border-white/[.145]">
         <h1 className="text-lg font-semibold">Orders</h1>
-        <span className="rounded-full bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground">
+        <span className="rounded-full bg-muted px-2 py-0.5 text-xs font-medium whitespace-nowrap text-muted-foreground">
           {orders.length} total
         </span>
         <span className="text-sm text-muted-foreground">
@@ -57,14 +57,14 @@ export default async function OrdersPage({
         </span>
       </header>
 
-      <div className="grid grid-cols-3 gap-3 px-6 pt-4">
+      <div className="grid grid-cols-3 gap-2 px-3 pt-4 sm:gap-3 sm:px-6">
         {summary.map((s) => (
           <Link
             key={s.label}
             href={s.href}
-            className="rounded-xl border border-border bg-card px-4 py-3 transition-colors hover:border-foreground/20"
+            className="rounded-xl border border-border bg-card px-3 py-2.5 transition-colors hover:border-foreground/20 sm:px-4 sm:py-3"
           >
-            <p className="text-xs font-medium tracking-wide text-muted-foreground uppercase">
+            <p className="text-[11px] leading-tight font-medium tracking-wide text-muted-foreground uppercase sm:text-xs">
               {s.label}
             </p>
             <p className="font-display mt-0.5 text-2xl font-bold tabular-nums">{s.value}</p>

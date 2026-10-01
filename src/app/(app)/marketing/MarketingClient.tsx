@@ -309,7 +309,8 @@ export default function MarketingClient({
           </button>
         </div>
 
-        <table className="mt-4 w-full text-left text-sm">
+        <div className="mt-4 overflow-x-auto">
+        <table className="w-full text-left text-sm whitespace-nowrap [&_td]:pr-4 [&_th]:pr-4">
           <thead>
             <tr className="border-b border-black/[.08] text-xs tracking-wide text-zinc-500 uppercase dark:border-white/[.145]">
               <th className="py-2">Code</th>
@@ -356,6 +357,7 @@ export default function MarketingClient({
             )}
           </tbody>
         </table>
+        </div>
       </section>
 
       <section className="mt-6 rounded-lg border border-black/[.08] p-4 dark:border-white/[.145]">

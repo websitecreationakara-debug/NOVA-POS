@@ -34,7 +34,7 @@ export default function OrderStatusFilter({ active }: { active: FulfillmentStatu
   }
 
   return (
-    <div className="flex flex-wrap gap-2 px-6 py-4" aria-busy={isPending}>
+    <div className="flex flex-wrap gap-2 px-3 py-4 sm:px-6" aria-busy={isPending}>
       {CHIPS.map((c) => {
         const isActive = c.value === shown;
         return (
