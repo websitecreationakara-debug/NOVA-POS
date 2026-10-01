@@ -1,9 +1,10 @@
 "use client";
 
-import { Fragment, useState, useTransition } from "react";
+import { Fragment, useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { ChevronLeft, ChevronRight, Trash2 } from "lucide-react";
 import type { Brand, Customer, DiscountType, Promotion } from "@/types/database";
+import CustomerPurchasesDialog from "@/components/CustomerPurchasesDialog";
 import DeleteCustomerDialog from "@/components/DeleteCustomerDialog";
 import ImportCustomersButton from "@/components/ImportCustomersButton";
 import {
@@ -57,11 +58,25 @@ export default function MarketingClient({
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editFields, setEditFields] = useState<Record<string, string>>({});
   const [deletingCustomer, setDeletingCustomer] = useState<Customer | null>(null);
+  const [viewingCustomer, setViewingCustomer] = useState<Customer | null>(null);
 
   // Dynamic (type-as-you-go) filter over the up-to-200 rows the server already
-  // sent for the last applied search -- instant, no round trip. The Search
-  // button/Enter still exist to re-query the server (e.g. to go beyond the
-  // 200-row cap with a different term).
+  // sent for the last applied search -- instant, no round trip while typing.
+  // The server only ever sends 200 of the (20k+) customers, so once typing
+  // pauses the term is also applied to the URL (?q=), which re-queries the
+  // server so a customer outside that first 200 shows up too.
+  useEffect(() => {
+    const term = search.trim();
+    if (term === searchTerm.trim()) return;
+    const id = setTimeout(() => {
+      const params = new URLSearchParams(window.location.search);
+      if (term) params.set("q", term);
+      else params.delete("q");
+      router.replace(`/marketing?${params.toString()}`, { scroll: false });
+    }, 350);
+    return () => clearTimeout(id);
+  }, [search, searchTerm, router]);
+
   const searchLower = search.trim().toLowerCase();
   const visibleCustomers = searchLower
     ? customers.filter(
@@ -388,7 +403,11 @@ export default function MarketingClient({
           <tbody>
             {pagedCustomers.map((c) => (
               <Fragment key={c.id}>
-                <tr className="border-t border-black/[.06] dark:border-white/[.08]">
+                <tr
+                  onClick={() => setViewingCustomer(c)}
+                  title="Click to see what this customer bought"
+                  className="cursor-pointer border-t border-black/[.06] hover:bg-black/[.03] dark:border-white/[.08] dark:hover:bg-white/[.05]"
+                >
                   <td className="py-2">{c.phone || "—"}</td>
                   <td>{c.name}</td>
                   <td>{c.email || "—"}</td>
@@ -419,13 +438,20 @@ export default function MarketingClient({
                   <td>{c.follow_up || "—"}</td>
                   <td className="text-right whitespace-nowrap">
                     <button
-                      onClick={() => (editingId === c.id ? setEditingId(null) : startEdit(c))}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (editingId === c.id) setEditingId(null);
+                        else startEdit(c);
+                      }}
                       className="text-zinc-400 hover:text-black dark:hover:text-white"
                     >
                       {editingId === c.id ? "Cancel" : "Edit"}
                     </button>
                     <button
-                      onClick={() => setDeletingCustomer(c)}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setDeletingCustomer(c);
+                      }}
                       disabled={isPending}
                       title="Delete customer"
                       aria-label="Delete customer"
@@ -528,7 +554,7 @@ export default function MarketingClient({
             {visibleCustomers.length === 0 && (
               <tr>
                 <td colSpan={20} className="py-4 text-sm text-zinc-500">
-                  No customers found.
+                  {search.trim() !== searchTerm.trim() ? "Searching..." : "No customers found."}
                 </td>
               </tr>
             )}
@@ -577,6 +603,13 @@ export default function MarketingClient({
         )}
       </section>
 
+      {viewingCustomer && (
+        <CustomerPurchasesDialog
+          customerId={viewingCustomer.id}
+          name={viewingCustomer.name}
+          onClose={() => setViewingCustomer(null)}
+        />
+      )}
       {deletingCustomer && (
         <DeleteCustomerDialog
           customerId={deletingCustomer.id}

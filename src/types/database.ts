@@ -586,6 +586,10 @@ export type Database = {
     };
     Views: Record<string, never>;
     Functions: {
+      live_change_stamp: {
+        Args: Record<string, never>;
+        Returns: string;
+      };
       charge_order: {
         Args: {
           p_brand_id: string;

@@ -91,7 +91,10 @@ export async function listCustomersAction(search?: string): Promise<Customer[]> 
   let query = supabaseAdmin.from("customers").select("*").order("name").limit(200);
   const term = search?.trim();
   if (term) {
-    query = query.or(`name.ilike.%${term}%,phone.ilike.%${term}%`);
+    // Quoted so a comma/parenthesis typed into the search box isn't parsed as
+    // part of the filter syntax.
+    const pattern = `"%${term.replace(/[\\"]/g, "\\$&")}%"`;
+    query = query.or(`name.ilike.${pattern},phone.ilike.${pattern}`);
   }
 
   const { data, error } = await query;
@@ -160,6 +163,97 @@ export async function deleteCustomerAction(id: string): Promise<void> {
   }
 
   revalidatePath("/marketing");
+}
+
+export type CustomerPurchaseHistory = {
+  orderCount: number;
+  totalItems: number;
+  totalSpent: number;
+  firstOrderAt: string | null;
+  lastOrderAt: string | null;
+  // One entry per order (its invoice), newest first.
+  orders: { id: string; invoiceNumber: string | null; createdAt: string; total: number }[];
+  // One entry per item on each purchase, newest purchase first.
+  items: {
+    orderId: string;
+    boughtAt: string;
+    invoiceNumber: string | null;
+    name: string;
+    quantity: number;
+    spent: number;
+  }[];
+};
+
+// Everything a customer has bought, past to now, one row per item with the
+// date it was bought. Orders are matched by customer_id, or by phone for
+// orders saved before/without a link (website orders carry the phone).
+// Cancelled/voided orders don't count.
+export async function getCustomerPurchaseHistoryAction(
+  customerId: string
+): Promise<CustomerPurchaseHistory> {
+  await requireMarketingAccess();
+
+  const { data: customer, error: customerErr } = await supabaseAdmin
+    .from("customers")
+    .select("id, phone")
+    .eq("id", customerId)
+    .single();
+  if (customerErr) throw new Error(customerErr.message);
+
+  const phone = customer.phone?.trim();
+  const filters = [`customer_id.eq.${customer.id}`];
+  if (phone) filters.push(`customer_phone.eq."${phone.replace(/[\\"]/g, "\\$&")}"`);
+
+  const { data: orders, error: ordersErr } = await supabaseAdmin
+    .from("orders")
+    .select("id, created_at, invoice_number, total")
+    .or(filters.join(","))
+    .neq("fulfillment_status", "cancelled")
+    .neq("status", "voided")
+    .order("created_at", { ascending: false });
+  if (ordersErr) throw new Error(ordersErr.message);
+
+  const history: CustomerPurchaseHistory = {
+    orderCount: orders?.length ?? 0,
+    totalItems: 0,
+    totalSpent: 0,
+    firstOrderAt: orders?.[orders.length - 1]?.created_at ?? null,
+    lastOrderAt: orders?.[0]?.created_at ?? null,
+    orders: (orders ?? []).map((o) => ({
+      id: o.id,
+      invoiceNumber: o.invoice_number,
+      createdAt: o.created_at,
+      total: o.total,
+    })),
+    items: [],
+  };
+  if (!orders || orders.length === 0) return history;
+
+  const { data: lines, error: linesErr } = await supabaseAdmin
+    .from("order_items")
+    .select("order_id, quantity, line_total, products(name)")
+    .in("order_id", orders.map((o) => o.id));
+  if (linesErr) throw new Error(linesErr.message);
+
+  const linesByOrder = new Map<string, NonNullable<typeof lines>>();
+  for (const l of lines ?? []) {
+    linesByOrder.set(l.order_id, [...(linesByOrder.get(l.order_id) ?? []), l]);
+    history.totalItems += l.quantity;
+    history.totalSpent += l.line_total;
+  }
+  for (const o of orders) {
+    for (const l of linesByOrder.get(o.id) ?? []) {
+      history.items.push({
+        orderId: o.id,
+        boughtAt: o.created_at,
+        invoiceNumber: o.invoice_number,
+        name: (l.products as { name: string } | null)?.name ?? "(deleted product)",
+        quantity: l.quantity,
+        spent: l.line_total,
+      });
+    }
+  }
+  return history;
 }
 
 // ---- CSV import ----------------------------------------------------------
