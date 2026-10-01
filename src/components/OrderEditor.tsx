@@ -28,6 +28,7 @@ type Row = {
   unit: string;
   quantity: number;
   unitPrice: number;
+  sizeLabel?: string | null;
 };
 
 export type OrderEditorItem = {
@@ -36,6 +37,8 @@ export type OrderEditorItem = {
   unit: string;
   quantity: number;
   unitPrice: number;
+  // Custom size sold ("100g") -- carried through so saving doesn't drop it.
+  sizeLabel?: string | null;
 };
 
 let rowSeq = 0;
@@ -137,7 +140,12 @@ export default function OrderEditor({
   async function save() {
     const payload = draft
       .filter((r) => r.quantity > 0)
-      .map((r) => ({ productId: r.productId, quantity: r.quantity, unitPrice: r.unitPrice }));
+      .map((r) => ({
+        productId: r.productId,
+        quantity: r.quantity,
+        unitPrice: r.unitPrice,
+        sizeLabel: r.sizeLabel,
+      }));
     if (payload.length === 0) {
       setError("An order needs at least one product.");
       return;
@@ -350,7 +358,10 @@ export default function OrderEditor({
             <tbody>
               {rows.map((r) => (
                 <tr key={r.key} className="border-b border-border">
-                  <td className="py-2 pr-2">{r.name}</td>
+                  <td className="py-2 pr-2">
+                    {r.name}
+                    {r.sizeLabel ? ` — ${r.sizeLabel}` : ""}
+                  </td>
                   <td className="py-2 text-right">
                     {editing ? (
                       <input

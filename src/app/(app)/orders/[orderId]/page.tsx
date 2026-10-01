@@ -75,6 +75,7 @@ export default async function OrderDetailPage({
             unit: i.unit,
             quantity: i.quantity,
             unitPrice: i.unitPrice,
+            sizeLabel: i.sizeLabel,
           }))}
         />
       </div>

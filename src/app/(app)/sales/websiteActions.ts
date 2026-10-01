@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { supabaseAdmin } from "@/lib/supabase/server";
+import { getSessionUser } from "@/lib/supabase/auth-server";
 import { getCatalog } from "@/lib/websiteProducts/catalogs";
 import type { WebsiteCatalogId } from "@/lib/websiteProducts/types";
 import type { ProductSiteLink } from "@/types/database";
@@ -125,4 +126,26 @@ export async function ensurePosProductForSiteProduct(input: {
   revalidatePath("/stock");
   revalidatePath("/sales");
   return { id: created.id, name: created.name, price: created.price, unit: created.unit };
+}
+
+// Keeps a linked POS product's name in step with its website title -- the cart
+// and invoices read the POS product's name, so a product renamed on the
+// website would otherwise keep showing its old name there forever. Called when
+// a website product is tapped on Sales. A no-op when the names already match.
+export async function syncPosProductName(productId: string, title: string): Promise<void> {
+  const user = await getSessionUser();
+  if (!user) throw new Error("Not signed in");
+  const name = title.trim();
+  if (!name) return;
+  const { data, error } = await supabaseAdmin
+    .from("products")
+    .update({ name })
+    .eq("id", productId)
+    .neq("name", name)
+    .select("id");
+  if (error) throw error;
+  if (data && data.length > 0) {
+    revalidatePath("/stock");
+    revalidatePath("/sales");
+  }
 }

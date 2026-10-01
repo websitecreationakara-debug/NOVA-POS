@@ -10,6 +10,17 @@ export interface CartLine {
   name: string;
   unitPrice: number;
   quantity: number;
+  // Custom size sold ("100g" of a 350g pack) -- quantity then holds the
+  // fraction of a unit. listPrice is the full-size price that was in effect,
+  // kept client-side so the size can be changed again.
+  sizeLabel?: string | null;
+  listPrice?: number;
+  // Shown in the cart instead of `name` when set: the product's Khmer name, and
+  // its scale (unit) with the Khmer wording. `name` stays the English name --
+  // that's what the weight lookup and everything saved on the order use.
+  nameKm?: string | null;
+  unit?: string;
+  unitKm?: string | null;
 }
 
 export interface ChargeResult {
@@ -190,6 +201,24 @@ export async function chargeOrder(input: {
   // whole sale for the cashier and risks a re-charge. Surface it as a warning
   // instead.
   const warnings: string[] = [];
+
+  // Custom sizes ("100g" of a 350g pack) -- charge_order() has no field for
+  // them, so stamp each label on its line now. A cart holds one line per
+  // product, so (order, product) picks the line.
+  for (const l of lines) {
+    const sizeLabel = l.sizeLabel?.trim();
+    if (!sizeLabel) continue;
+    const { error: sizeError } = await supabaseAdmin
+      .from("order_items")
+      .update({ size_label: sizeLabel })
+      .eq("order_id", orderId)
+      .eq("product_id", l.productId);
+    if (sizeError) {
+      warnings.push(
+        `Order saved, but the "${sizeLabel}" size on ${l.name} didn't. Run the size_label migration, then set it on the order. (${sizeError.message})`
+      );
+    }
+  }
 
   // charge_order() doesn't take a delivery time -- stamp it on afterwards so
   // the RPC signature stays put. Parse it here so a malformed value can't
