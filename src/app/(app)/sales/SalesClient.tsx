@@ -513,6 +513,10 @@ export default function SalesClient({
     );
   }
 
+  function setUnitPrice(productId: string, unitPrice: number) {
+    setCart((prev) => prev.map((l) => (l.productId === productId ? { ...l, unitPrice } : l)));
+  }
+
   function removeLine(productId: string) {
     setCart((prev) => prev.filter((l) => l.productId !== productId));
   }
@@ -922,7 +926,13 @@ export default function SalesClient({
               <div key={line.productId} className="flex items-center justify-between py-2 text-sm">
                 <div className="flex-1">
                   <div>{line.name}</div>
-                  <div className="text-zinc-500">{formatMoney(line.unitPrice)} each</div>
+                  <div className="flex items-center gap-1 text-zinc-500">
+                    <UnitPriceInput
+                      value={line.unitPrice}
+                      onChange={(price) => setUnitPrice(line.productId, price)}
+                    />
+                    <span>each</span>
+                  </div>
                 </div>
                 <div className="flex items-center gap-2">
                   <button
@@ -1325,5 +1335,38 @@ export default function SalesClient({
         </aside>
       </div>
     </div>
+  );
+}
+
+// The cart's per-unit price, editable so staff can charge something other than
+// the listed price. Keeps its own text while typing ("8." / "" are valid
+// mid-edit) and only pushes parseable, non-negative numbers up.
+function UnitPriceInput({ value, onChange }: { value: number; onChange: (price: number) => void }) {
+  const [text, setText] = useState(value.toFixed(2));
+  const [focused, setFocused] = useState(false);
+  return (
+    <label className="flex items-center">
+      $
+      <input
+        type="number"
+        inputMode="decimal"
+        min={0}
+        step="0.01"
+        aria-label="Price each"
+        value={focused ? text : value.toFixed(2)}
+        onFocus={(e) => {
+          setText(value.toFixed(2));
+          setFocused(true);
+          e.target.select();
+        }}
+        onChange={(e) => {
+          setText(e.target.value);
+          const n = parseFloat(e.target.value);
+          if (Number.isFinite(n) && n >= 0) onChange(n);
+        }}
+        onBlur={() => setFocused(false)}
+        className="ml-0.5 w-20 rounded border border-black/[.15] bg-transparent px-1 py-0.5 text-sm text-foreground tabular-nums dark:border-white/[.2]"
+      />
+    </label>
   );
 }

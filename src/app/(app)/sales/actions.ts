@@ -147,6 +147,10 @@ export async function chargeOrder(input: {
   if (lines.length === 0) {
     throw new Error("Cart is empty");
   }
+  // Prices are editable in the cart, so don't trust them blindly.
+  if (lines.some((l) => !Number.isFinite(l.unitPrice) || l.unitPrice < 0)) {
+    throw new Error("Item prices must be zero or more");
+  }
 
   const phone = customerPhone.trim();
   const name = customerName.trim();

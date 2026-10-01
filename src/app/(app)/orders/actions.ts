@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { supabaseAdmin } from "@/lib/supabase/server";
 import { pushOrderStatusToSite, pushStockToSites } from "@/lib/site-sync";
+import { getCategoriesFingerprintAction } from "@/app/(app)/stock/actions";
 import { computeLineCogs, computeRecipeUnitCost } from "@/lib/cogs";
 import type { FulfillmentStatus, OrderSource, PaymentMethod, ProductSiteLink } from "@/types/database";
 
@@ -35,6 +36,22 @@ export async function getRecentOrderActivityAction(): Promise<
     .limit(100);
   if (error) throw error;
   return (data ?? []).map((o) => ({ id: o.id, fulfillmentStatus: o.fulfillment_status }));
+}
+
+// The one thing LiveOrdersWatcher polls: a string that changes whenever
+// anything in the database is written (see migration 0049) -- orders,
+// categories, stock, products, customers, promotions, expenses, etc. -- so the
+// watcher makes a single request per tick. If the migration hasn't been
+// applied yet, fall back to the order + category fingerprints it used to poll
+// separately, so those keep refreshing in the meantime.
+export async function getLiveChangeStampAction(): Promise<string> {
+  const { data, error } = await supabaseAdmin.rpc("live_change_stamp");
+  if (!error) return data ?? "";
+  const [orders, categories] = await Promise.all([
+    getRecentOrderActivityAction(),
+    getCategoriesFingerprintAction(),
+  ]);
+  return `fallback|${orders.map((o) => `${o.id}:${o.fulfillmentStatus}`).join(",")}|${categories}`;
 }
 
 // How many storefront (channel="online") orders came in *today* and are
