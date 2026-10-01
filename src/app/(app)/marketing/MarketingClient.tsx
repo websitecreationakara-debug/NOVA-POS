@@ -353,7 +353,8 @@ export default function MarketingClient({
             onChange={(e) => setSearch(e.target.value)}
             className={`ml-auto ${inputClass}`}
           />
-          <ImportCustomersButton />
+          <ImportCustomersButton kind="csv" />
+          <ImportCustomersButton kind="pdf" />
         </div>
 
         {/* 18 columns don't fit at page width -- the wrapper scrolls sideways

@@ -172,7 +172,12 @@ export type CustomerImportResult = {
   errors: { row: number; message: string }[];
 };
 
-const clean = (v: unknown, max = 500) => (typeof v === "string" ? v.trim().slice(0, max) : "");
+// NFC-normalized, NULs stripped (Postgres text can't hold them), and cut by
+// code point so a long value never splits a surrogate pair (rare CJK, emoji).
+const clean = (v: unknown, max = 500) =>
+  typeof v === "string"
+    ? Array.from(v.replace(/\u0000/g, "").normalize("NFC").trim()).slice(0, max).join("")
+    : "";
 const cleanDate = (v: unknown) => {
   const s = clean(v, 10);
   return /^\d{4}-\d{2}-\d{2}$/.test(s) && !Number.isNaN(Date.parse(s)) ? s : null;
@@ -200,6 +205,11 @@ export async function importCustomersAction(
     const name = clean(r.name);
     if (!name) {
       result.errors.push({ row: r.row, message: "Missing customer name" });
+      continue;
+    }
+    // Excel's 8.55979E+11 -- the real digits are gone, never store it as a phone.
+    if (/^\d(?:\.\d+)?e[+-]?\d+$/i.test(clean(r.phone, 50))) {
+      result.errors.push({ row: r.row, message: "Phone number was damaged by Excel — can't import" });
       continue;
     }
     cleaned.push({
@@ -241,10 +251,32 @@ export async function importCustomersAction(
     for (const c of data ?? []) if (c.phone) existing.set(c.phone, c.id);
   }
 
+  // A row with no phone (damaged, or its number already belongs to another
+  // customer) can't be matched by phone. If it carries a 2nd phone, match on
+  // name + 2nd phone so importing the same file again doesn't add it twice.
+  const secondPhones = [
+    ...new Set(
+      cleaned.filter((c) => !c.phone && c.fields.second_phone).map((c) => String(c.fields.second_phone))
+    ),
+  ];
+  const existingBySecond = new Map<string, string>();
+  for (let i = 0; i < secondPhones.length; i += 100) {
+    const { data, error } = await supabaseAdmin
+      .from("customers")
+      .select("id, name, second_phone")
+      .in("second_phone", secondPhones.slice(i, i + 100));
+    if (error) throw new Error(error.message);
+    for (const c of data ?? []) {
+      if (c.second_phone) existingBySecond.set(`${c.name}|${c.second_phone}`, c.id);
+    }
+  }
+
   const toInsert: Clean[] = [];
   const toUpdate: { c: Clean; id: string }[] = [];
   for (const c of cleaned) {
-    const id = c.phone ? existing.get(c.phone) : undefined;
+    const id = c.phone
+      ? existing.get(c.phone)
+      : existingBySecond.get(`${c.fields.name}|${c.fields.second_phone}`);
     if (id) toUpdate.push({ c, id });
     else toInsert.push(c);
   }

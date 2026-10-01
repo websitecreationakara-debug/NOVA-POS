@@ -2,14 +2,17 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { CheckCircle2, Download, Loader2, Upload, X } from "lucide-react";
+import { CheckCircle2, Download, FileText, Loader2, Upload, X } from "lucide-react";
 import { importCustomersAction } from "@/app/(app)/marketing/actions";
 import {
   customerCsvTemplate,
+  decodeCsvBytes,
   parseCustomerCsv,
+  parseCustomerTable,
   type CustomerImportError,
   type ParsedCustomerCsv,
 } from "@/lib/customerCsv";
+import { extractCustomerTableFromPdf } from "@/lib/customerPdf";
 
 // Rows per server call -- keeps each request comfortably under the Server
 // Action body-size limit however big the file is.
@@ -20,7 +23,7 @@ type Stage = "preview" | "importing" | "done";
 
 // "Import CSV" on the Marketing customers card: pick a file -> preview what
 // would happen (new / updated / skipped, nothing written yet) -> confirm.
-export default function ImportCustomersButton() {
+export default function ImportCustomersButton({ kind = "csv" }: { kind?: "csv" | "pdf" }) {
   const router = useRouter();
   const fileRef = useRef<HTMLInputElement>(null);
   const [fileName, setFileName] = useState("");
@@ -32,7 +35,10 @@ export default function ImportCustomersButton() {
   const [error, setError] = useState<string | null>(null);
   const [visible, setVisible] = useState(false);
 
-  const open = parsed !== null;
+  // Progress text while a PDF is being read (before there is anything to preview).
+  const [reading, setReading] = useState<string | null>(null);
+
+  const open = parsed !== null || reading !== null;
 
   function close() {
     if (busy) return;
@@ -77,7 +83,34 @@ export default function ImportCustomersButton() {
     setStage("preview");
     setResult(null);
     setPreview(null);
-    const p = parseCustomerCsv(await file.text());
+    let p: ParsedCustomerCsv;
+    if (kind === "pdf") {
+      setReading("Reading the PDF…");
+      setBusy(true);
+      try {
+        const table = await extractCustomerTableFromPdf(await file.arrayBuffer(), {
+          onProgress: (done, total) => setReading(`Reading the PDF… page ${done} of ${total}`),
+        });
+        p = parseCustomerTable(table);
+      } catch (e) {
+        p = {
+          rows: [],
+          errors: [],
+          warnings: [],
+          fatal: e instanceof Error ? e.message : "Couldn't read this PDF.",
+          recognizedColumns: [],
+          ignoredColumns: [],
+          damagedPhones: 0,
+        };
+      } finally {
+        setReading(null);
+        setBusy(false);
+      }
+    } else {
+      // Decoded here (not file.text(), which assumes UTF-8) so UTF-16 / legacy
+      // exports from Excel aren't garbled.
+      p = parseCustomerCsv(decodeCsvBytes(await file.arrayBuffer()));
+    }
     setParsed(p);
     if (p.fatal || p.rows.length === 0) return;
     setBusy(true);
@@ -127,7 +160,7 @@ export default function ImportCustomersButton() {
       <input
         ref={fileRef}
         type="file"
-        accept=".csv,text/csv"
+        accept={kind === "pdf" ? ".pdf,application/pdf" : ".csv,text/csv"}
         className="hidden"
         onChange={(e) => {
           const f = e.target.files?.[0];
@@ -139,8 +172,8 @@ export default function ImportCustomersButton() {
         onClick={() => fileRef.current?.click()}
         className="inline-flex items-center gap-1.5 rounded-full border border-border px-4 py-1.5 text-sm font-medium transition-colors hover:bg-muted"
       >
-        <Upload className="size-4" />
-        Import CSV
+        {kind === "pdf" ? <FileText className="size-4" /> : <Upload className="size-4" />}
+        {kind === "pdf" ? "Import PDF" : "Import CSV"}
       </button>
 
       {open && (
@@ -162,7 +195,7 @@ export default function ImportCustomersButton() {
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
                 <h2 id="import-customers-title" className="text-base font-semibold">
-                  Import customers from CSV
+                  Import customers from {kind === "pdf" ? "PDF" : "CSV"}
                 </h2>
                 <p className="mt-0.5 truncate text-xs text-muted-foreground">{fileName}</p>
               </div>
@@ -194,7 +227,7 @@ export default function ImportCustomersButton() {
               </div>
             ) : busy && !preview ? (
               <p className="mt-6 flex items-center gap-2 text-sm text-muted-foreground">
-                <Loader2 className="size-4 animate-spin" /> Checking the file…
+                <Loader2 className="size-4 animate-spin" /> {reading ?? "Checking the file…"}
               </p>
             ) : preview ? (
               <div className="mt-4 grid grid-cols-3 gap-2 text-center">
@@ -216,6 +249,15 @@ export default function ImportCustomersButton() {
             {parsed && !parsed.fatal && parsed.recognizedColumns.length > 0 && stage !== "done" && (
               <p className="mt-3 text-xs text-muted-foreground">
                 Columns found: {parsed.recognizedColumns.join(", ")}
+              </p>
+            )}
+
+            {parsed && parsed.damagedPhones > 0 && stage !== "done" && (
+              <p className="mt-3 rounded-lg bg-warning-bg p-3 text-xs text-warning">
+                {parsed.damagedPhones} customer{parsed.damagedPhones === 1 ? "" : "s"} will be imported
+                without a phone number: it was turned into scientific notation (like 8.55979E+11) when
+                the file was saved in Excel, and the real digits can&apos;t be recovered. To keep the
+                phone numbers, export the sheet again with the Phone Number column formatted as Text.
               </p>
             )}
 
@@ -258,6 +300,13 @@ export default function ImportCustomersButton() {
 
             {error && <p className="mt-3 text-sm text-red-600">{error}</p>}
 
+            {kind === "pdf" && stage !== "done" && preview && (
+              <p className="mt-3 text-xs text-muted-foreground">
+                Read from the PDF&apos;s text, so check the preview. Photos, emoji and other symbols
+                can&apos;t be read from a PDF.
+              </p>
+            )}
+
             {stage !== "done" && preview && (
               <p className="mt-3 text-xs text-muted-foreground">
                 Customers are matched by phone number. For ones that already exist, only the cells
@@ -266,14 +315,18 @@ export default function ImportCustomersButton() {
             )}
 
             <div className="mt-5 flex items-center gap-2">
-              <button
-                type="button"
-                onClick={downloadTemplate}
-                className="mr-auto inline-flex items-center gap-1.5 text-xs font-medium text-brand hover:underline"
-              >
-                <Download className="size-3.5" />
-                Download template
-              </button>
+              {kind === "csv" ? (
+                <button
+                  type="button"
+                  onClick={downloadTemplate}
+                  className="mr-auto inline-flex items-center gap-1.5 text-xs font-medium text-brand hover:underline"
+                >
+                  <Download className="size-3.5" />
+                  Download template
+                </button>
+              ) : (
+                <span className="mr-auto" />
+              )}
               <button
                 type="button"
                 onClick={close}
