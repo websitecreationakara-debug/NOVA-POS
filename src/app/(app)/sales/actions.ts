@@ -51,47 +51,63 @@ export async function searchCustomersByPhone(prefix: string): Promise<CustomerSu
   const trimmed = prefix.trim();
   if (trimmed.length < 1) return [];
 
+  // A customer can have a second phone (customers.second_phone): match either
+  // number, and hand back the one that matched so picking the suggestion fills
+  // in the number the cashier was actually typing.
+  const pattern = `"${trimmed.replace(/[\\"]/g, "\\$&")}%"`;
   const { data, error } = await supabaseAdmin
     .from("customers")
-    .select("id, name, phone, photo_url, address")
-    .not("phone", "is", null)
-    .ilike("phone", `${trimmed}%`)
+    .select("id, name, phone, second_phone, photo_url, address")
+    .or(`phone.ilike.${pattern},second_phone.ilike.${pattern}`)
     .order("name")
     .limit(8);
   if (error) throw error;
 
-  return (data ?? [])
-    .filter((c): c is typeof c & { phone: string } => c.phone !== null)
-    .map((c) => ({ id: c.id, name: c.name, phone: c.phone, photoUrl: c.photo_url, address: c.address }));
+  const lower = trimmed.toLowerCase();
+  return (data ?? []).flatMap((c) => {
+    const matched = c.phone?.toLowerCase().startsWith(lower) ? c.phone : (c.second_phone ?? c.phone);
+    return matched
+      ? [{ id: c.id, name: c.name, phone: matched, photoUrl: c.photo_url, address: c.address }]
+      : [];
+  });
 }
 
 // Same idea as searchCustomersByPhone, but by name -- lets staff who only
 // remember the customer's name (not their number) find them the same way.
+// Customers with only a second phone (no main one) are included.
 export async function searchCustomersByName(prefix: string): Promise<CustomerSuggestion[]> {
   const trimmed = prefix.trim();
   if (trimmed.length < 1) return [];
 
   const { data, error } = await supabaseAdmin
     .from("customers")
-    .select("id, name, phone, photo_url, address")
-    .not("phone", "is", null)
+    .select("id, name, phone, second_phone, photo_url, address")
+    .or("phone.not.is.null,second_phone.not.is.null")
     .ilike("name", `%${trimmed}%`)
     .order("name")
     .limit(8);
   if (error) throw error;
 
-  return (data ?? [])
-    .filter((c): c is typeof c & { phone: string } => c.phone !== null)
-    .map((c) => ({ id: c.id, name: c.name, phone: c.phone, photoUrl: c.photo_url, address: c.address }));
+  return (data ?? []).flatMap((c) => {
+    const number = c.phone ?? c.second_phone;
+    return number
+      ? [{ id: c.id, name: c.name, phone: number, photoUrl: c.photo_url, address: c.address }]
+      : [];
+  });
 }
 
 async function getOrCreateCustomerId(phone: string, name: string, address?: string): Promise<string> {
-  const { data: existing, error: findError } = await supabaseAdmin
+  // Either of the customer's numbers finds them -- otherwise ordering with
+  // someone's second phone would add a duplicate customer.
+  const quoted = `"${phone.replace(/[\\"]/g, "\\$&")}"`;
+  const { data: matches, error: findError } = await supabaseAdmin
     .from("customers")
     .select("id, address")
-    .eq("phone", phone)
-    .maybeSingle();
+    .or(`phone.eq.${quoted},second_phone.eq.${quoted}`)
+    .order("created_at")
+    .limit(1);
   if (findError) throw findError;
+  const existing = matches?.[0] ?? null;
 
   if (existing) {
     // Fill in the address if the customer didn't have one yet, but never

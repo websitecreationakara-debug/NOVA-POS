@@ -196,7 +196,7 @@ export async function getCustomerPurchaseHistoryAction(
 
   const { data: customer, error: customerErr } = await supabaseAdmin
     .from("customers")
-    .select("id, phone")
+    .select("id, phone, second_phone")
     .eq("id", customerId)
     .single();
   if (customerErr) throw new Error(customerErr.message);
@@ -204,6 +204,8 @@ export async function getCustomerPurchaseHistoryAction(
   const phone = customer.phone?.trim();
   const filters = [`customer_id.eq.${customer.id}`];
   if (phone) filters.push(`customer_phone.eq."${phone.replace(/[\\"]/g, "\\$&")}"`);
+  const secondPhone = customer.second_phone?.trim();
+  if (secondPhone) filters.push(`customer_phone.eq."${secondPhone.replace(/[\\"]/g, "\\$&")}"`);
 
   const { data: orders, error: ordersErr } = await supabaseAdmin
     .from("orders")
