@@ -91,6 +91,12 @@ function nowLocalMinute(): string {
   return `${d.toLocaleDateString("en-CA")}T${d.toTimeString().slice(0, 5)}`;
 }
 
+// The delivery value is "YYYY-MM-DDTHH:MM", or just "YYYY-MM-DD" while no time
+// has been picked. Orders need a time, so a date with no time is saved as noon.
+function withDeliveryTime(v: string): string {
+  return v && !v.includes("T") ? `${v}T12:00` : v;
+}
+
 // Same "YYYY-MM-DDTHH:MM" local value, but from an ISO timestamp.
 function isoToLocalMinute(iso: string): string {
   const d = new Date(iso);
@@ -818,7 +824,7 @@ export default function SalesClient({
             discountPercent: discountPercentValue,
             minusAmount: minusValue,
             deliveryFee: deliveryFeeValue,
-            deliveryAt: deliveryAt ? new Date(deliveryAt).toISOString() : "",
+            deliveryAt: deliveryAt ? new Date(withDeliveryTime(deliveryAt)).toISOString() : "",
             note: note.trim(),
             paymentMethod,
             orderSource,
@@ -843,7 +849,7 @@ export default function SalesClient({
           customerAddress: customerAddress.trim() || undefined,
           discount: discountAmount || undefined,
           deliveryFee: deliveryFeeValue || undefined,
-          deliveryAt: deliveryAt ? new Date(deliveryAt).toISOString() : undefined,
+          deliveryAt: deliveryAt ? new Date(withDeliveryTime(deliveryAt)).toISOString() : undefined,
           note: note.trim() || undefined,
           orderSource,
         });
@@ -1398,13 +1404,39 @@ export default function SalesClient({
                   <span className="text-zinc-500">blank = same day</span>
                 </div>
                 <div className="flex gap-1.5">
+                  {/* Just a date to start with; the time box appears once a date is
+                      picked. The value stays one "YYYY-MM-DDTHH:MM" string. */}
                   <input
-                    type="datetime-local"
-                    min={nowLocalMinute()}
-                    value={deliveryAt}
-                    onChange={(e) => setDeliveryAt(e.target.value)}
+                    type="date"
+                    min={dateOffset(0)}
+                    value={deliveryAt.slice(0, 10)}
+                    onChange={(e) =>
+                      setDeliveryAt(
+                        e.target.value
+                          ? deliveryAt.includes("T")
+                            ? `${e.target.value}T${deliveryAt.slice(11, 16)}`
+                            : e.target.value
+                          : ""
+                      )
+                    }
                     className="min-w-0 flex-1 rounded border border-black/[.15] bg-transparent px-2 py-1.5 text-sm text-foreground [color-scheme:light] dark:border-white/[.2] dark:[color-scheme:dark]"
                   />
+                  {deliveryAt && (
+                    <input
+                      type="time"
+                      aria-label="Delivery time"
+                      min={deliveryAt.slice(0, 10) === dateOffset(0) ? nowLocalMinute().slice(11, 16) : undefined}
+                      value={deliveryAt.slice(11, 16)}
+                      onChange={(e) =>
+                        setDeliveryAt(
+                          e.target.value
+                            ? `${deliveryAt.slice(0, 10)}T${e.target.value}`
+                            : deliveryAt.slice(0, 10)
+                        )
+                      }
+                      className="w-32 shrink-0 rounded border border-black/[.15] bg-transparent px-2 py-1.5 text-sm text-foreground [color-scheme:light] dark:border-white/[.2] dark:[color-scheme:dark]"
+                    />
+                  )}
                   {deliveryAt && (
                     <button
                       type="button"
@@ -1423,9 +1455,10 @@ export default function SalesClient({
                       ["In 2 days", 2],
                     ] as const
                   ).map(([label, n]) => {
-                    // Keep whatever time is already picked; default to 12:00.
-                    const time = deliveryAt.includes("T") ? deliveryAt.slice(11, 16) : "12:00";
-                    const target = `${dateOffset(n)}T${time}`;
+                    // Keep whatever time is already picked; otherwise leave it blank.
+                    const target = deliveryAt.includes("T")
+                      ? `${dateOffset(n)}T${deliveryAt.slice(11, 16)}`
+                      : dateOffset(n);
                     return (
                       <button
                         key={label}

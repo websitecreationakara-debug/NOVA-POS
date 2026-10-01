@@ -49,7 +49,7 @@ const bottomItems = [
 // literal list here for the same reason ACCOUNTANCE_LINKS is (this file
 // needs to stay a plain client-safe array).
 const MARKETING_LINKS = [
-  { tab: "promotions", label: "Promotions & Customers" },
+  { tab: "promotions", label: "CRM" },
   { tab: "cost-control", label: "Cost Control" },
 ];
 const MARKETING_ROLES = ["admin", "marketing", "accountance"];
