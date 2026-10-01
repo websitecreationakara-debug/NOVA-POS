@@ -7,6 +7,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Download,
+  Pencil,
   RefreshCw,
   Trash2,
   TriangleAlert,
@@ -37,6 +38,7 @@ import {
   deleteWebsiteProductVariationAction,
   listWebsiteCategoriesAction,
   listWebsiteProductsAction,
+  setProductDetailsAction,
   setSimpleProductPriceAction,
   setSimpleProductStockAction,
   setVariationPriceAction,
@@ -215,6 +217,9 @@ export default function WebsiteProductsPanel({
   const [uploadingImage, setUploadingImage] = useState(false);
   const [imageError, setImageError] = useState<string | null>(null);
   const [pendingId, setPendingId] = useState<string | null>(null);
+  // The row whose Edit box is open (name / Khmer name / scale), and its draft.
+  const [editRowKey, setEditRowKey] = useState<string | null>(null);
+  const [editDraft, setEditDraft] = useState({ title: "", nameKm: "", unit: "pcs", unitKm: "" });
   const [refreshing, setRefreshing] = useState(false);
   // Set when a row's thumbnail is clicked, so a full-size preview can be shown.
   const [previewImage, setPreviewImage] = useState<{ url: string; title: string } | null>(null);
@@ -539,6 +544,56 @@ export default function WebsiteProductsPanel({
         setCategoryError(e instanceof Error ? e.message : "Failed to create category");
       } finally {
         setCreatingCategory(false);
+      }
+    });
+  }
+
+  function openEdit(rowKey: string, p: WebsiteProduct, linked: ProductWithStock | null) {
+    setEditDraft({
+      title: p.title,
+      nameKm: linked?.name_km ?? "",
+      unit: linked?.unit ?? "pcs",
+      unitKm: linked?.unit_km ?? "",
+    });
+    setEditRowKey(rowKey);
+  }
+
+  // Save the Edit box: the English name goes to the website (same as the inline
+  // name box), the Khmer name and scale to the linked POS product (created on
+  // the fly if this row has none yet).
+  function saveEdit(p: WebsiteProduct, v: WebsiteProductVariation | null, price: number) {
+    const title = editDraft.title.trim();
+    if (!title) {
+      notify("Name is required", "err");
+      return;
+    }
+    // Same title Sales uses for this row: a size is "<name> (<weight>)".
+    const posName = v?.weight ? `${title} (${v.weight})` : title;
+    setPendingId(p.id);
+    startTransition(async () => {
+      try {
+        if (title !== p.title) await updateWebsiteProductAction(catalogId, p.id, { title });
+        await setProductDetailsAction({
+          catalogId,
+          siteProductId: p.id,
+          variationId: v ? v.id : "",
+          title: posName,
+          price,
+          imageUrl: v?.image_url ?? p.image_url,
+          seedStock: v ? v.stock : p.stock,
+          posName,
+          nameKm: editDraft.nameKm,
+          unit: editDraft.unit,
+          unitKm: editDraft.unitKm,
+        });
+        setPendingId(null);
+        setEditRowKey(null);
+        notify("Saved");
+        load();
+        router.refresh();
+      } catch (e) {
+        notify(e instanceof Error ? e.message : "Failed to save", "err");
+        setPendingId(null);
       }
     });
   }
@@ -1356,7 +1411,7 @@ export default function WebsiteProductsPanel({
                   />
                 </th>
                 <th className="w-14 px-3 py-2 font-medium">Image</th>
-                <th className="min-w-[14rem] px-3 py-2 font-medium">Product</th>
+                <th className="w-[17rem] max-w-[17rem] min-w-[14rem] px-3 py-2 font-medium">Product</th>
                 <th className="w-20 bg-black/[.015] px-2 py-2 text-right font-medium dark:bg-white/[.02]">
                   Original Cost
                 </th>
@@ -1450,12 +1505,14 @@ export default function WebsiteProductsPanel({
                         </div>
                       )}
                     </td>
-                    <td className="min-w-[14rem] px-3 py-2">
+                    <td className="w-[17rem] max-w-[17rem] min-w-[14rem] px-3 py-2">
                       {/* Editable name. Keyed by p.id (not editId) so the sibling
                           size-rows of a "variable" product share one draft and
                           rename the parent together. */}
+                      <div className="flex min-w-0 items-baseline gap-2">
                       <input
                         type="text"
+                        title={p.title}
                         value={drafts[p.id]?.title ?? p.title}
                         disabled={pendingId === p.id}
                         onChange={(e) => setDraft(p.id, "title", e.target.value)}
@@ -1466,11 +1523,100 @@ export default function WebsiteProductsPanel({
                           }
                           clearDraft(p.id, "title");
                         }}
-                        className="w-full min-w-0 rounded border border-transparent bg-transparent px-1 py-0.5 font-medium hover:border-black/[.15] focus:border-black/40 focus:outline-none disabled:opacity-50 dark:hover:border-white/[.2] dark:focus:border-white/50"
+                        className="field-sizing-content max-w-full min-w-0 rounded border border-transparent bg-transparent px-1 py-0.5 font-medium hover:border-black/[.15] focus:border-black/40 focus:outline-none disabled:opacity-50 dark:hover:border-white/[.2] dark:focus:border-white/50"
                       />
-                      {weight && <div className="text-xs text-zinc-400">{weight}</div>}
+                      {weight && <span className="shrink-0 text-xs text-zinc-400">{weight}</span>}
+                      </div>
+                      {/* The saved translations (Edit button), so it's visible at a glance
+                          which products already have them: Khmer name with its scale
+                          next to it. */}
+                      {(linked?.name_km || linked?.unit_km) && (
+                        <div className="mt-0.5 flex flex-wrap items-baseline gap-x-2 px-1">
+                          {linked?.name_km && (
+                            <span lang="km" className="text-sm">
+                              {linked.name_km}
+                            </span>
+                          )}
+                          <span className="text-xs text-zinc-400">
+                            {linked?.unit}
+                            {linked?.unit_km && (
+                              <>
+                                {" · "}
+                                <span lang="km">{linked.unit_km}</span>
+                              </>
+                            )}
+                          </span>
+                        </div>
+                      )}
                       {p.taste_notes && (
                         <div className="break-words text-xs text-zinc-400">{p.taste_notes}</div>
+                      )}
+                      {editRowKey === key && (
+                        <div className="mt-2 space-y-2 rounded-lg border border-black/[.1] bg-black/[.02] p-3 dark:border-white/[.15] dark:bg-white/[.03]">
+                          <label className="block text-xs text-zinc-500">
+                            Name now
+                            <input
+                              type="text"
+                              value={editDraft.title}
+                              onChange={(e) => setEditDraft((d) => ({ ...d, title: e.target.value }))}
+                              className="mt-0.5 w-full rounded border border-black/[.15] bg-transparent px-2 py-1 text-sm text-foreground dark:border-white/[.2]"
+                            />
+                          </label>
+                          <label className="block text-xs text-zinc-500">
+                            Name in Khmer
+                            <input
+                              type="text"
+                              lang="km"
+                              placeholder="ឈ្មោះជាភាសាខ្មែរ"
+                              value={editDraft.nameKm}
+                              onChange={(e) => setEditDraft((d) => ({ ...d, nameKm: e.target.value }))}
+                              className="mt-0.5 w-full rounded border border-black/[.15] bg-transparent px-2 py-1 text-sm text-foreground dark:border-white/[.2]"
+                            />
+                          </label>
+                          <label className="block text-xs text-zinc-500">
+                            Scale
+                            <select
+                              value={editDraft.unit}
+                              onChange={(e) => setEditDraft((d) => ({ ...d, unit: e.target.value }))}
+                              className="mt-0.5 w-full rounded border border-black/[.15] bg-card px-2 py-1 text-sm text-foreground dark:border-white/[.2]"
+                            >
+                              {[...new Set(["pcs", "pc", "pkt", "pc/pkt", "kg", "g", editDraft.unit])].map((u) => (
+                                <option key={u} value={u}>
+                                  {u}
+                                </option>
+                              ))}
+                            </select>
+                          </label>
+                          <label className="block text-xs text-zinc-500">
+                            Scale in Khmer
+                            <input
+                              type="text"
+                              lang="km"
+                              placeholder="ឯកតាជាភាសាខ្មែរ (ឧ. ចំណែក, គីឡូ)"
+                              value={editDraft.unitKm}
+                              onChange={(e) => setEditDraft((d) => ({ ...d, unitKm: e.target.value }))}
+                              className="mt-0.5 w-full rounded border border-black/[.15] bg-transparent px-2 py-1 text-sm text-foreground dark:border-white/[.2]"
+                            />
+                          </label>
+                          <div className="flex justify-end gap-2">
+                            <button
+                              type="button"
+                              onClick={() => setEditRowKey(null)}
+                              disabled={pendingId === p.id}
+                              className="rounded-full border border-black/[.15] px-3 py-1 text-xs font-medium hover:bg-black/[.04] disabled:opacity-50 dark:border-white/[.2] dark:hover:bg-white/[.06]"
+                            >
+                              Cancel
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => saveEdit(p, v, currentPrice)}
+                              disabled={pendingId === p.id}
+                              className="rounded-full bg-brand px-3 py-1 text-xs font-semibold text-white disabled:opacity-50"
+                            >
+                              {pendingId === p.id ? "Saving…" : "Save"}
+                            </button>
+                          </div>
+                        </div>
                       )}
                     </td>
                     <td className="bg-black/[.015] px-2 py-2 text-right dark:bg-white/[.02]">
@@ -1673,7 +1819,17 @@ export default function WebsiteProductsPanel({
                         {p.status === "published" ? "Published" : "Draft"}
                       </button>
                     </td>
-                    <td className="px-3 py-2 text-right">
+                    <td className="px-3 py-2 text-right whitespace-nowrap">
+                      <button
+                        type="button"
+                        onClick={() => (editRowKey === key ? setEditRowKey(null) : openEdit(key, p, linked))}
+                        title="Edit name, Khmer name and scale"
+                        aria-label="Edit"
+                        aria-expanded={editRowKey === key}
+                        className="mr-1 inline-flex size-8 items-center justify-center rounded-md text-zinc-400 transition-colors hover:bg-black/[.05] hover:text-foreground dark:hover:bg-white/[.08]"
+                      >
+                        <Pencil className="size-4" />
+                      </button>
                       <button
                         type="button"
                         disabled={pendingId === editId || pendingId === p.id}

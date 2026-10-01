@@ -111,7 +111,12 @@ export async function getDueDeliveries(): Promise<DueDelivery[]> {
   }
 }
 
-export type OrderItemInput = { productId: string; quantity: number; unitPrice: number };
+export type OrderItemInput = {
+  productId: string;
+  quantity: number;
+  unitPrice: number;
+  sizeLabel?: string | null;
+};
 
 function round2(n: number): number {
   return Math.round(n * 100) / 100;
@@ -155,6 +160,7 @@ export async function updateOrderAction(
       productId: i.productId,
       quantity: round2(Number(i.quantity)),
       unitPrice: round2(Number(i.unitPrice)),
+      sizeLabel: i.sizeLabel?.trim() || null,
     }))
     .filter((i) => i.productId && i.quantity > 0 && i.unitPrice >= 0);
 
@@ -287,6 +293,9 @@ export async function updateOrderAction(
       unit_cost: i.unitCost,
       cogs: i.cogs,
       cost_source: i.costSource,
+      // Only sent when set, so orders without a custom size still save
+      // before migration 0050 is applied.
+      ...(i.sizeLabel ? { size_label: i.sizeLabel } : {}),
     }))
   );
   if (insErr) throw insErr;

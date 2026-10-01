@@ -140,6 +140,10 @@ export default async function SalesPage({
           name: i.name,
           unitPrice: i.unitPrice,
           quantity: i.quantity,
+          sizeLabel: i.sizeLabel,
+          nameKm: i.nameKm,
+          unit: i.unit,
+          unitKm: i.unitKm,
         })),
       }
     : null;

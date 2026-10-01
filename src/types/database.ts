@@ -78,6 +78,12 @@ export type Product = {
   // Grams one unit of this product (e.g. one "pcs") weighs -- lets Cost
   // Control Set lines convert Scale to kg/g. null = unknown.
   weight_grams: number | null;
+  // The product's name in Khmer, printed under the English name on the invoice
+  // (migration 0051). null = none.
+  name_km: string | null;
+  // The scale (unit) written in Khmer, printed with the unit on the invoice
+  // (migration 0052). null = none.
+  unit_km: string | null;
   // True for a product create_online_order() made on the fly because a website
   // order's item wasn't linked to any POS product (migration 0046). Shown as
   // "review me" on Stock; cleared when staff rename it. Its stock isn't
@@ -298,6 +304,8 @@ export type OrderItem = {
   unit_cost: number | null;
   cogs: number | null;
   cost_source: "direct" | "recipe" | null;
+  // Custom size sold on this line, e.g. "100g" of a 350g pack (migration 0050).
+  size_label: string | null;
 };
 
 export type Expense = {
@@ -351,8 +359,8 @@ export type Database = {
       >;
       products: Table<
         Product,
-        Omit<Product, "id" | "created_at" | "updated_at" | "cost_price" | "is_ingredient" | "weight_grams" | "auto_created"> &
-          Partial<Pick<Product, "id" | "cost_price" | "is_ingredient" | "weight_grams" | "auto_created">>,
+        Omit<Product, "id" | "created_at" | "updated_at" | "cost_price" | "is_ingredient" | "weight_grams" | "auto_created" | "name_km" | "unit_km"> &
+          Partial<Pick<Product, "id" | "cost_price" | "is_ingredient" | "weight_grams" | "auto_created" | "name_km" | "unit_km">>,
         [
           {
             foreignKeyName: "products_brand_id_fkey";
@@ -556,8 +564,8 @@ export type Database = {
       >;
       order_items: Table<
         OrderItem,
-        Omit<OrderItem, "id" | "unit_cost" | "cogs" | "cost_source"> &
-          Partial<Pick<OrderItem, "id" | "unit_cost" | "cogs" | "cost_source">>,
+        Omit<OrderItem, "id" | "unit_cost" | "cogs" | "cost_source" | "size_label"> &
+          Partial<Pick<OrderItem, "id" | "unit_cost" | "cogs" | "cost_source" | "size_label">>,
         [
           {
             foreignKeyName: "order_items_product_id_fkey";

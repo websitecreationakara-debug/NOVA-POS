@@ -636,6 +636,12 @@ export type InvoiceData = {
     quantity: number;
     unitPrice: number;
     lineTotal: number;
+    // Custom size sold on the line ("100g"), null for a full-size line.
+    sizeLabel: string | null;
+    // The product's Khmer name, printed under the English one.
+    nameKm: string | null;
+    // The unit written in Khmer, printed with the English unit.
+    unitKm: string | null;
   }[];
 };
 
@@ -651,7 +657,7 @@ export async function getInvoice(orderId: string): Promise<InvoiceData | null> {
 
   const { data: items, error: itemsError } = await supabaseAdmin
     .from("order_items")
-    .select("product_id, quantity, unit_price, line_total, products(name, unit)")
+    .select("product_id, quantity, unit_price, line_total, size_label, products(name, unit, name_km, unit_km)")
     .eq("order_id", orderId);
 
   if (itemsError) throw itemsError;
@@ -661,7 +667,8 @@ export async function getInvoice(orderId: string): Promise<InvoiceData | null> {
     quantity: number;
     unit_price: number;
     line_total: number;
-    products: { name: string; unit: string } | null;
+    size_label: string | null;
+    products: { name: string; unit: string; name_km: string | null; unit_km: string | null } | null;
   };
   const { brands, customers, ...orderFields } = order as Order & {
     brands: { name: string; slug: string; logo_url: string | null } | null;
@@ -695,6 +702,9 @@ export async function getInvoice(orderId: string): Promise<InvoiceData | null> {
       quantity: i.quantity,
       unitPrice: i.unit_price,
       lineTotal: i.line_total,
+      sizeLabel: i.size_label,
+      nameKm: i.products?.name_km ?? null,
+      unitKm: i.products?.unit_km ?? null,
     })),
   };
 }

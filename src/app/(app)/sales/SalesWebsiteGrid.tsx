@@ -75,6 +75,7 @@ export default function SalesWebsiteGrid({
   onSelect,
   pendingEntryKey,
   cartQtyByEntryKey,
+  khmerNames,
 }: {
   catalogId: WebsiteCatalogId;
   initialProducts: WebsiteProduct[] | null;
@@ -88,6 +89,10 @@ export default function SalesWebsiteGrid({
   // How many of each entry are sitting in the Order right now, so the card
   // can show remaining-after-this-sale stock.
   cartQtyByEntryKey: Map<string, number>;
+  // website product id -> the Khmer name(s) saved on its linked POS product(s),
+  // so the search box finds a product by its Khmer name too. The cards still
+  // show the English title.
+  khmerNames: Map<string, string>;
 }) {
   const [products, setProducts] = useState<WebsiteProduct[] | null>(initialProducts);
   const [loadError, setLoadError] = useState<string | null>(initialError);
@@ -184,7 +189,8 @@ export default function SalesWebsiteGrid({
     setProducts(initialProducts);
   }
 
-  const q = search.trim().toLowerCase();
+  // NFC so Khmer typed with a different composition order still matches.
+  const q = search.trim().normalize("NFC").toLowerCase();
   const all = products ?? [];
 
   // Every configured category gets a chip, whether or not it currently has a
@@ -208,7 +214,11 @@ export default function SalesWebsiteGrid({
         return false;
       }
     }
-    return !q || p.title.toLowerCase().includes(q);
+    return (
+      !q ||
+      p.title.toLowerCase().includes(q) ||
+      (khmerNames.get(p.id) ?? "").normalize("NFC").toLowerCase().includes(q)
+    );
   });
 
   // Expand each visible product into its sellable card(s) -- a "variable"

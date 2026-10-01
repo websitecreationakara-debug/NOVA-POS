@@ -47,8 +47,9 @@ import {
   type CustomerSuggestion,
 } from "./actions";
 import { updateOrderAction } from "@/app/(app)/orders/actions";
-import { ensurePosProductForSiteProduct } from "./websiteActions";
+import { ensurePosProductForSiteProduct, syncPosProductName } from "./websiteActions";
 import { notifySaleCharged } from "@/lib/saleCharged";
+import { parseGrams, sizedLine } from "@/lib/weight";
 
 // An existing order opened for editing via /sales?editOrder=<id> -- the
 // checkout loads with this cart, customer and totals, and "Update order"
@@ -210,6 +211,9 @@ export default function SalesClient({
   const [nameSuggestions, setNameSuggestions] = useState<CustomerSuggestion[]>([]);
   const [nameDropdownOpen, setNameDropdownOpen] = useState(false);
   const nameInputRef = useRef<HTMLInputElement>(null);
+  // Website products whose POS name has already been synced to the website
+  // title this session, so repeat taps don't repeat the write.
+  const renamedEntryKeys = useRef<Set<string>>(new Set());
   const [namePos, setNamePos] = useState<{ bottom: number; left: number; width: number } | null>(
     null
   );
@@ -282,7 +286,7 @@ export default function SalesClient({
 
   const isExistingCustomer = selectedCustomer?.phone === customerPhone.trim() && !!selectedCustomer;
 
-  const q = search.trim().toLowerCase();
+  const q = search.trim().normalize("NFC").toLowerCase();
   const visibleProducts = useMemo(() => {
     // While searching, look across every category -- otherwise a match
     // sitting in a category other than the active tab silently disappears
@@ -294,7 +298,10 @@ export default function SalesClient({
         : products.filter((p) => p.category_id === activeCategoryId);
     if (q) {
       list = list.filter(
-        (p) => p.name.toLowerCase().includes(q) || (p.sku ?? "").toLowerCase().includes(q)
+        (p) =>
+          p.name.toLowerCase().includes(q) ||
+          (p.name_km ?? "").normalize("NFC").toLowerCase().includes(q) ||
+          (p.sku ?? "").toLowerCase().includes(q)
       );
     }
     return list;
@@ -360,7 +367,15 @@ export default function SalesClient({
       }
       return [
         ...prev,
-        { productId: product.id, name: product.name, unitPrice: product.price, quantity: 1 },
+        {
+          productId: product.id,
+          name: product.name,
+          nameKm: product.name_km ?? null,
+          unit: product.unit,
+          unitKm: product.unit_km ?? null,
+          unitPrice: product.price,
+          quantity: 1,
+        },
       ];
     });
   }
@@ -388,6 +403,18 @@ export default function SalesClient({
     for (const [key, p] of linkedThisSession) map.set(key, p);
     return map;
   }, [products, linkedThisSession]);
+
+  // website product id -> Khmer name(s) of its linked POS products, so the
+  // website grid's search can match Khmer as well as the English title.
+  const khmerNamesBySiteProduct = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const p of products) {
+      if (!p.site_link || !p.name_km) continue;
+      const id = p.site_link.site_product_id;
+      map.set(id, `${map.get(id) ?? ""} ${p.name_km}`.trim());
+    }
+    return map;
+  }, [products]);
 
   // entry key -> quantity currently in the Order, for the grid's
   // remaining-stock display.
@@ -432,7 +459,14 @@ export default function SalesClient({
     const effectivePrice = salePrice != null && salePrice < price ? salePrice : price;
     const known = posByEntryKey.get(entryKey);
     if (known) {
-      addToCart({ ...known, price: effectivePrice });
+      // The website title is the source of truth for the name: if the product
+      // was renamed there, bring the POS product's name along (once per tap
+      // session) and show the new name in the cart straight away.
+      if (known.name !== title && !renamedEntryKeys.current.has(entryKey)) {
+        renamedEntryKeys.current.add(entryKey);
+        syncPosProductName(known.id, title).catch(() => renamedEntryKeys.current.delete(entryKey));
+      }
+      addToCart({ ...known, name: title, price: effectivePrice });
       return;
     }
     if (!websiteCatalog || linkingEntryKey) return;
@@ -515,6 +549,70 @@ export default function SalesClient({
 
   function setUnitPrice(productId: string, unitPrice: number) {
     setCart((prev) => prev.map((l) => (l.productId === productId ? { ...l, unitPrice } : l)));
+  }
+
+  // What the cart / receipt show for a line: the Khmer name when the product
+  // has one, otherwise the English name.
+  function lineName(line: CartLine): string {
+    return line.nameKm?.trim() || line.name;
+  }
+
+  // The line's scale in Khmer when it has one, else the plain unit (pcs/kg/g).
+  function lineScale(line: CartLine): string | null {
+    return line.unitKm?.trim() || line.unit?.trim() || null;
+  }
+
+  // Weight of one full unit of the line's product, if known: the product's own
+  // recorded weight, else read from its name ("... (350g)", "... 1kg").
+  function packGramsFor(line: CartLine): number | null {
+    const w = products.find((p) => p.id === line.productId)?.weight_grams;
+    return w && w > 0 ? w : parseGrams(line.name);
+  }
+
+  // The full-size price in effect for a line, so a size can be changed again
+  // without compounding: remembered when the size was first set, or worked
+  // back from a saved custom-size line (edit mode).
+  function fullPriceFor(line: CartLine, packGrams: number): number {
+    if (line.listPrice !== undefined) return line.listPrice;
+    const soldGrams = line.sizeLabel ? parseGrams(line.sizeLabel) : null;
+    if (soldGrams) return (line.unitPrice * line.quantity * packGrams) / soldGrams;
+    return line.unitPrice;
+  }
+
+  // Sell part of a pack (100g of a 350g steak): the quantity becomes the
+  // fraction sold -- so stock goes down by the weight actually sold -- and the
+  // price scales to match (still editable). Full size / cleared goes back to 1.
+  function setLineSize(line: CartLine, packGrams: number, soldGrams: number | null) {
+    const fullPrice = fullPriceFor(line, packGrams);
+    setCart((prev) =>
+      prev.map((l) => {
+        if (l.productId !== line.productId) return l;
+        if (soldGrams === null || soldGrams === packGrams) {
+          return { ...l, quantity: 1, unitPrice: fullPrice, sizeLabel: null, listPrice: undefined };
+        }
+        const sized = sizedLine(packGrams, soldGrams, fullPrice);
+        if (!sized) return l;
+        return {
+          ...l,
+          quantity: sized.quantity,
+          unitPrice: sized.unitPrice,
+          sizeLabel: sized.label,
+          listPrice: fullPrice,
+        };
+      })
+    );
+  }
+
+  // For a custom-size line the price box is the price of the whole line (what
+  // the customer pays for that size); the per-unit price is worked back from it.
+  function setLinePrice(line: CartLine, linePrice: number) {
+    setCart((prev) =>
+      prev.map((l) =>
+        l.productId === line.productId
+          ? { ...l, unitPrice: Math.round((linePrice / l.quantity) * 100) / 100 }
+          : l
+      )
+    );
   }
 
   function removeLine(productId: string) {
@@ -612,6 +710,7 @@ export default function SalesClient({
               productId: l.productId,
               quantity: l.quantity,
               unitPrice: l.unitPrice,
+              sizeLabel: l.sizeLabel,
             })),
             discountPercent: discountPercentValue,
             minusAmount: minusValue,
@@ -691,7 +790,7 @@ export default function SalesClient({
           {receipt.lines.map((l) => (
             <div key={l.productId} className="flex items-center justify-between px-4 py-2 text-sm">
               <span>
-                {l.quantity} × {l.name}
+                {l.quantity} × {lineName(l)}
               </span>
               <span>{formatMoney(l.unitPrice * l.quantity)}</span>
             </div>
@@ -783,6 +882,7 @@ export default function SalesClient({
             onSelect={addWebsiteProductToCart}
             pendingEntryKey={linkingEntryKey}
             cartQtyByEntryKey={cartQtyByEntryKey}
+            khmerNames={khmerNamesBySiteProduct}
           />
         ) : (
         <main className="flex-1 overflow-y-auto p-6">
@@ -922,32 +1022,50 @@ export default function SalesClient({
                 </p>
               </div>
             )}
-            {cart.map((line) => (
+            {cart.map((line) => {
+              const packGrams = packGramsFor(line);
+              const sized = !!line.sizeLabel;
+              return (
               <div key={line.productId} className="flex items-center justify-between py-2 text-sm">
                 <div className="flex-1">
-                  <div>{line.name}</div>
+                  <div>{lineName(line)}</div>
                   <div className="flex items-center gap-1 text-zinc-500">
                     <UnitPriceInput
-                      value={line.unitPrice}
-                      onChange={(price) => setUnitPrice(line.productId, price)}
+                      value={sized ? line.quantity * line.unitPrice : line.unitPrice}
+                      onChange={(price) =>
+                        sized ? setLinePrice(line, price) : setUnitPrice(line.productId, price)
+                      }
                     />
-                    <span>each</span>
+                    <span>
+                      {sized ? "for this size" : lineScale(line) ? `/ ${lineScale(line)}` : "each"}
+                    </span>
                   </div>
+                  {packGrams && (
+                    <SoldGramsInput
+                      packGrams={packGrams}
+                      soldGrams={(line.sizeLabel && parseGrams(line.sizeLabel)) || packGrams}
+                      onChange={(g) => setLineSize(line, packGrams, g)}
+                    />
+                  )}
                 </div>
                 <div className="flex items-center gap-2">
-                  <button
-                    className="h-6 w-6 rounded border border-black/[.15] dark:border-white/[.2]"
-                    onClick={() => updateQuantity(line.productId, -1)}
-                  >
-                    −
-                  </button>
-                  <span className="w-4 text-center">{line.quantity}</span>
-                  <button
-                    className="h-6 w-6 rounded border border-black/[.15] dark:border-white/[.2]"
-                    onClick={() => updateQuantity(line.productId, 1)}
-                  >
-                    +
-                  </button>
+                  {!sized && (
+                    <button
+                      className="h-6 w-6 rounded border border-black/[.15] dark:border-white/[.2]"
+                      onClick={() => updateQuantity(line.productId, -1)}
+                    >
+                      −
+                    </button>
+                  )}
+                  <span className="min-w-4 text-center">{line.quantity}</span>
+                  {!sized && (
+                    <button
+                      className="h-6 w-6 rounded border border-black/[.15] dark:border-white/[.2]"
+                      onClick={() => updateQuantity(line.productId, 1)}
+                    >
+                      +
+                    </button>
+                  )}
                   <button
                     className="ml-1 text-zinc-400 hover:text-red-500"
                     onClick={() => removeLine(line.productId)}
@@ -956,7 +1074,8 @@ export default function SalesClient({
                   </button>
                 </div>
               </div>
-            ))}
+              );
+            })}
           </div>
 
           <div className="flex max-h-[62%] shrink-0 flex-col border-t border-black/[.08] dark:border-white/[.145]">
@@ -1367,6 +1486,57 @@ function UnitPriceInput({ value, onChange }: { value: number; onChange: (price: 
         onBlur={() => setFocused(false)}
         className="ml-0.5 w-20 rounded border border-black/[.15] bg-transparent px-1 py-0.5 text-sm text-foreground tabular-nums dark:border-white/[.2]"
       />
+    </label>
+  );
+}
+
+// "Sold: [100] g" on a cart line -- how much of the pack the customer is
+// actually buying. Pushes up a valid, positive weight as it's typed; full pack
+// weight (the default) means a normal full-size line.
+function SoldGramsInput({
+  packGrams,
+  soldGrams,
+  onChange,
+}: {
+  packGrams: number;
+  soldGrams: number;
+  onChange: (grams: number | null) => void;
+}) {
+  const [text, setText] = useState(String(soldGrams));
+  const [focused, setFocused] = useState(false);
+  return (
+    <label className="mt-1 flex items-center gap-1 text-xs text-zinc-500">
+      Sold
+      <input
+        type="number"
+        inputMode="decimal"
+        min={1}
+        step="any"
+        aria-label="Grams sold"
+        value={focused ? text : String(soldGrams)}
+        onFocus={(e) => {
+          setText(String(soldGrams));
+          setFocused(true);
+          e.target.select();
+        }}
+        onChange={(e) => {
+          setText(e.target.value);
+          const n = parseFloat(e.target.value);
+          if (Number.isFinite(n) && n > 0) onChange(n);
+        }}
+        onBlur={() => setFocused(false)}
+        className="w-20 rounded border border-black/[.15] bg-transparent px-1 py-0.5 text-sm text-foreground tabular-nums dark:border-white/[.2]"
+      />
+      g
+      {soldGrams !== packGrams && (
+        <button
+          type="button"
+          onClick={() => onChange(null)}
+          className="ml-1 text-zinc-400 underline hover:text-foreground"
+        >
+          reset to {packGrams}g
+        </button>
+      )}
     </label>
   );
 }

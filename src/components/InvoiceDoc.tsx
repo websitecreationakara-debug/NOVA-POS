@@ -182,9 +182,16 @@ export function InvoiceDoc({
         <tbody>
           {items.map((item, i) => (
             <tr key={i}>
-              <Td>{item.name}</Td>
+              <Td>
+                {item.name}
+                {item.sizeLabel ? ` — ${item.sizeLabel}` : ""}
+                {item.nameKm && <span className="block">{item.nameKm}</span>}
+              </Td>
               <Td className="text-center tabular-nums">{item.quantity.toFixed(2)}</Td>
-              <Td className="text-center">{item.unit || "..."}</Td>
+              <Td className="text-center">
+                {item.unit || "..."}
+                {item.unitKm && <span className="block">{item.unitKm}</span>}
+              </Td>
               <Td className="text-right tabular-nums">{formatMoney(item.unitPrice)}</Td>
               <Td className="text-right tabular-nums">{formatMoney(item.lineTotal)}</Td>
             </tr>

@@ -349,6 +349,57 @@ export async function setSimpleProductPriceAction(input: {
   }
 }
 
+// Edit button on a Website Products row: the product's Khmer name, its scale
+// (unit: pcs / kg / g) and that scale in Khmer, which live on the linked POS product -- the website's
+// own catalog has no field for either. Creates + links the POS product first
+// if this row has never been sold or edited (same as the price/stock edits
+// above). `posName` also brings the POS name in line with a title edited in the
+// same save. variationId "" is a simple product, as elsewhere.
+export async function setProductDetailsAction(input: {
+  catalogId: WebsiteCatalogId;
+  siteProductId: string;
+  variationId: string;
+  // Title used if the POS product has to be created now.
+  title: string;
+  price: number;
+  imageUrl: string | null;
+  seedStock: number | null;
+  posName: string;
+  nameKm: string;
+  unit: string;
+  // The scale written in Khmer (e.g. "ចំណែក" for pcs).
+  unitKm: string;
+}): Promise<void> {
+  await requireStockAccess();
+  const unit = input.unit.trim().toLowerCase();
+  if (!unit) throw new Error("Pick a scale (pcs, kg or g)");
+  const posName = input.posName.trim();
+  if (!posName) throw new Error("Name is required");
+
+  const linked = await ensurePosProductForSiteProduct({
+    catalogId: input.catalogId,
+    siteProductId: input.siteProductId,
+    variationId: input.variationId,
+    title: input.title,
+    price: input.price,
+    imageUrl: input.imageUrl,
+    stock: input.seedStock,
+  });
+  const { error } = await supabaseAdmin
+    .from("products")
+    .update({
+      name: posName,
+      name_km: input.nameKm.trim() || null,
+      unit,
+      unit_km: input.unitKm.trim() || null,
+    })
+    .eq("id", linked.id);
+  if (error) throw new Error(error.message);
+
+  revalidatePath("/stock");
+  revalidatePath("/sales");
+}
+
 export async function setSimpleProductStockAction(input: {
   catalogId: WebsiteCatalogId;
   siteProductId: string;
