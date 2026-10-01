@@ -202,6 +202,9 @@ export async function getReconciliation(
   return data;
 }
 
+// Dashboard "Top Products" only counts items sold at a unit price above this ($).
+export const TOP_PRODUCT_MIN_PRICE = 20;
+
 export type DashboardStats = {
   totalRevenue: number;
   orderCount: number;
@@ -335,7 +338,7 @@ export async function getDashboardStats(
   // the same period (and the same business, via orders.brand_id here).
   let orderItemsQuery = supabaseAdmin
     .from("order_items")
-    .select("product_id, quantity, cogs, line_total, products(name), orders!inner(status, paid_at, brand_id)")
+    .select("product_id, quantity, unit_price, cogs, line_total, products(name), orders!inner(status, paid_at, brand_id)")
     .eq("orders.status", "paid")
     .neq("orders.fulfillment_status", "cancelled");
   if (brandId !== ALL_BUSINESSES_ID) orderItemsQuery = orderItemsQuery.eq("orders.brand_id", brandId);
@@ -397,6 +400,7 @@ export async function getDashboardStats(
   type OrderItemCogsRow = {
     product_id: string;
     quantity: number;
+    unit_price: number;
     cogs: number | null;
     line_total: number;
     products: { name: string } | null;
@@ -422,6 +426,10 @@ export async function getDashboardStats(
 
   const productTotals = new Map<string, { name: string; quantity: number; revenue: number }>();
   for (const i of itemsInRange) {
+    // The Top Products list is only for items priced above the cut-off, so cheap
+    // add-ons and small items don't crowd out the real earners. (COGS and the
+    // other totals still use every line.)
+    if (!(i.unit_price > TOP_PRODUCT_MIN_PRICE)) continue;
     const e = productTotals.get(i.product_id) ?? { name: i.products?.name ?? "—", quantity: 0, revenue: 0 };
     e.quantity += i.quantity;
     e.revenue += i.line_total;

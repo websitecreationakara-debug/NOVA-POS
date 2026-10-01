@@ -20,6 +20,7 @@ import {
   ALL_BUSINESSES_ID,
   getBrands,
   getDashboardStats,
+  TOP_PRODUCT_MIN_PRICE,
   getWebsiteProductTotal,
 } from "@/lib/supabase/queries";
 import { rangeLabel, resolveRange } from "@/lib/dateRange";
@@ -341,7 +342,9 @@ export default async function Home({
 
         <section className="rounded-2xl border border-border bg-card p-6">
           <h2 className="font-display font-bold">Top Products ({period})</h2>
-          <p className="mt-1 text-xs text-muted-foreground">Ranked by units sold</p>
+          <p className="mt-1 text-xs text-muted-foreground">
+            Ranked by units sold · items priced above {formatMoney(TOP_PRODUCT_MIN_PRICE)}
+          </p>
           {stats.topProducts.length === 0 ? (
             <p className="mt-4 text-sm text-muted-foreground">No sales in this period.</p>
           ) : (
