@@ -238,6 +238,9 @@ export type DashboardStats = {
   grossMarginPct: number | null;
   wasteCost: number;
   promotionCost: number;
+  // Delivery fees charged on the paid orders in the selected range (a part of
+  // each order's total, so it's already inside totalRevenue).
+  deliveryFees: number;
 };
 
 // Total products across the three storefront catalogs (what the Sales/Stock
@@ -308,7 +311,7 @@ export async function getDashboardStats(
 ): Promise<DashboardStats> {
   let ordersQuery = supabaseAdmin
     .from("orders")
-    .select("total, paid_at, brand_id, brands(name)")
+    .select("total, delivery_fee, paid_at, brand_id, brands(name)")
     .eq("status", "paid")
     .neq("fulfillment_status", "cancelled");
   if (brandId !== ALL_BUSINESSES_ID) ordersQuery = ordersQuery.eq("brand_id", brandId);
@@ -370,6 +373,7 @@ export async function getDashboardStats(
 
   type PaidOrderRow = {
     total: number;
+    delivery_fee: number | null;
     paid_at: string | null;
     brand_id: string | null;
     brands: { name: string } | null;
@@ -384,6 +388,11 @@ export async function getDashboardStats(
     .filter((o) => inRange((o.paid_at ?? "").slice(0, 10)))
     .reduce((sum, o) => sum + o.total, 0);
   const orderCount = orders.filter((o) => inRange((o.paid_at ?? "").slice(0, 10))).length;
+  const deliveryFees = round2(
+    orders
+      .filter((o) => inRange((o.paid_at ?? "").slice(0, 10)))
+      .reduce((sum, o) => sum + Number(o.delivery_fee ?? 0), 0)
+  );
 
   type OrderItemCogsRow = {
     product_id: string;
@@ -423,8 +432,11 @@ export async function getDashboardStats(
     .sort((a, b) => b.quantity - a.quantity || b.revenue - a.revenue)
     .slice(0, 10);
   const { totalCogs, hasUnknownCost } = await sumCogsWithFallback(itemsInRange);
-  const grossProfit = round2(totalRevenue - totalCogs);
-  const grossMarginPct = totalRevenue === 0 ? null : round2((grossProfit / totalRevenue) * 10000) / 100;
+  // Delivery fees are in each order's total but aren't earnings on the goods
+  // sold, so gross profit and margin work from the revenue without them.
+  const salesRevenue = round2(totalRevenue - deliveryFees);
+  const grossProfit = round2(salesRevenue - totalCogs);
+  const grossMarginPct = salesRevenue === 0 ? null : round2((grossProfit / salesRevenue) * 10000) / 100;
 
   type AdjustmentRow = { category: string; cost_impact: number | null; created_at: string };
   const adjustmentsInRange = ((adjustmentsData ?? []) as AdjustmentRow[]).filter((a) =>
@@ -527,6 +539,7 @@ export async function getDashboardStats(
     grossMarginPct,
     wasteCost,
     promotionCost,
+    deliveryFees,
   };
 }
 

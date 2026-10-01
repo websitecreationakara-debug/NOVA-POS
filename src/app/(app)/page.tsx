@@ -13,6 +13,7 @@ import {
   ShoppingCart,
   Trash2,
   TrendingDown,
+  Truck,
   TrendingUp,
 } from "lucide-react";
 import {
@@ -223,6 +224,14 @@ export default async function Home({
       tint: "bg-pink-500/15 text-pink-600 dark:text-pink-400",
       trend: null,
       href: "/marketing?tab=promotions",
+    },
+    {
+      label: `Delivery Fees (${period})`,
+      value: formatMoney(stats.deliveryFees),
+      icon: Truck,
+      tint: "bg-sky-500/15 text-sky-600 dark:text-sky-400",
+      trend: null,
+      href: "/orders",
     },
   ];
 
