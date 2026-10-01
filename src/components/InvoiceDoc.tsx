@@ -183,14 +183,13 @@ export function InvoiceDoc({
           {items.map((item, i) => (
             <tr key={i}>
               <Td>
-                {item.name}
+                {/* Khmer name when the product has one, otherwise the English name. */}
+                {item.nameKm?.trim() || item.name}
                 {item.sizeLabel ? ` — ${item.sizeLabel}` : ""}
-                {item.nameKm && <span className="block">{item.nameKm}</span>}
               </Td>
               <Td className="text-center tabular-nums">{item.quantity.toFixed(2)}</Td>
               <Td className="text-center">
-                {item.unit || "..."}
-                {item.unitKm && <span className="block">{item.unitKm}</span>}
+                {item.unitKm?.trim() || item.unit || "..."}
               </Td>
               <Td className="text-right tabular-nums">{formatMoney(item.unitPrice)}</Td>
               <Td className="text-right tabular-nums">{formatMoney(item.lineTotal)}</Td>

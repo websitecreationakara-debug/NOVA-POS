@@ -29,6 +29,8 @@ type Row = {
   quantity: number;
   unitPrice: number;
   sizeLabel?: string | null;
+  nameKm?: string | null;
+  unitKm?: string | null;
 };
 
 export type OrderEditorItem = {
@@ -39,6 +41,9 @@ export type OrderEditorItem = {
   unitPrice: number;
   // Custom size sold ("100g") -- carried through so saving doesn't drop it.
   sizeLabel?: string | null;
+  // Khmer name / unit, shown instead of the English ones when the product has them.
+  nameKm?: string | null;
+  unitKm?: string | null;
 };
 
 let rowSeq = 0;
@@ -359,7 +364,7 @@ export default function OrderEditor({
               {rows.map((r) => (
                 <tr key={r.key} className="border-b border-border">
                   <td className="py-2 pr-2">
-                    {r.name}
+                    {r.nameKm?.trim() || r.name}
                     {r.sizeLabel ? ` — ${r.sizeLabel}` : ""}
                   </td>
                   <td className="py-2 text-right">
@@ -380,7 +385,7 @@ export default function OrderEditor({
                       r.quantity
                     )}
                   </td>
-                  <td className="py-2">{r.unit}</td>
+                  <td className="py-2">{r.unitKm?.trim() || r.unit}</td>
                   <td className="py-2 text-right">
                     {editing ? (
                       <input
