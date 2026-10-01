@@ -50,6 +50,7 @@ import { updateOrderAction } from "@/app/(app)/orders/actions";
 import { ensurePosProductForSiteProduct, syncPosProductName } from "./websiteActions";
 import { notifySaleCharged } from "@/lib/saleCharged";
 import { parseGrams, sizedLine } from "@/lib/weight";
+import { COUNTRY_PREFIX, toFullPhone } from "@/lib/phone";
 
 // An existing order opened for editing via /sales?editOrder=<id> -- the
 // checkout loads with this cart, customer and totals, and "Update order"
@@ -202,7 +203,7 @@ export default function SalesClient({
   // The phone-suggestion list is position:fixed and anchored just above the
   // phone input, so the checkout panel's own `overflow-y-auto` scroll
   // container can't clip it.
-  const phoneInputRef = useRef<HTMLInputElement>(null);
+  const phoneInputRef = useRef<HTMLDivElement>(null);
   const [phonePos, setPhonePos] = useState<{ bottom: number; left: number; width: number } | null>(
     null
   );
@@ -228,6 +229,106 @@ export default function SalesClient({
   const [isCharging, startCharging] = useTransition();
   const [, startLookup] = useTransition();
   const searchDebounce = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // The order being built lives in this component's state, which is thrown away
+  // when staff open another page -- so keep a draft in this tab's
+  // sessionStorage (per business) and put it back on return. Not used when
+  // editing an existing order, which is seeded from the server instead. The
+  // draft is cleared by the same reset a successful charge already does.
+  const draftKey = `nova:sales-draft:${currentBrand.id}`;
+  const [draftLoaded, setDraftLoaded] = useState(false);
+  useEffect(() => {
+    if (!editOrder) {
+      try {
+        const raw = sessionStorage.getItem(draftKey);
+        if (raw) {
+          const d = JSON.parse(raw) as Partial<{
+            cart: CartLine[];
+            paymentMethod: PaymentMethod;
+            orderSource: OrderSource;
+            paymentReference: string;
+            note: string;
+            customerName: string;
+            customerPhone: string;
+            customerAddress: string;
+            discountPercent: string;
+            minusAmount: string;
+            deliveryAt: string;
+            deliveryFee: string;
+            selectedCustomer: { id: string; phone: string } | null;
+          }>;
+          /* eslint-disable react-hooks/set-state-in-effect -- restoring the saved draft after mount: reading storage during render would make the browser's first render differ from the server HTML */
+          if (Array.isArray(d.cart)) setCart(d.cart);
+          if (d.paymentMethod) setPaymentMethod(d.paymentMethod);
+          if (d.orderSource) setOrderSource(d.orderSource);
+          if (typeof d.paymentReference === "string") setPaymentReference(d.paymentReference);
+          if (typeof d.note === "string") setNote(d.note);
+          if (typeof d.customerName === "string") setCustomerName(d.customerName);
+          if (typeof d.customerPhone === "string") setCustomerPhone(d.customerPhone);
+          if (typeof d.customerAddress === "string") setCustomerAddress(d.customerAddress);
+          if (typeof d.discountPercent === "string") setDiscountPercent(d.discountPercent);
+          if (typeof d.minusAmount === "string") setMinusAmount(d.minusAmount);
+          if (typeof d.deliveryAt === "string") setDeliveryAt(d.deliveryAt);
+          if (typeof d.deliveryFee === "string") setDeliveryFee(d.deliveryFee);
+          if (d.selectedCustomer) setSelectedCustomer(d.selectedCustomer);
+          /* eslint-enable react-hooks/set-state-in-effect */
+        }
+      } catch {
+        // storage blocked or a bad draft -- start with an empty order
+      }
+    }
+    setDraftLoaded(true);
+    // Mount only: restores once, before anything is saved over it.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  useEffect(() => {
+    if (!draftLoaded || editOrder) return;
+    try {
+      const empty =
+        cart.length === 0 && !customerName && !customerPhone && !customerAddress && !note;
+      if (empty) {
+        sessionStorage.removeItem(draftKey);
+      } else {
+        sessionStorage.setItem(
+          draftKey,
+          JSON.stringify({
+            cart,
+            paymentMethod,
+            orderSource,
+            paymentReference,
+            note,
+            customerName,
+            customerPhone,
+            customerAddress,
+            discountPercent,
+            minusAmount,
+            deliveryAt,
+            deliveryFee,
+            selectedCustomer,
+          })
+        );
+      }
+    } catch {
+      // storage full or blocked -- the order just won't survive leaving the page
+    }
+  }, [
+    draftLoaded,
+    editOrder,
+    draftKey,
+    cart,
+    paymentMethod,
+    orderSource,
+    paymentReference,
+    note,
+    customerName,
+    customerPhone,
+    customerAddress,
+    discountPercent,
+    minusAmount,
+    deliveryAt,
+    deliveryFee,
+    selectedCustomer,
+  ]);
 
   useEffect(() => {
     return () => {
@@ -1087,18 +1188,34 @@ export default function SalesClient({
               </p>
               <div className="flex gap-2">
                 <div className="flex-1">
-                  <input
+                  {/* "855" is fixed in front: staff type the rest and the full number
+                      (855 + digits) is what gets searched and saved. A saved number
+                      that doesn't start with 855 is shown whole, without the prefix. */}
+                  <div
                     ref={phoneInputRef}
-                    type="tel"
-                    required
-                    autoComplete="off"
-                    className="w-full rounded border border-black/[.15] bg-transparent px-3 py-1.5 text-sm dark:border-white/[.2]"
-                    placeholder="Phone number *"
-                    value={customerPhone}
-                    onChange={(e) => handlePhoneChange(e.target.value)}
-                    onFocus={() => setPhoneDropdownOpen(true)}
-                    onBlur={() => setTimeout(() => setPhoneDropdownOpen(false), 150)}
-                  />
+                    className="flex w-full items-center rounded border border-black/[.15] focus-within:border-black/40 dark:border-white/[.2] dark:focus-within:border-white/50"
+                  >
+                    {(customerPhone === "" || customerPhone.startsWith(COUNTRY_PREFIX)) && (
+                      <span className="border-r border-black/[.15] px-2.5 py-1.5 text-sm text-zinc-500 select-none dark:border-white/[.2]">
+                        {COUNTRY_PREFIX}
+                      </span>
+                    )}
+                    <input
+                      type="tel"
+                      required
+                      autoComplete="off"
+                      className="w-full min-w-0 bg-transparent px-3 py-1.5 text-sm outline-none"
+                      placeholder="Phone number *"
+                      value={
+                        customerPhone.startsWith(COUNTRY_PREFIX)
+                          ? customerPhone.slice(COUNTRY_PREFIX.length)
+                          : customerPhone
+                      }
+                      onChange={(e) => handlePhoneChange(toFullPhone(e.target.value))}
+                      onFocus={() => setPhoneDropdownOpen(true)}
+                      onBlur={() => setTimeout(() => setPhoneDropdownOpen(false), 150)}
+                    />
+                  </div>
                   {phoneDropdownOpen && customerPhone.trim().length > 0 && phonePos && (
                     <div
                       style={{
@@ -1160,7 +1277,7 @@ export default function SalesClient({
                     onFocus={() => setNameDropdownOpen(true)}
                     onBlur={() => setTimeout(() => setNameDropdownOpen(false), 150)}
                   />
-                  {nameDropdownOpen && customerName.trim().length > 0 && namePos && (
+                  {nameDropdownOpen && customerName.trim().length > 0 && nameSuggestions.length > 0 && namePos && (
                     <div
                       style={{
                         position: "fixed",
@@ -1171,15 +1288,6 @@ export default function SalesClient({
                       }}
                       className="max-h-64 overflow-y-auto rounded-lg border border-black/[.15] bg-white shadow-xl dark:border-white/[.2] dark:bg-zinc-900"
                     >
-                      <button
-                        type="button"
-                        onMouseDown={(e) => e.preventDefault()}
-                        onClick={selectNewCustomer}
-                        className="flex w-full items-center gap-2 border-b border-black/[.08] px-3 py-2 text-left text-sm hover:bg-black/[.03] dark:border-white/[.145] dark:hover:bg-white/[.05]"
-                      >
-                        <Plus className="size-4" />
-                        New
-                      </button>
                       {nameSuggestions.map((c) => (
                         <button
                           type="button"
@@ -1202,11 +1310,6 @@ export default function SalesClient({
                           </span>
                         </button>
                       ))}
-                      {nameSuggestions.length === 0 && customerName.trim().length >= 1 && (
-                        <p className="px-3 py-2 text-xs text-zinc-500">
-                          No matches — pick New to add them.
-                        </p>
-                      )}
                     </div>
                   )}
                 </div>
