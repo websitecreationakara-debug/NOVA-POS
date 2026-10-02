@@ -29,7 +29,13 @@ export default function PrintButton({ filename }: { filename?: string }) {
       );
     } catch (error) {
       console.error("Image export failed", error);
-      alert("Couldn't generate the image. Try Save as PDF instead.");
+      // A failed batch names the invoices that weren't saved; anything else gets
+      // the generic hint.
+      alert(
+        error instanceof Error && error.message.includes("not saved")
+          ? error.message
+          : "Couldn't generate the image. Try Save as PDF instead."
+      );
     } finally {
       setExporting(false);
       setImageProgress(null);

@@ -4,8 +4,8 @@
 // colors; the sheet is captured at natural size, never under CSS zoom, which
 // garbles text spacing) -- only the output differs: an image download per
 // invoice instead of pages in a PDF. A bulk page produces one file per
-// invoice, numbered.
-import { prepareInvoiceClone } from "./invoiceCapture";
+// invoice, named after its invoice number.
+import { captureInvoiceSheet } from "./invoiceCapture";
 
 export async function exportInvoiceImage(
   filename: string,
@@ -22,6 +22,9 @@ export async function exportInvoiceImage(
 
   const safeName = filename.replace(/[\\/:*?"<>|]/g, "-");
   const usedNames = new Set<string>();
+  // Invoices that still couldn't be drawn correctly after retrying -- no file is
+  // saved for them (a bad picture is worse than none) and they're reported at the end.
+  const failed: string[] = [];
 
   for (let i = 0; i < sheets.length; i++) {
     onProgress?.(i, sheets.length);
@@ -29,6 +32,7 @@ export async function exportInvoiceImage(
     // large batch doesn't freeze the tab.
     await new Promise((resolve) => setTimeout(resolve, 0));
     const sheet = sheets[i];
+    const invoiceName = sheet.dataset.invoice?.replace(/[\\/:*?"<>|]/g, "-");
     const zoomEl = sheet.firstElementChild as HTMLElement | null;
     const prevZoom = zoomEl?.style.zoom ?? "";
     const prevBorder = sheet.style.border;
@@ -40,20 +44,18 @@ export async function exportInvoiceImage(
     sheet.style.boxShadow = "none";
     sheet.style.borderRadius = "0";
 
-    let canvas: HTMLCanvasElement;
+    let canvas: HTMLCanvasElement | null = null;
     try {
-      canvas = await html2canvas(sheet, {
-        scale: 2,
-        backgroundColor: "#ffffff",
-        useCORS: true,
-        onclone: prepareInvoiceClone(sheet),
-      });
+      canvas = await captureInvoiceSheet(html2canvas, sheet, invoiceName || `#${i + 1}`);
+    } catch {
+      failed.push(invoiceName || `#${i + 1}`);
     } finally {
       if (zoomEl) zoomEl.style.zoom = prevZoom;
       sheet.style.border = prevBorder;
       sheet.style.boxShadow = prevShadow;
       sheet.style.borderRadius = prevRadius;
     }
+    if (!canvas) continue;
 
     const blob = await new Promise<Blob | null>((resolve) =>
       canvas.toBlob(resolve, "image/png")
@@ -62,12 +64,14 @@ export async function exportInvoiceImage(
     // for the garbage collector -- they pile up over a large batch.
     canvas.width = 0;
     canvas.height = 0;
-    if (!blob) throw new Error("Couldn't encode the invoice image");
+    if (!blob) {
+      failed.push(invoiceName || `#${i + 1}`);
+      continue;
+    }
 
     // Each file is named after its invoice number when the sheet carries one
     // (data-invoice on the bulk page), e.g. "202610-12.png"; otherwise the
     // old "<name>-<n>" numbering.
-    const invoiceName = sheet.dataset.invoice?.replace(/[\\/:*?"<>|]/g, "-");
     let fileName = invoiceName || `${safeName}${sheets.length > 1 ? `-${i + 1}` : ""}`;
     for (let n = 2; usedNames.has(fileName); n++) fileName = `${invoiceName || safeName}-${n}`;
     usedNames.add(fileName);
@@ -82,4 +86,11 @@ export async function exportInvoiceImage(
     setTimeout(() => URL.revokeObjectURL(url), 10_000);
   }
   onProgress?.(sheets.length, sheets.length);
+
+  if (failed.length > 0) {
+    throw new Error(
+      `${failed.length} invoice${failed.length === 1 ? "" : "s"} couldn't be drawn correctly and ` +
+        `${failed.length === 1 ? "was" : "were"} not saved: ${failed.join(", ")}. Click Save as PNG again to retry.`
+    );
+  }
 }
