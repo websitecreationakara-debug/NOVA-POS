@@ -5,6 +5,8 @@
 // garbles text spacing) -- only the output differs: an image download per
 // invoice instead of pages in a PDF. A bulk page produces one file per
 // invoice, numbered.
+import { pinImageSizes } from "./invoiceCapture";
+
 export async function exportInvoiceImage(filename: string): Promise<void> {
   const { default: html2canvas } = await import("html2canvas-pro");
 
@@ -16,6 +18,7 @@ export async function exportInvoiceImage(filename: string): Promise<void> {
   if (sheets.length === 0) return;
 
   const safeName = filename.replace(/[\\/:*?"<>|]/g, "-");
+  const usedNames = new Set<string>();
 
   for (let i = 0; i < sheets.length; i++) {
     const sheet = sheets[i];
@@ -36,6 +39,7 @@ export async function exportInvoiceImage(filename: string): Promise<void> {
         scale: 2,
         backgroundColor: "#ffffff",
         useCORS: true,
+        onclone: pinImageSizes(sheet),
       });
     } finally {
       if (zoomEl) zoomEl.style.zoom = prevZoom;
@@ -49,10 +53,18 @@ export async function exportInvoiceImage(filename: string): Promise<void> {
     );
     if (!blob) throw new Error("Couldn't encode the invoice image");
 
+    // Each file is named after its invoice number when the sheet carries one
+    // (data-invoice on the bulk page), e.g. "202610-12.png"; otherwise the
+    // old "<name>-<n>" numbering.
+    const invoiceName = sheet.dataset.invoice?.replace(/[\\/:*?"<>|]/g, "-");
+    let fileName = invoiceName || `${safeName}${sheets.length > 1 ? `-${i + 1}` : ""}`;
+    for (let n = 2; usedNames.has(fileName); n++) fileName = `${invoiceName || safeName}-${n}`;
+    usedNames.add(fileName);
+
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `${safeName}${sheets.length > 1 ? `-${i + 1}` : ""}.png`;
+    a.download = `${fileName}.png`;
     a.click();
     URL.revokeObjectURL(url);
   }
