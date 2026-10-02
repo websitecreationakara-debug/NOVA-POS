@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { ChevronLeft, ChevronRight, FileDown, Search, Truck, X } from "lucide-react";
@@ -18,12 +18,6 @@ function formatMoney(n: number) {
   return `$${n.toFixed(2)}`;
 }
 
-// Local calendar day (YYYY-MM-DD) for a paid_at timestamp, so the date-range
-// inputs compare like-for-like.
-function localDay(iso: string) {
-  return new Date(iso).toLocaleDateString("en-CA");
-}
-
 // "Wed, Sep 11, 2:00 PM" from an ISO timestamp.
 function formatDeliveryAt(iso: string) {
   return new Date(iso).toLocaleString(undefined, {
@@ -37,61 +31,55 @@ function formatDeliveryAt(iso: string) {
 
 export default function OrdersTable({
   orders,
+  total,
+  page,
+  limit,
+  filters,
   activeStatus,
   brands,
 }: {
+  // One page of orders -- search/brand/date filters and paging are applied by
+  // the server from the URL (?q=&brand=&from=&to=&page=&limit=).
   orders: OrderListRow[];
+  total: number;
+  page: number;
+  limit: number;
+  filters: { q: string; brandId: string; from: string; to: string };
   activeStatus: FulfillmentStatus | null;
   brands: { id: string; name: string }[];
 }) {
   const router = useRouter();
-  const [search, setSearch] = useState("");
-  const [from, setFrom] = useState("");
-  const [to, setTo] = useState("");
-  const [brandId, setBrandId] = useState("");
+  const [search, setSearch] = useState(filters.q);
+  const { brandId, from, to } = filters;
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [bulkBusy, setBulkBusy] = useState(false);
-  const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState(25);
 
-  const filtered = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    return orders.filter((o) => {
-      if (activeStatus && o.fulfillmentStatus !== activeStatus) return false;
-      if (brandId && o.brandId !== brandId) return false;
-      if (q) {
-        const hay = `${o.invoiceNumber ?? ""} ${o.customerName ?? ""} ${o.customerPhone ?? ""}`.toLowerCase();
-        if (!hay.includes(q)) return false;
-      }
-      if (from || to) {
-        if (!o.paidAt) return false;
-        const day = localDay(o.paidAt);
-        if (from && day < from) return false;
-        if (to && day > to) return false;
-      }
-      return true;
-    });
-  }, [orders, activeStatus, brandId, search, from, to]);
+  // Merge changes into the current query string (keeps ?status=). Any change
+  // other than the page itself drops back to page 1.
+  function navigate(patch: Record<string, string>) {
+    const params = new URLSearchParams(window.location.search);
+    for (const [k, v] of Object.entries(patch)) {
+      if (v) params.set(k, v);
+      else params.delete(k);
+    }
+    if (!("page" in patch)) params.delete("page");
+    const qs = params.toString();
+    router.push(qs ? `/orders?${qs}` : "/orders", { scroll: false });
+  }
+
+  // Type-as-you-go search: applied to the URL once typing pauses.
+  useEffect(() => {
+    const term = search.trim();
+    if (term === filters.q.trim()) return;
+    const id = setTimeout(() => navigate({ q: term }), 350);
+    return () => clearTimeout(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [search, filters.q]);
 
   const hasFilter = search.trim() !== "" || from !== "" || to !== "" || brandId !== "";
 
-  const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize));
-  // Snap back to page 1 whenever the result set changes under the current page.
-  const filterKey = `${activeStatus ?? ""}|${brandId}|${search}|${from}|${to}|${pageSize}`;
-  const [prevFilterKey, setPrevFilterKey] = useState(filterKey);
-  if (filterKey !== prevFilterKey) {
-    setPrevFilterKey(filterKey);
-    setPage(1);
-  }
-  const currentPage = Math.min(page, pageCount);
-  const paged = filtered.slice((currentPage - 1) * pageSize, currentPage * pageSize);
-
-  function clearFilters() {
-    setSearch("");
-    setFrom("");
-    setTo("");
-    setBrandId("");
-  }
+  const pageCount = Math.max(1, Math.ceil(total / limit));
+  const paged = orders;
 
   // Filename for the bulk PDF export -- business + the active date range, so
   // staff can tell one saved report from another without opening it. Falls
@@ -156,7 +144,7 @@ export default function OrdersTable({
         </div>
         <select
           value={brandId}
-          onChange={(e) => setBrandId(e.target.value)}
+          onChange={(e) => navigate({ brand: e.target.value })}
           className="rounded-lg border border-border bg-transparent px-2.5 py-1.5 text-sm text-foreground"
         >
           <option value="">All businesses</option>
@@ -172,7 +160,7 @@ export default function OrdersTable({
             type="date"
             value={from}
             max={to || undefined}
-            onChange={(e) => setFrom(e.target.value)}
+            onChange={(e) => navigate({ from: e.target.value })}
             className={dateInputClass}
           />
         </label>
@@ -182,7 +170,7 @@ export default function OrdersTable({
             type="date"
             value={to}
             min={from || undefined}
-            onChange={(e) => setTo(e.target.value)}
+            onChange={(e) => navigate({ to: e.target.value })}
             className={dateInputClass}
           />
         </label>
@@ -190,8 +178,9 @@ export default function OrdersTable({
           <button
             type="button"
             onClick={() => {
-              clearFilters();
-              if (activeStatus) router.push("/orders");
+              setSelected(new Set());
+              router.push("/orders", { scroll: false });
+              setSearch("");
             }}
             className="inline-flex items-center gap-1 rounded-lg border border-border px-2.5 py-1.5 text-xs text-muted-foreground transition-colors hover:text-foreground"
           >
@@ -201,7 +190,7 @@ export default function OrdersTable({
         )}
         {(hasFilter || activeStatus) && (
           <span className="ml-auto text-xs text-muted-foreground">
-            Showing {filtered.length} of {orders.length}
+            {total} matching
           </span>
         )}
       </div>
@@ -242,9 +231,9 @@ export default function OrdersTable({
       )}
 
       <div className="px-3 pb-6 sm:px-6 lg:flex-1 lg:overflow-auto">
-        {filtered.length === 0 ? (
+        {orders.length === 0 ? (
           <p className="text-sm text-muted-foreground">
-            {orders.length === 0 ? "No orders found." : "No orders match your filters."}
+            {hasFilter || activeStatus || page > 1 ? "No orders match your filters." : "No orders found."}
           </p>
         ) : (
           <>
@@ -407,13 +396,13 @@ export default function OrdersTable({
         )}
       </div>
 
-      {filtered.length > 0 && (
+      {total > 0 && (
         <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border px-3 py-3 text-sm sm:px-6">
           <label className="flex items-center gap-2 text-xs text-muted-foreground">
             Items per page
             <select
-              value={pageSize}
-              onChange={(e) => setPageSize(Number(e.target.value))}
+              value={limit}
+              onChange={(e) => navigate({ limit: e.target.value, page: "1" })}
               className="rounded border border-border bg-transparent px-2 py-1 text-xs text-foreground"
             >
               {PAGE_SIZE_OPTIONS.map((n) => (
@@ -426,20 +415,20 @@ export default function OrdersTable({
           <div className="flex items-center gap-2">
             <button
               type="button"
-              onClick={() => setPage(currentPage - 1)}
-              disabled={currentPage <= 1}
+              onClick={() => navigate({ page: String(page - 1) })}
+              disabled={page <= 1}
               className="flex items-center gap-1 rounded border border-border px-2.5 py-1 text-xs disabled:opacity-30"
             >
               <ChevronLeft className="size-3.5" />
               Prev
             </button>
             <span className="tabular-nums text-muted-foreground">
-              Page {currentPage} of {pageCount}
+              Page {page} of {pageCount}
             </span>
             <button
               type="button"
-              onClick={() => setPage(currentPage + 1)}
-              disabled={currentPage >= pageCount}
+              onClick={() => navigate({ page: String(page + 1) })}
+              disabled={page >= pageCount}
               className="flex items-center gap-1 rounded border border-border px-2.5 py-1 text-xs disabled:opacity-30"
             >
               Next

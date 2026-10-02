@@ -1708,7 +1708,13 @@ export default function WebsiteProductsPanel({
                           type="number"
                           min={0}
                           step="0.01"
-                          placeholder={savedCosts.totalOverride === null && total !== null ? total.toFixed(2) : "—"}
+                          placeholder={
+                            savedCosts.totalOverride !== null
+                              ? "—"
+                              : (total ?? linked?.cost_price) != null
+                                ? (total ?? (linked?.cost_price as number)).toFixed(2)
+                                : "—"
+                          }
                           value={totalValue}
                           onChange={(e) =>
                             setCostDrafts((prev) => ({

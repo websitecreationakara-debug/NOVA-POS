@@ -5,7 +5,11 @@ import { supabaseAdmin } from "@/lib/supabase/server";
 import { pushStockToSites, searchSiteProducts, linkProductToSite, type SiteProductCandidate } from "@/lib/site-sync";
 import { requireStockAccess } from "@/lib/stockAccess";
 import { computeLineCogs, computeRecipeUnitCost } from "@/lib/cogs";
-import { getEffectiveProductCost, syncSetItemCostsForProduct } from "@/lib/websiteProducts/purchaseCosts";
+import {
+  getEffectiveProductCost,
+  setWebsitePurchaseCost,
+  syncSetItemCostsForProduct,
+} from "@/lib/websiteProducts/purchaseCosts";
 import type { ProductSiteLink, StockAdjustmentCategory } from "@/types/database";
 
 // Order lines never had a cost recorded because cost tracking didn't exist
@@ -237,6 +241,22 @@ export async function setProductCostAction(input: {
   if (error) throw error;
 
   if (costPrice !== null) await backfillOrderItemCogs(productId);
+
+  // Keep Stock's Website tab in step: its Total column is a separate store
+  // (website_product_purchase_costs), so a cost set here -- e.g. from the
+  // Margin Report's Unit Cost -- would otherwise leave Total blank or stale
+  // for a linked product, and that Total wins in getEffectiveProductCost.
+  const { data: siteLink } = await supabaseAdmin
+    .from("product_site_links")
+    .select("site, site_product_id, variation_id")
+    .eq("product_id", productId)
+    .limit(1)
+    .maybeSingle();
+  if (siteLink) {
+    await setWebsitePurchaseCost(siteLink.site, siteLink.site_product_id, siteLink.variation_id, {
+      total_override: costPrice,
+    });
+  }
 
   // A Set item's Unit Cost only wins over this when the product also has a
   // fully-entered Purchase Cost Total (see getEffectiveProductCost) --

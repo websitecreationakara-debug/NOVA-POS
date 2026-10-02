@@ -7,9 +7,18 @@ import CostControlClient from "./CostControlClient";
 export default async function MarketingPage({
   searchParams,
 }: {
-  searchParams: Promise<{ brand?: string; q?: string; tab?: string; set?: string }>;
+  searchParams: Promise<{
+    brand?: string;
+    q?: string;
+    tab?: string;
+    set?: string;
+    page?: string;
+    limit?: string;
+  }>;
 }) {
-  const { brand: brandId = "", q = "", tab, set: setParam } = await searchParams;
+  const { brand: brandId = "", q = "", tab, set: setParam, page: pageParam, limit: limitParam } = await searchParams;
+  const limit = Math.min(Math.max(parseInt(limitParam ?? "", 10) || 50, 1), 200);
+  const page = Math.max(parseInt(pageParam ?? "", 10) || 1, 1);
 
   if (tab === "cost-control") {
     const brands = await getBrands();
@@ -45,10 +54,10 @@ export default async function MarketingPage({
   // brandId/q come straight from the URL, so promotions/customers don't
   // actually depend on the brands list -- fetch all three in parallel
   // instead of waiting on getBrands() first.
-  const [brands, promotions, customers] = await Promise.all([
+  const [brands, promotions, { customers, total }] = await Promise.all([
     getBrands(),
     listPromotionsAction(brandId),
-    listCustomersAction(q),
+    listCustomersAction(q, page, limit),
   ]);
 
   return (
@@ -57,6 +66,9 @@ export default async function MarketingPage({
       currentBrandId={brandId}
       promotions={promotions}
       customers={customers}
+      customerTotal={total}
+      customerPage={page}
+      customerLimit={limit}
       searchTerm={q}
     />
   );

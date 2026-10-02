@@ -34,7 +34,7 @@ function catalogSignature(products: WebsiteProduct[]): string {
       const variationsSig = (p.variations ?? [])
         .map((v) => `${v.id}:${v.price}:${v.sale_price ?? ""}:${v.stock ?? ""}`)
         .join(",");
-      return `${p.id}:${p.price}:${p.sale_price ?? ""}:${p.stock ?? ""}:${p.status}:${p.title}:${p.image_url ?? ""}:${variationsSig}`;
+      return `${p.id}:${p.price}:${p.sale_price ?? ""}:${p.stock ?? ""}:${p.status}:${p.title}:${p.weight ?? ""}:${p.image_url ?? ""}:${variationsSig}`;
     })
     .join("|");
 }
@@ -344,11 +344,14 @@ export default function SalesWebsiteGrid({
               : -1;
             const weightLabel = v?.weight?.trim() || null;
             const flavorLabel = v?.flavor?.trim() || null;
+            // A simple product has no option pill, but still shows its own
+            // weight (same text as Stock's Website tab).
+            const productWeight = isVariation ? null : p.weight?.trim() || null;
             const optionLabel = isVariation
               ? weightLabel ??
                 flavorLabel ??
                 (siblingIndex >= 0 ? `Option ${siblingIndex + 1}` : null)
-              : null;
+              : productWeight;
             const photoBadge =
               isVariation && weightLabel && flavorLabel ? flavorLabel : null;
             return (
@@ -395,7 +398,13 @@ export default function SalesWebsiteGrid({
                 <div className="line-clamp-2 h-12 leading-6 font-medium">{p.title}</div>
                 <div className="mt-1 flex min-h-6 items-center">
                   {optionLabel && (
-                    <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-xs font-semibold text-amber-700 dark:text-amber-300">
+                    <span
+                      className={
+                        isVariation
+                          ? "rounded-full bg-amber-500/15 px-2 py-0.5 text-xs font-semibold text-amber-700 dark:text-amber-300"
+                          : "text-xs text-zinc-400"
+                      }
+                    >
                       {optionLabel}
                     </span>
                   )}
