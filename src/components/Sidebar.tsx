@@ -31,8 +31,8 @@ const topItems = [
     icon: LayoutDashboard,
     roles: ["admin", "sales", "stock", "accountance", "marketing"],
   },
-  { href: "/sales", label: "Sales", icon: ShoppingCart, roles: ["admin", "sales", "accountance"] },
-  { href: "/stock", label: "Stock", icon: Package, roles: ["admin", "stock", "accountance"] },
+  { href: "/sales", label: "Sales", icon: ShoppingCart, roles: ["admin", "sales", "accountance", "marketing"] },
+  { href: "/stock", label: "Stock", icon: Package, roles: ["admin", "stock", "accountance", "sales", "marketing"] },
   {
     href: "/orders",
     label: "Orders",

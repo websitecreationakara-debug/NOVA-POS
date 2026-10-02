@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { supabaseAdmin } from "@/lib/supabase/server";
 import { getSessionUser } from "@/lib/supabase/auth-server";
-import { requireStockAccess } from "@/lib/stockAccess";
+import { requireFullStockAccess } from "@/lib/stockAccess";
 import { adjustStockAction } from "@/app/(app)/stock/actions";
 
 export async function saveReconciliationAction(input: {
@@ -112,7 +112,7 @@ async function loadWasteRow(id: string): Promise<{ productId: string; delta: num
 // product is linked -- see adjustStockAction/pushStockToSites) before
 // removing the row, so deleting one doesn't leave stock permanently short.
 export async function deleteWasteLogAction(id: string): Promise<void> {
-  await requireStockAccess();
+  await requireFullStockAccess();
   const { productId, delta } = await loadWasteRow(id);
 
   if (delta !== 0) {
@@ -140,7 +140,7 @@ export async function updateWasteLogAction(input: {
   reason: string;
   date: string;
 }): Promise<void> {
-  await requireStockAccess();
+  await requireFullStockAccess();
   const { id, quantity, reason, date } = input;
   if (!Number.isFinite(quantity) || quantity <= 0) {
     throw new Error("Quantity must be a positive number");
