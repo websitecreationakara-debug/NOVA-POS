@@ -10,9 +10,16 @@ import type { RangeMode } from "@/lib/dateRange";
 // (src/app/(app)/accountance/AccountanceClient.tsx), plus a business chip row
 // (All Business + each real brand) -- same ALL_BUSINESSES_ID sentinel and
 // "no brand param = All Business" convention as that page's own dropdown.
+//
+// It can also run as a second, separate filter for one part of the dashboard
+// (the Top Branch / Top Products cards): `paramPrefix` ("top_") keeps its range
+// in its own URL params so it never touches the page-wide one, and
+// `showBrands={false}` leaves out the business chips (those stay the page's).
 export default function DashboardRangeBar({
   brands,
   brandId,
+  paramPrefix = "",
+  showBrands = true,
   mode,
   week,
   month,
@@ -23,6 +30,8 @@ export default function DashboardRangeBar({
 }: {
   brands: { id: string; name: string }[];
   brandId: string;
+  paramPrefix?: string;
+  showBrands?: boolean;
   mode: RangeMode;
   week: string;
   month: string;
@@ -45,36 +54,40 @@ export default function DashboardRangeBar({
     year?: string;
   }) {
     const targetMode = overrides.mode ?? mode;
-    const params = new URLSearchParams();
-    params.set("brand", overrides.brand ?? brandId);
-    params.set("mode", targetMode);
-    if (targetMode === "week") params.set("week", overrides.week ?? week);
+    // Start from the current URL so the OTHER filter's params survive; only this
+    // bar's own (prefixed) params are rewritten.
+    const params = new URLSearchParams(window.location.search);
+    const key = (k: string) => `${paramPrefix}${k}`;
+    for (const k of ["mode", "week", "month", "quarter", "year", "from", "to"]) params.delete(key(k));
+    if (!paramPrefix) params.set("brand", overrides.brand ?? brandId);
+    params.set(key("mode"), targetMode);
+    if (targetMode === "week") params.set(key("week"), overrides.week ?? week);
     else if (targetMode === "month")
-      params.set("month", overrides.month ?? month);
+      params.set(key("month"), overrides.month ?? month);
     else if (targetMode === "quarter")
-      params.set("quarter", overrides.quarter ?? quarter);
-    else if (targetMode === "year") params.set("year", overrides.year ?? year);
+      params.set(key("quarter"), overrides.quarter ?? quarter);
+    else if (targetMode === "year") params.set(key("year"), overrides.year ?? year);
     else {
-      params.set("from", overrides.from ?? fromDate);
-      params.set("to", overrides.to ?? toDate);
+      params.set(key("from"), overrides.from ?? fromDate);
+      params.set(key("to"), overrides.to ?? toDate);
     }
     return `/?${params.toString()}`;
   }
 
   function switchBrand(newBrandId: string) {
-    router.push(urlFor({ brand: newBrandId }));
+    router.push(urlFor({ brand: newBrandId }), { scroll: false });
   }
 
   function switchMode(newMode: RangeMode) {
-    router.push(urlFor({ mode: newMode }));
+    router.push(urlFor({ mode: newMode }), { scroll: false });
   }
 
   function switchDates(newFrom: string, newTo: string) {
-    router.push(urlFor({ mode: "day", from: newFrom, to: newTo }));
+    router.push(urlFor({ mode: "day", from: newFrom, to: newTo }), { scroll: false });
   }
 
   function switchWeek(newWeek: string) {
-    router.push(urlFor({ mode: "week", week: newWeek }));
+    router.push(urlFor({ mode: "week", week: newWeek }), { scroll: false });
   }
 
   function stepWeek(delta: number) {
@@ -84,7 +97,7 @@ export default function DashboardRangeBar({
   }
 
   function switchMonth(newMonth: string) {
-    router.push(urlFor({ mode: "month", month: newMonth }));
+    router.push(urlFor({ mode: "month", month: newMonth }), { scroll: false });
   }
 
   function stepMonth(delta: number) {
@@ -96,7 +109,7 @@ export default function DashboardRangeBar({
   }
 
   function switchQuarter(newQuarter: string) {
-    router.push(urlFor({ mode: "quarter", quarter: newQuarter }));
+    router.push(urlFor({ mode: "quarter", quarter: newQuarter }), { scroll: false });
   }
 
   function stepQuarter(delta: number) {
@@ -108,7 +121,7 @@ export default function DashboardRangeBar({
   }
 
   function switchYear(newYear: string) {
-    router.push(urlFor({ mode: "year", year: newYear }));
+    router.push(urlFor({ mode: "year", year: newYear }), { scroll: false });
   }
 
   function stepYear(delta: number) {
@@ -117,6 +130,7 @@ export default function DashboardRangeBar({
 
   return (
     <>
+      {showBrands && (
       <div className="mt-2 flex flex-wrap gap-2">
         <button
           type="button"
@@ -146,8 +160,9 @@ export default function DashboardRangeBar({
           </button>
         ))}
       </div>
+      )}
 
-      <div className="mt-3 flex flex-wrap items-center gap-3 rounded-lg border border-black/[.08] p-3 dark:border-white/[.145]">
+      <div className={`${showBrands ? "mt-3" : ""} flex flex-wrap items-center gap-3 rounded-lg border border-black/[.08] p-3 dark:border-white/[.145]`}>
         <div className="inline-flex rounded-full border border-black/[.15] p-0.5 dark:border-white/[.2]">
           {(["day", "week", "month", "quarter", "year"] as const).map((m) => (
             <button

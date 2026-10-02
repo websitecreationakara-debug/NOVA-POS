@@ -685,25 +685,25 @@ export default function AccountanceClient({
   }
 
   function switchBrand(brandId: string) {
-    router.push(urlFor({ brand: brandId }));
+    router.push(urlFor({ brand: brandId }), { scroll: false });
   }
 
   function switchMode(newMode: RangeMode) {
-    router.push(urlFor({ mode: newMode }));
+    router.push(urlFor({ mode: newMode }), { scroll: false });
   }
 
   function switchTab(newTab: AccountanceTab) {
-    router.push(urlFor({ tab: newTab }));
+    router.push(urlFor({ tab: newTab }), { scroll: false });
   }
 
   // A single date input clamps its own range (max/min against the other
   // end) so this never has to correct an inverted from > to itself.
   function switchDates(newFrom: string, newTo: string) {
-    router.push(urlFor({ mode: "day", from: newFrom, to: newTo }));
+    router.push(urlFor({ mode: "day", from: newFrom, to: newTo }), { scroll: false });
   }
 
   function switchWeek(newWeek: string) {
-    router.push(urlFor({ mode: "week", week: newWeek }));
+    router.push(urlFor({ mode: "week", week: newWeek }), { scroll: false });
   }
 
   function stepWeek(delta: number) {
@@ -713,7 +713,7 @@ export default function AccountanceClient({
   }
 
   function switchMonth(newMonth: string) {
-    router.push(urlFor({ mode: "month", month: newMonth }));
+    router.push(urlFor({ mode: "month", month: newMonth }), { scroll: false });
   }
 
   function stepMonth(delta: number) {
@@ -723,7 +723,7 @@ export default function AccountanceClient({
   }
 
   function switchQuarter(newQuarter: string) {
-    router.push(urlFor({ mode: "quarter", quarter: newQuarter }));
+    router.push(urlFor({ mode: "quarter", quarter: newQuarter }), { scroll: false });
   }
 
   function stepQuarter(delta: number) {
@@ -735,7 +735,7 @@ export default function AccountanceClient({
   }
 
   function switchYear(newYear: string) {
-    router.push(urlFor({ mode: "year", year: newYear }));
+    router.push(urlFor({ mode: "year", year: newYear }), { scroll: false });
   }
 
   function stepYear(delta: number) {

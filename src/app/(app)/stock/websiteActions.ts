@@ -15,6 +15,7 @@ import {
   listWebsiteCategories,
   listWebsiteProducts,
   updateWebsiteAddon,
+  getWebsiteProduct,
   updateWebsiteProduct,
   updateWebsiteProductVariation,
 } from "@/lib/websiteProducts/client";
@@ -400,7 +401,7 @@ export async function setProductDetailsAction(input: {
   revalidatePath("/sales");
 }
 
-// Changes a Stock row's picture. A simple product's image is the product's own
+// Changes -- or removes (imageUrl null) -- a Stock row's picture. A simple product's image is the product's own
 // image_url on the website. One size of a "variable" product has its own image
 // (the row shows `variation.image_url ?? product.image_url`), written through
 // the variation's sub-route -- and checked on the way back, so a storefront that
@@ -411,14 +412,24 @@ export async function setProductImageAction(input: {
   catalogId: WebsiteCatalogId;
   siteProductId: string;
   variationId: string;
-  imageUrl: string;
+  imageUrl: string | null;
 }): Promise<void> {
   await requireStockAccess();
-  const imageUrl = input.imageUrl.trim();
-  if (!imageUrl) throw new Error("Choose an image first");
+  const imageUrl = input.imageUrl?.trim() || null;
 
   if (!input.variationId) {
     await updateWebsiteProduct(input.catalogId, input.siteProductId, { image_url: imageUrl });
+    // The product PATCH answers with nothing, so read the product back to be sure
+    // the website really took the new picture (or cleared it).
+    const fresh = await getWebsiteProduct(input.catalogId, input.siteProductId);
+    const path = (u: string | null | undefined) => u?.replace(/^https?:\/\/[^/]+/, "") || null;
+    if (path(fresh.image_url) !== path(imageUrl)) {
+      throw new Error(
+        imageUrl
+          ? "The website didn't accept the new image -- the picture was not changed."
+          : "The website didn't remove the image -- the picture was not changed."
+      );
+    }
   } else {
     const updated = await updateWebsiteProductVariation(
       input.catalogId,
@@ -426,9 +437,13 @@ export async function setProductImageAction(input: {
       input.variationId,
       { image_url: imageUrl }
     );
-    const saved = updated?.variations?.find((v) => v.id === input.variationId)?.image_url;
+    const saved = updated?.variations?.find((v) => v.id === input.variationId)?.image_url ?? null;
     if (saved !== imageUrl) {
-      throw new Error("The website didn't accept a new image for this size -- the picture was not changed.");
+      throw new Error(
+        imageUrl
+          ? "The website didn't accept a new image for this size -- the picture was not changed."
+          : "The website didn't remove the image for this size -- the picture was not changed."
+      );
     }
   }
 
@@ -441,6 +456,84 @@ export async function setProductImageAction(input: {
     .eq("variation_id", input.variationId)
     .maybeSingle();
   if (link) await supabaseAdmin.from("products").update({ image_url: imageUrl }).eq("id", link.product_id);
+
+  revalidatePath("/stock");
+  revalidatePath("/sales");
+  revalidatePath("/marketing");
+}
+
+// The Edit box on an addon row: the English name and picture go to the
+// storefront's add-on table (checked on the way back, so a storefront that
+// ignores one says so instead of reporting a save that never happened); the
+// Khmer name, scale and Khmer scale live on the linked POS product, created on
+// the fly if this addon has none yet -- the same split setProductDetailsAction
+// makes for a product.
+export async function setAddonDetailsAction(input: {
+  catalogId: WebsiteCatalogId;
+  addonId: string;
+  currentTitle: string;
+  title: string;
+  // The new picture's URL, only when one was uploaded.
+  imageUrl: string | null;
+  // True to take the picture off (the addon is left with no image).
+  removeImage?: boolean;
+  currentImageUrl: string | null;
+  price: number;
+  stock: number | null;
+  nameKm: string;
+  unit: string;
+  unitKm: string;
+}): Promise<void> {
+  await requireStockAccess();
+  const title = input.title.trim();
+  if (!title) throw new Error("Name is required");
+  const unit = input.unit.trim().toLowerCase();
+  if (!unit) throw new Error("Pick a scale (pcs, kg or g)");
+
+  const changes: { title?: string; image_url?: string | null } = {};
+  if (title !== input.currentTitle.trim()) changes.title = title;
+  if (input.imageUrl) changes.image_url = input.imageUrl;
+  else if (input.removeImage) changes.image_url = null;
+  if (Object.keys(changes).length > 0) {
+    const updated = await updateWebsiteAddon(input.catalogId, input.addonId, changes);
+    // A field the storefront echoes back that isn't what we sent was ignored.
+    const path = (u: string | null | undefined) => u?.replace(/^https?:\/\/[^/]+/, "");
+    if (changes.title && updated?.title !== undefined && updated.title !== changes.title) {
+      throw new Error("The website didn't accept the new name -- nothing was changed.");
+    }
+    if (
+      changes.image_url !== undefined &&
+      updated?.image_url !== undefined &&
+      path(updated.image_url) !== path(changes.image_url)
+    ) {
+      throw new Error(
+        changes.image_url
+          ? "The website didn't accept the new image -- nothing was changed."
+          : "The website didn't remove the image -- nothing was changed."
+      );
+    }
+  }
+
+  const linked = await ensurePosProductForSiteProduct({
+    catalogId: input.catalogId,
+    siteProductId: input.addonId,
+    variationId: "",
+    title,
+    price: input.price,
+    imageUrl: input.removeImage ? null : (input.imageUrl ?? input.currentImageUrl),
+    stock: input.stock,
+  });
+  const { error } = await supabaseAdmin
+    .from("products")
+    .update({
+      name: title,
+      name_km: input.nameKm.trim() || null,
+      unit,
+      unit_km: input.unitKm.trim() || null,
+      ...(input.imageUrl ? { image_url: input.imageUrl } : input.removeImage ? { image_url: null } : {}),
+    })
+    .eq("id", linked.id);
+  if (error) throw new Error(error.message);
 
   revalidatePath("/stock");
   revalidatePath("/sales");

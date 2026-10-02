@@ -30,12 +30,34 @@ function formatDeliveryAt(iso: string) {
   });
 }
 
+const MONTH_RE = /^\d{4}-(0[1-9]|1[0-2])$/;
+
+function monthEnd(ym: string) {
+  const [y, m] = ym.split("-").map(Number);
+  return `${ym}-${String(new Date(Date.UTC(y, m, 0)).getUTCDate()).padStart(2, "0")}`;
+}
+
+// The month ("YYYY-MM") when from/to cover exactly one whole month, else "".
+function wholeMonth(from: string, to: string) {
+  const ym = from.slice(0, 7);
+  return MONTH_RE.test(ym) && from === `${ym}-01` && to === monthEnd(ym) ? ym : "";
+}
+
+function shiftMonth(ym: string, delta: number) {
+  const [y, m] = ym.split("-").map(Number);
+  const d = new Date(Date.UTC(y, m - 1 + delta, 1));
+  return d.toISOString().slice(0, 7);
+}
+
 export default function OrdersTable({
   orders,
   total,
   page,
   limit,
   filters,
+  defaultRange = false,
+  allTime = false,
+  currentMonth,
   activeStatus,
   brands,
 }: {
@@ -46,6 +68,11 @@ export default function OrdersTable({
   page: number;
   limit: number;
   filters: { q: string; brandId: string; from: string; to: string };
+  // True when from/to are just the current-month default, not a chosen filter.
+  defaultRange?: boolean;
+  // "All time" is selected (no date limit), and this month in Cambodia ("YYYY-MM").
+  allTime?: boolean;
+  currentMonth: string;
   activeStatus: FulfillmentStatus | null;
   brands: { id: string; name: string }[];
 }) {
@@ -77,7 +104,16 @@ export default function OrdersTable({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [search, filters.q]);
 
-  const hasFilter = search.trim() !== "" || from !== "" || to !== "" || brandId !== "";
+  const hasFilter =
+    search.trim() !== "" || allTime || (!defaultRange && (from !== "" || to !== "")) || brandId !== "";
+
+  const selectedMonth = wholeMonth(from, to);
+  // Month the arrows step from: the chosen month, else the month of "From", else this month.
+  const baseMonth = selectedMonth || (MONTH_RE.test(from.slice(0, 7)) ? from.slice(0, 7) : currentMonth);
+  function selectMonth(ym: string) {
+    if (!MONTH_RE.test(ym)) return;
+    navigate({ from: `${ym}-01`, to: monthEnd(ym), range: "" });
+  }
 
   const pageCount = Math.max(1, Math.ceil(total / limit));
   const paged = orders;
@@ -155,13 +191,59 @@ export default function OrdersTable({
             </option>
           ))}
         </select>
+        <div className="flex items-center gap-1">
+          <button
+            type="button"
+            onClick={() => selectMonth(shiftMonth(baseMonth, -1))}
+            title="Previous month"
+            aria-label="Previous month"
+            className="rounded-lg border border-border p-1.5 text-muted-foreground transition-colors hover:text-foreground"
+          >
+            <ChevronLeft className="size-4" />
+          </button>
+          <input
+            type="month"
+            value={selectedMonth}
+            max={currentMonth}
+            onChange={(e) => selectMonth(e.target.value)}
+            title="Show one month"
+            aria-label="Month"
+            className={dateInputClass}
+          />
+          <button
+            type="button"
+            disabled={baseMonth >= currentMonth}
+            onClick={() => selectMonth(shiftMonth(baseMonth, 1))}
+            title="Next month"
+            aria-label="Next month"
+            className="rounded-lg border border-border p-1.5 text-muted-foreground transition-colors hover:text-foreground disabled:opacity-40"
+          >
+            <ChevronRight className="size-4" />
+          </button>
+          <button
+            type="button"
+            disabled={selectedMonth === currentMonth}
+            onClick={() => selectMonth(currentMonth)}
+            className="rounded-lg border border-border px-2.5 py-1.5 text-xs font-medium transition-colors hover:bg-muted disabled:opacity-40"
+          >
+            This month
+          </button>
+          <button
+            type="button"
+            disabled={allTime}
+            onClick={() => navigate({ from: "", to: "", range: "all" })}
+            className="rounded-lg border border-border px-2.5 py-1.5 text-xs font-medium transition-colors hover:bg-muted disabled:opacity-40"
+          >
+            All time
+          </button>
+        </div>
         <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
           From
           <input
             type="date"
             value={from}
             max={to || undefined}
-            onChange={(e) => navigate({ from: e.target.value })}
+            onChange={(e) => navigate({ from: e.target.value, range: "" })}
             className={dateInputClass}
           />
         </label>
@@ -171,7 +253,7 @@ export default function OrdersTable({
             type="date"
             value={to}
             min={from || undefined}
-            onChange={(e) => navigate({ to: e.target.value })}
+            onChange={(e) => navigate({ to: e.target.value, range: "" })}
             className={dateInputClass}
           />
         </label>
@@ -189,11 +271,9 @@ export default function OrdersTable({
             Clear
           </button>
         )}
-        {(hasFilter || activeStatus) && (
-          <span className="ml-auto text-xs text-muted-foreground">
-            {total} matching
-          </span>
-        )}
+        <span className="ml-auto text-xs text-muted-foreground">
+          {total} {hasFilter || activeStatus ? "matching" : total === 1 ? "order" : "orders"}
+        </span>
       </div>
 
       {selected.size > 0 && (

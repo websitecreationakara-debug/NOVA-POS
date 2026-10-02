@@ -16,6 +16,7 @@ import {
 import type { ProductWithStock } from "@/lib/supabase/queries";
 import Dropdown from "@/components/Dropdown";
 import WebsiteAddonsTable from "@/components/WebsiteAddonsTable";
+import { ENGLISH_SCALES, KHMER_SCALES } from "@/lib/khmerScales";
 import { getCatalog } from "@/lib/websiteProducts/catalogs";
 import {
   derivePurchaseCost,
@@ -67,10 +68,6 @@ const POLL_INTERVAL_MS = 15_000;
 
 // Rows-per-page choices for the table footer.
 const PAGE_SIZE_OPTIONS = [10, 25, 50];
-
-// The Khmer scales ("Scale in Khmer") a product can be given -- printed with the
-// product on the Sales cart, order page and invoice.
-const KHMER_SCALES = ["ឈុត", "គីឡូ", "ប្រអប់", "កញ្ចប់", "កេស", "យួរ", "កំប៉ុង", "ដប", "ក្រាម", "ដុំ", "ក្បាល"];
 
 // Sentinel `categoryFilter` value for the "Addons" chip -- picked so it can
 // never collide with a real category_id (those are UUIDs).
@@ -221,7 +218,8 @@ export default function WebsiteProductsPanel({
   const [creatingCategory, setCreatingCategory] = useState(false);
   const [uploadingImage, setUploadingImage] = useState(false);
   const [imageError, setImageError] = useState<string | null>(null);
-  // The Edit box's picture: null = unchanged, otherwise the newly uploaded URL.
+  // The Edit box's picture: null = unchanged, "" = remove it, otherwise the newly
+  // uploaded URL.
   const [editImage, setEditImage] = useState<string | null>(null);
   const [editImageUploading, setEditImageUploading] = useState(false);
   const [editImageError, setEditImageError] = useState<string | null>(null);
@@ -618,19 +616,19 @@ export default function WebsiteProductsPanel({
           variationId: v ? v.id : "",
           title: posName,
           price,
-          imageUrl: editImage ?? v?.image_url ?? p.image_url,
+          imageUrl: editImage === "" ? null : (editImage ?? v?.image_url ?? p.image_url),
           seedStock: v ? v.stock : p.stock,
           posName,
           nameKm: editDraft.nameKm,
           unit: editDraft.unit,
           unitKm: editDraft.unitKm,
         });
-        if (editImage) {
+        if (editImage !== null) {
           await setProductImageAction({
             catalogId,
             siteProductId: p.id,
             variationId: v ? v.id : "",
-            imageUrl: editImage,
+            imageUrl: editImage || null,
           });
         }
         setPendingId(null);
@@ -970,11 +968,20 @@ export default function WebsiteProductsPanel({
   // addon only worked after switching to the Addons chip.
   const showAddonMatches =
     !categoryFilter && !!q && !outOfStockOnly && !lowStockOnly && filteredAddons.length > 0;
-  // Linked POS product's cost_price per addon -- the Total box's fallback.
+  // Linked POS product's cost_price per addon -- the Total box's fallback -- and
+  // its Khmer name / scale, for the addon Edit box.
   const addonFallbackCosts: Record<string, number> = {};
+  const addonLinkedDetails: Record<string, { nameKm: string; unit: string; unitKm: string }> = {};
   for (const a of addons ?? []) {
-    const cost = posByEntryKey.get(posEntryKey(a.id, ""))?.cost_price;
-    if (cost != null) addonFallbackCosts[a.id] = cost;
+    const linked = posByEntryKey.get(posEntryKey(a.id, ""));
+    if (linked?.cost_price != null) addonFallbackCosts[a.id] = linked.cost_price;
+    if (linked) {
+      addonLinkedDetails[a.id] = {
+        nameKm: linked.name_km ?? "",
+        unit: linked.unit,
+        unitKm: linked.unit_km ?? "",
+      };
+    }
   }
   const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize));
   // Snap back to page 1 whenever the result set changes under the current page.
@@ -1454,6 +1461,7 @@ export default function WebsiteProductsPanel({
             addons={filteredAddons}
             purchaseCosts={purchaseCosts}
             fallbackCosts={addonFallbackCosts}
+            linkedDetails={addonLinkedDetails}
             onPreviewImage={setPreviewImage}
           />
         ) : (
@@ -1645,7 +1653,7 @@ export default function WebsiteProductsPanel({
                               onChange={(e) => setEditDraft((d) => ({ ...d, unit: e.target.value }))}
                               className="mt-0.5 w-full rounded border border-black/[.15] bg-card px-2 py-1 text-sm text-foreground dark:border-white/[.2]"
                             >
-                              {[...new Set(["pcs", "pc", "pkt", "pc/pkt", "kg", "g", editDraft.unit])].map((u) => (
+                              {[...new Set([...ENGLISH_SCALES, editDraft.unit])].map((u) => (
                                 <option key={u} value={u}>
                                   {u}
                                 </option>
@@ -1673,9 +1681,13 @@ export default function WebsiteProductsPanel({
                             Image
                             <div className="mt-0.5 flex items-center gap-3">
                               <div className="h-14 w-14 shrink-0 overflow-hidden rounded border border-black/[.1] bg-zinc-100 dark:border-white/[.15] dark:bg-zinc-800">
-                                {editImage ?? imageUrl ? (
+                                {(editImage === "" ? null : (editImage ?? imageUrl)) ? (
                                   // eslint-disable-next-line @next/next/no-img-element
-                                  <img src={(editImage ?? imageUrl) as string} alt="" className="h-full w-full object-cover" />
+                                  <img
+                                    src={(editImage === "" ? null : (editImage ?? imageUrl)) as string}
+                                    alt=""
+                                    className="h-full w-full object-cover"
+                                  />
                                 ) : (
                                   <div className="flex h-full w-full items-center justify-center text-[9px] text-zinc-400">
                                     No image
@@ -1683,7 +1695,11 @@ export default function WebsiteProductsPanel({
                                 )}
                               </div>
                               <label className="cursor-pointer rounded border border-black/[.15] px-3 py-1.5 text-sm text-foreground dark:border-white/[.2]">
-                                {editImageUploading ? "Uploading…" : editImage ? "Replace image" : "Upload image"}
+                                {editImageUploading
+                                  ? "Uploading…"
+                                  : editImage || (editImage === null && imageUrl)
+                                    ? "Replace image"
+                                    : "Upload image"}
                                 <input
                                   type="file"
                                   accept="image/*"
@@ -1697,9 +1713,23 @@ export default function WebsiteProductsPanel({
                                 />
                               </label>
                             </div>
+                            {/* Always shown; greyed out while there is no picture to remove. */}
+                            <button
+                              type="button"
+                              onClick={() => setEditImage("")}
+                              disabled={editImageUploading || (editImage === "" ? true : !(editImage ?? imageUrl))}
+                              className="mt-1.5 block text-xs font-medium text-red-600 hover:underline disabled:cursor-not-allowed disabled:no-underline disabled:opacity-40 dark:text-red-400"
+                            >
+                              Remove image
+                            </button>
                             {editImage && (
                               <span className="mt-1 block text-[11px] text-zinc-500">
                                 New picture -- it replaces the old one when you press Save.
+                              </span>
+                            )}
+                            {editImage === "" && (
+                              <span className="mt-1 block text-[11px] text-zinc-500">
+                                The picture will be removed when you press Save.
                               </span>
                             )}
                             {editImageError && <span className="mt-1 block text-red-500">{editImageError}</span>}
@@ -1977,6 +2007,7 @@ export default function WebsiteProductsPanel({
             addons={filteredAddons}
             purchaseCosts={purchaseCosts}
             fallbackCosts={addonFallbackCosts}
+            linkedDetails={addonLinkedDetails}
             onPreviewImage={setPreviewImage}
           />
           </div>

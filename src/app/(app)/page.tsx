@@ -93,6 +93,15 @@ export default async function Home({
     month?: string;
     quarter?: string;
     year?: string;
+    // The separate filter above Top Branch / Top Products (see DashboardRangeBar's
+    // paramPrefix) -- same fields, own params.
+    top_mode?: string;
+    top_from?: string;
+    top_to?: string;
+    top_week?: string;
+    top_month?: string;
+    top_quarter?: string;
+    top_year?: string;
   }>;
 }) {
   const params = await searchParams;
@@ -109,6 +118,26 @@ export default async function Home({
   const stats = await getDashboardStats(currentBrandId, fromDate, toDate);
 
   const period = rangeLabel(fromDate, toDate);
+
+  // Top Branch / Top Products have their own filter. Until it is used it
+  // follows the page-wide range; once set, only those two cards move.
+  const hasTopFilter = Object.keys(params).some((k) => k.startsWith("top_"));
+  const topRange = hasTopFilter
+    ? resolveRange({
+        mode: params.top_mode,
+        from: params.top_from,
+        to: params.top_to,
+        week: params.top_week,
+        month: params.top_month,
+        quarter: params.top_quarter,
+        year: params.top_year,
+      })
+    : { mode, week, month, quarter, year, fromDate, toDate };
+  const topStats =
+    topRange.fromDate === fromDate && topRange.toDate === toDate
+      ? stats
+      : await getDashboardStats(currentBrandId, topRange.fromDate, topRange.toDate);
+  const topPeriod = rangeLabel(topRange.fromDate, topRange.toDate);
 
   // Same brand order as the header chips, not whatever order orders happened
   // to come back in.
@@ -313,15 +342,29 @@ export default async function Home({
         </Link>
       )}
 
+      <DashboardRangeBar
+        brands={brandsOrdered}
+        brandId={currentBrandId}
+        paramPrefix="top_"
+        showBrands={false}
+        mode={topRange.mode}
+        week={topRange.week}
+        month={topRange.month}
+        quarter={topRange.quarter}
+        year={topRange.year}
+        fromDate={topRange.fromDate}
+        toDate={topRange.toDate}
+      />
+
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         <section className="rounded-2xl border border-border bg-card p-6">
-          <h2 className="font-display font-bold">Top Branch ({period})</h2>
+          <h2 className="font-display font-bold">Top Branch ({topPeriod})</h2>
           <p className="mt-1 text-xs text-muted-foreground">Ranked by revenue</p>
-          {stats.topBranches.length === 0 ? (
+          {topStats.topBranches.length === 0 ? (
             <p className="mt-4 text-sm text-muted-foreground">No sales in this period.</p>
           ) : (
             <ol className="mt-4 space-y-3">
-              {stats.topBranches.map((b, i) => (
+              {topStats.topBranches.map((b, i) => (
                 <li key={b.name} className="flex items-center gap-3 text-sm">
                   <span
                     className={`grid size-6 shrink-0 place-items-center rounded-full text-xs font-bold ${
@@ -342,15 +385,15 @@ export default async function Home({
         </section>
 
         <section className="rounded-2xl border border-border bg-card p-6">
-          <h2 className="font-display font-bold">Top Products ({period})</h2>
+          <h2 className="font-display font-bold">Top Products ({topPeriod})</h2>
           <p className="mt-1 text-xs text-muted-foreground">
             Ranked by units sold · items priced above {formatMoney(TOP_PRODUCT_MIN_PRICE)}
           </p>
-          {stats.topProducts.length === 0 ? (
+          {topStats.topProducts.length === 0 ? (
             <p className="mt-4 text-sm text-muted-foreground">No sales in this period.</p>
           ) : (
             <ol className="mt-4 space-y-3">
-              {stats.topProducts.map((p, i) => (
+              {topStats.topProducts.map((p, i) => (
                 <li key={p.name} className="flex items-center gap-3 text-sm">
                   <span
                     className={`grid size-6 shrink-0 place-items-center rounded-full text-xs font-bold ${
