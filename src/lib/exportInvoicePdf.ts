@@ -6,7 +6,7 @@
 // that downloads immediately. html2canvas-pro (not the unmaintained
 // html2canvas) is required: Tailwind v4's default palette uses oklch()
 // colors, which plain html2canvas can't parse and throws on.
-import { pinImageSizes } from "./invoiceCapture";
+import { prepareInvoiceClone } from "./invoiceCapture";
 
 export async function exportInvoicePdf(filename: string): Promise<void> {
   const [{ default: html2canvas }, { jsPDF }] = await Promise.all([
@@ -67,7 +67,7 @@ export async function exportInvoicePdf(filename: string): Promise<void> {
         scale: 2,
         backgroundColor: "#ffffff",
         useCORS: true,
-        onclone: pinImageSizes(sheet),
+        onclone: prepareInvoiceClone(sheet),
       });
     } finally {
       if (zoomEl) zoomEl.style.zoom = prevZoom;
