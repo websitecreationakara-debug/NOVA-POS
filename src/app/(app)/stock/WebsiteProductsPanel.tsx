@@ -46,6 +46,7 @@ import {
   setWebsitePurchaseCostAction,
   updateWebsiteProductAction,
   uploadWebsiteImageAction,
+  setProductImageAction,
 } from "./websiteActions";
 
 // Looked-up POS product for one entry (a simple product or one size of a
@@ -66,6 +67,10 @@ const POLL_INTERVAL_MS = 15_000;
 
 // Rows-per-page choices for the table footer.
 const PAGE_SIZE_OPTIONS = [10, 25, 50];
+
+// The Khmer scales ("Scale in Khmer") a product can be given -- printed with the
+// product on the Sales cart, order page and invoice.
+const KHMER_SCALES = ["ឈុត", "គីឡូ", "ប្រអប់", "កញ្ចប់", "កេស", "យួរ", "កំប៉ុង", "ដប", "ក្រាម", "ដុំ", "ក្បាល"];
 
 // Sentinel `categoryFilter` value for the "Addons" chip -- picked so it can
 // never collide with a real category_id (those are UUIDs).
@@ -216,6 +221,10 @@ export default function WebsiteProductsPanel({
   const [creatingCategory, setCreatingCategory] = useState(false);
   const [uploadingImage, setUploadingImage] = useState(false);
   const [imageError, setImageError] = useState<string | null>(null);
+  // The Edit box's picture: null = unchanged, otherwise the newly uploaded URL.
+  const [editImage, setEditImage] = useState<string | null>(null);
+  const [editImageUploading, setEditImageUploading] = useState(false);
+  const [editImageError, setEditImageError] = useState<string | null>(null);
   const [pendingId, setPendingId] = useState<string | null>(null);
   // The row whose Edit box is open (name / Khmer name / scale), and its draft.
   const [editRowKey, setEditRowKey] = useState<string | null>(null);
@@ -555,7 +564,37 @@ export default function WebsiteProductsPanel({
       unit: linked?.unit ?? "pcs",
       unitKm: linked?.unit_km ?? "",
     });
+    setEditImage(null);
+    setEditImageError(null);
     setEditRowKey(rowKey);
+  }
+
+  // Upload a picture from the computer for the Edit box. It is only stored (as a
+  // URL) here; the product itself changes when the box is saved.
+  function handleEditImagePick(file: File | null) {
+    if (!file) return;
+    if (!file.type.startsWith("image/")) {
+      setEditImageError("File must be an image");
+      return;
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      setEditImageError("Image must be under 5MB");
+      return;
+    }
+    setEditImageError(null);
+    setEditImageUploading(true);
+    const fd = new FormData();
+    fd.set("file", file);
+    startTransition(async () => {
+      try {
+        const { url } = await uploadWebsiteImageAction(fd);
+        setEditImage(url);
+      } catch (e) {
+        setEditImageError(e instanceof Error ? e.message : "Upload failed");
+      } finally {
+        setEditImageUploading(false);
+      }
+    });
   }
 
   // Save the Edit box: the English name goes to the website (same as the inline
@@ -579,13 +618,21 @@ export default function WebsiteProductsPanel({
           variationId: v ? v.id : "",
           title: posName,
           price,
-          imageUrl: v?.image_url ?? p.image_url,
+          imageUrl: editImage ?? v?.image_url ?? p.image_url,
           seedStock: v ? v.stock : p.stock,
           posName,
           nameKm: editDraft.nameKm,
           unit: editDraft.unit,
           unitKm: editDraft.unitKm,
         });
+        if (editImage) {
+          await setProductImageAction({
+            catalogId,
+            siteProductId: p.id,
+            variationId: v ? v.id : "",
+            imageUrl: editImage,
+          });
+        }
         setPendingId(null);
         setEditRowKey(null);
         notify("Saved");
@@ -1607,15 +1654,56 @@ export default function WebsiteProductsPanel({
                           </label>
                           <label className="block text-xs text-zinc-500">
                             Scale in Khmer
-                            <input
-                              type="text"
+                            <select
                               lang="km"
-                              placeholder="ឯកតាជាភាសាខ្មែរ (ឧ. ចំណែក, គីឡូ)"
                               value={editDraft.unitKm}
                               onChange={(e) => setEditDraft((d) => ({ ...d, unitKm: e.target.value }))}
-                              className="mt-0.5 w-full rounded border border-black/[.15] bg-transparent px-2 py-1 text-sm text-foreground dark:border-white/[.2]"
-                            />
+                              className="mt-0.5 w-full rounded border border-black/[.15] bg-card px-2 py-1 text-sm text-foreground dark:border-white/[.2]"
+                            >
+                              <option value="">—</option>
+                              {/* A value saved before this list existed stays selectable. */}
+                              {[...new Set([...KHMER_SCALES, editDraft.unitKm].filter(Boolean))].map((u) => (
+                                <option key={u} value={u}>
+                                  {u}
+                                </option>
+                              ))}
+                            </select>
                           </label>
+                          <div className="block text-xs text-zinc-500">
+                            Image
+                            <div className="mt-0.5 flex items-center gap-3">
+                              <div className="h-14 w-14 shrink-0 overflow-hidden rounded border border-black/[.1] bg-zinc-100 dark:border-white/[.15] dark:bg-zinc-800">
+                                {editImage ?? imageUrl ? (
+                                  // eslint-disable-next-line @next/next/no-img-element
+                                  <img src={(editImage ?? imageUrl) as string} alt="" className="h-full w-full object-cover" />
+                                ) : (
+                                  <div className="flex h-full w-full items-center justify-center text-[9px] text-zinc-400">
+                                    No image
+                                  </div>
+                                )}
+                              </div>
+                              <label className="cursor-pointer rounded border border-black/[.15] px-3 py-1.5 text-sm text-foreground dark:border-white/[.2]">
+                                {editImageUploading ? "Uploading…" : editImage ? "Replace image" : "Upload image"}
+                                <input
+                                  type="file"
+                                  accept="image/*"
+                                  className="hidden"
+                                  disabled={editImageUploading}
+                                  onChange={(e) => {
+                                    const file = e.target.files?.[0] ?? null;
+                                    e.target.value = "";
+                                    handleEditImagePick(file);
+                                  }}
+                                />
+                              </label>
+                            </div>
+                            {editImage && (
+                              <span className="mt-1 block text-[11px] text-zinc-500">
+                                New picture -- it replaces the old one when you press Save.
+                              </span>
+                            )}
+                            {editImageError && <span className="mt-1 block text-red-500">{editImageError}</span>}
+                          </div>
                           <div className="flex justify-end gap-2">
                             <button
                               type="button"
