@@ -463,7 +463,7 @@ export async function updateWebsiteProductVariation(
   catalogId: WebsiteCatalogId,
   productId: string,
   variationId: string,
-  input: { price?: number; stock?: number | null }
+  input: { price?: number; stock?: number | null; image_url?: string | null }
 ): Promise<WebsiteProduct> {
   const payload = await request<unknown>(catalogId, `/${productId}/variations/${variationId}`, {
     method: "PATCH",

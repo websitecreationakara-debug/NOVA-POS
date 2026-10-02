@@ -400,6 +400,53 @@ export async function setProductDetailsAction(input: {
   revalidatePath("/sales");
 }
 
+// Changes a Stock row's picture. A simple product's image is the product's own
+// image_url on the website. One size of a "variable" product has its own image
+// (the row shows `variation.image_url ?? product.image_url`), written through
+// the variation's sub-route -- and checked on the way back, so a storefront that
+// ignores an image on a single size says so instead of reporting a save that
+// never happened. The linked POS product's own image is kept in step so
+// everything that reads it (Cost Control, ...) shows the same picture.
+export async function setProductImageAction(input: {
+  catalogId: WebsiteCatalogId;
+  siteProductId: string;
+  variationId: string;
+  imageUrl: string;
+}): Promise<void> {
+  await requireStockAccess();
+  const imageUrl = input.imageUrl.trim();
+  if (!imageUrl) throw new Error("Choose an image first");
+
+  if (!input.variationId) {
+    await updateWebsiteProduct(input.catalogId, input.siteProductId, { image_url: imageUrl });
+  } else {
+    const updated = await updateWebsiteProductVariation(
+      input.catalogId,
+      input.siteProductId,
+      input.variationId,
+      { image_url: imageUrl }
+    );
+    const saved = updated?.variations?.find((v) => v.id === input.variationId)?.image_url;
+    if (saved !== imageUrl) {
+      throw new Error("The website didn't accept a new image for this size -- the picture was not changed.");
+    }
+  }
+
+  const site = getCatalog(input.catalogId).brandSlug as ProductSiteLink["site"];
+  const { data: link } = await supabaseAdmin
+    .from("product_site_links")
+    .select("product_id")
+    .eq("site", site)
+    .eq("site_product_id", input.siteProductId)
+    .eq("variation_id", input.variationId)
+    .maybeSingle();
+  if (link) await supabaseAdmin.from("products").update({ image_url: imageUrl }).eq("id", link.product_id);
+
+  revalidatePath("/stock");
+  revalidatePath("/sales");
+  revalidatePath("/marketing");
+}
+
 export async function setSimpleProductStockAction(input: {
   catalogId: WebsiteCatalogId;
   siteProductId: string;
