@@ -467,7 +467,7 @@ export default function SalesClient({
     addToCart(product);
   }
 
-  function addToCart(product: ProductWithStock) {
+  function addToCart(product: ProductWithStock, weightLabel: string | null = null) {
     setCart((prev) => {
       const existing = prev.find((l) => l.productId === product.id);
       if (existing) {
@@ -483,6 +483,7 @@ export default function SalesClient({
           nameKm: product.name_km ?? null,
           unit: product.unit,
           unitKm: product.unit_km ?? null,
+          weightLabel,
           unitPrice: product.price,
           quantity: 1,
         },
@@ -551,6 +552,9 @@ export default function SalesClient({
     const stock = variation ? variation.stock : wp.stock;
     const imageUrl = variation?.image_url ?? wp.image_url;
     const title = variation?.weight ? `${wp.title} (${variation.weight})` : wp.title;
+    // A simple product's weight isn't part of its title (a variation's is), so
+    // carry it along to show in the cart.
+    const weightLabel = variation ? null : wp.weight?.trim() || null;
 
     // Same "remaining" the card itself shows (stock minus what's already in
     // the Order) -- blocks adding once it hits 0, including tapping past the
@@ -576,7 +580,7 @@ export default function SalesClient({
         renamedEntryKeys.current.add(entryKey);
         syncPosProductName(known.id, title).catch(() => renamedEntryKeys.current.delete(entryKey));
       }
-      addToCart({ ...known, name: title, price: effectivePrice });
+      addToCart({ ...known, name: title, price: effectivePrice }, weightLabel);
       return;
     }
     if (!websiteCatalog || linkingEntryKey) return;
@@ -598,7 +602,7 @@ export default function SalesClient({
         unit: linked.unit,
       } as ProductWithStock;
       setLinkedThisSession((prev) => new Map(prev).set(entryKey, asProduct));
-      addToCart(asProduct);
+      addToCart(asProduct, weightLabel);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Couldn't add this website product");
     } finally {
@@ -1151,7 +1155,12 @@ export default function SalesClient({
               return (
               <div key={line.productId} className="flex items-center justify-between py-2 text-sm">
                 <div className="flex-1">
-                  <div>{lineName(line)}</div>
+                  <div>
+                    {lineName(line)}
+                    {line.weightLabel && !packGrams && (
+                      <span className="ml-1.5 text-xs text-zinc-400">{line.weightLabel}</span>
+                    )}
+                  </div>
                   <div className="flex items-center gap-1 text-zinc-500">
                     <UnitPriceInput
                       value={sized ? line.quantity * line.unitPrice : line.unitPrice}

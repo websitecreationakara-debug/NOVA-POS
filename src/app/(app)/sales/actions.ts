@@ -21,6 +21,9 @@ export interface CartLine {
   nameKm?: string | null;
   unit?: string;
   unitKm?: string | null;
+  // Display only: the website product's weight text ("150g ($95/kg)"), shown
+  // under the name in the cart. Never saved on the order.
+  weightLabel?: string | null;
 }
 
 export interface ChargeResult {

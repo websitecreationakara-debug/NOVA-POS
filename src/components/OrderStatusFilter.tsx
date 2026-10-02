@@ -29,7 +29,14 @@ export default function OrderStatusFilter({ active }: { active: FulfillmentStatu
     if (value === shown) return;
     setTarget(value);
     startTransition(() => {
-      router.push(value ? `/orders?status=${value}` : "/orders");
+      // Keep the search/business/date filters and page size; a new status
+      // starts back at page 1.
+      const params = new URLSearchParams(window.location.search);
+      params.delete("page");
+      if (value) params.set("status", value);
+      else params.delete("status");
+      const qs = params.toString();
+      router.push(qs ? `/orders?${qs}` : "/orders");
     });
   }
 

@@ -86,10 +86,20 @@ export async function deletePromotionAction(id: string): Promise<void> {
   revalidatePath("/marketing");
 }
 
-export async function listCustomersAction(search?: string): Promise<Customer[]> {
+export async function listCustomersAction(
+  search?: string,
+  page = 1,
+  limit = 50
+): Promise<{ customers: Customer[]; total: number }> {
   await requireMarketingAccess();
 
-  let query = supabaseAdmin.from("customers").select("*").order("name").limit(200);
+  const from = (page - 1) * limit;
+  let query = supabaseAdmin
+    .from("customers")
+    .select("*", { count: "exact" })
+    .order("name")
+    .order("id")
+    .range(from, from + limit - 1);
   const term = search?.trim();
   if (term) {
     // Quoted so a comma/parenthesis typed into the search box isn't parsed as
@@ -98,9 +108,9 @@ export async function listCustomersAction(search?: string): Promise<Customer[]> 
     query = query.or(`name.ilike.${pattern},phone.ilike.${pattern}`);
   }
 
-  const { data, error } = await query;
+  const { data, error, count } = await query;
   if (error) throw new Error(error.message);
-  return data ?? [];
+  return { customers: data ?? [], total: count ?? 0 };
 }
 
 export async function updateCustomerAction(

@@ -32,12 +32,18 @@ export default function MarketingClient({
   currentBrandId,
   promotions,
   customers,
+  customerTotal,
+  customerPage,
+  customerLimit,
   searchTerm,
 }: {
   brands: Brand[];
   currentBrandId: string;
   promotions: Promotion[];
   customers: Customer[];
+  customerTotal: number;
+  customerPage: number;
+  customerLimit: number;
   searchTerm: string;
 }) {
   const router = useRouter();
@@ -60,11 +66,11 @@ export default function MarketingClient({
   const [deletingCustomer, setDeletingCustomer] = useState<Customer | null>(null);
   const [viewingCustomer, setViewingCustomer] = useState<Customer | null>(null);
 
-  // Dynamic (type-as-you-go) filter over the up-to-200 rows the server already
-  // sent for the last applied search -- instant, no round trip while typing.
-  // The server only ever sends 200 of the (20k+) customers, so once typing
+  // Dynamic (type-as-you-go) filter over the current page of rows the server
+  // already sent -- instant, no round trip while typing. The server only
+  // sends one page (?page=&limit=) of the (20k+) customers, so once typing
   // pauses the term is also applied to the URL (?q=), which re-queries the
-  // server so a customer outside that first 200 shows up too.
+  // server (back on page 1) so a customer on another page shows up too.
   useEffect(() => {
     const term = search.trim();
     if (term === searchTerm.trim()) return;
@@ -72,6 +78,7 @@ export default function MarketingClient({
       const params = new URLSearchParams(window.location.search);
       if (term) params.set("q", term);
       else params.delete("q");
+      params.delete("page");
       router.replace(`/marketing?${params.toString()}`, { scroll: false });
     }, 350);
     return () => clearTimeout(id);
@@ -86,22 +93,16 @@ export default function MarketingClient({
       )
     : customers;
 
-  // Customer list pagination -- over visibleCustomers (see above).
-  const [customerPage, setCustomerPage] = useState(1);
-  const [customerPageSize, setCustomerPageSize] = useState(25);
-  const customerPageCount = Math.max(1, Math.ceil(visibleCustomers.length / customerPageSize));
-  // Snap back to page 1 whenever the search or page size changes.
-  const customerFilterKey = `${search}|${customerPageSize}`;
-  const [prevCustomerFilterKey, setPrevCustomerFilterKey] = useState(customerFilterKey);
-  if (customerFilterKey !== prevCustomerFilterKey) {
-    setPrevCustomerFilterKey(customerFilterKey);
-    setCustomerPage(1);
+  // Customer list pagination is server-side (?page=&limit=); changing the page
+  // size drops back to page 1.
+  const customerPageCount = Math.max(1, Math.ceil(customerTotal / customerLimit));
+
+  function goToCustomerPage(page: number, limit = customerLimit) {
+    const params = new URLSearchParams(window.location.search);
+    params.set("page", String(page));
+    params.set("limit", String(limit));
+    router.push(`/marketing?${params.toString()}`, { scroll: false });
   }
-  const currentCustomerPage = Math.min(customerPage, customerPageCount);
-  const pagedCustomers = visibleCustomers.slice(
-    (currentCustomerPage - 1) * customerPageSize,
-    currentCustomerPage * customerPageSize
-  );
 
   function withBrandParam(brandId: string) {
     const params = new URLSearchParams();
@@ -403,7 +404,7 @@ export default function MarketingClient({
             </tr>
           </thead>
           <tbody>
-            {pagedCustomers.map((c) => (
+            {visibleCustomers.map((c) => (
               <Fragment key={c.id}>
                 <tr
                   onClick={() => setViewingCustomer(c)}
@@ -569,8 +570,8 @@ export default function MarketingClient({
             <label className="flex items-center gap-2 text-xs text-zinc-500">
               Items per page
               <select
-                value={customerPageSize}
-                onChange={(e) => setCustomerPageSize(Number(e.target.value))}
+                value={customerLimit}
+                onChange={(e) => goToCustomerPage(1, Number(e.target.value))}
                 className="rounded border border-black/[.15] bg-card px-2 py-1 text-xs text-foreground dark:border-white/[.2]"
               >
                 {PAGE_SIZE_OPTIONS.map((n) => (
@@ -582,19 +583,19 @@ export default function MarketingClient({
             </label>
             <div className="flex items-center gap-2">
               <button
-                onClick={() => setCustomerPage(currentCustomerPage - 1)}
-                disabled={currentCustomerPage <= 1}
+                onClick={() => goToCustomerPage(customerPage - 1)}
+                disabled={customerPage <= 1}
                 className="flex items-center gap-1 rounded border border-black/[.15] px-2.5 py-1 text-xs disabled:opacity-30 dark:border-white/[.2]"
               >
                 <ChevronLeft className="size-3.5" />
                 Prev
               </button>
               <span className="tabular-nums text-zinc-500">
-                Page {currentCustomerPage} of {customerPageCount}
+                Page {customerPage} of {customerPageCount} ({customerTotal.toLocaleString()} customers)
               </span>
               <button
-                onClick={() => setCustomerPage(currentCustomerPage + 1)}
-                disabled={currentCustomerPage >= customerPageCount}
+                onClick={() => goToCustomerPage(customerPage + 1)}
+                disabled={customerPage >= customerPageCount}
                 className="flex items-center gap-1 rounded border border-black/[.15] px-2.5 py-1 text-xs disabled:opacity-30 dark:border-white/[.2]"
               >
                 Next

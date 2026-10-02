@@ -565,22 +565,81 @@ export type OrderListRow = {
   deliveryAt: string | null;
 };
 
-export async function getOrdersList(status?: FulfillmentStatus): Promise<OrderListRow[]> {
+export type OrdersListParams = {
+  status?: FulfillmentStatus;
+  brandId?: string;
+  q?: string;
+  from?: string; // YYYY-MM-DD, Phnom Penh day
+  to?: string; // YYYY-MM-DD, Phnom Penh day
+  page?: number;
+  limit?: number;
+};
+
+const DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+// [start, end) of a YYYYMM invoice month as UTC ISO instants (Phnom Penh, UTC+7).
+function invoiceMonthRange(stamp: string): { start: string; end: string } {
+  const y = Number(stamp.slice(0, 4));
+  const m = Number(stamp.slice(4, 6)) - 1;
+  const off = 7 * 60 * 60_000;
+  return {
+    start: new Date(Date.UTC(y, m, 1) - off).toISOString(),
+    end: new Date(Date.UTC(y, m + 1, 1) - off).toISOString(),
+  };
+}
+
+// One page of paid orders (filters + paging applied in the database) plus the
+// total number of matches, so the page never loads the whole orders table.
+export async function getOrdersList(
+  params: OrdersListParams = {}
+): Promise<{ rows: OrderListRow[]; total: number }> {
+  const { status, brandId, from, to } = params;
+  const limit = params.limit ?? 50;
+  const offset = ((params.page ?? 1) - 1) * limit;
+  const q = params.q?.trim() ?? "";
+
   // `*` rather than an explicit column list so the page still loads if the
   // 0020 delivery_at migration hasn't been applied yet (o.delivery_at is
   // just undefined until then).
   let query = supabaseAdmin
     .from("orders")
-    .select("*, brands(name)")
+    .select("*, brands(name)", { count: "exact" })
     .eq("status", "paid")
     .order("paid_at", { ascending: false })
-    .limit(200);
+    .order("id")
+    .range(offset, offset + limit - 1);
 
-  if (status) {
-    query = query.eq("fulfillment_status", status);
+  if (status) query = query.eq("fulfillment_status", status);
+  if (brandId) query = query.eq("brand_id", brandId);
+  if (from && DAY_RE.test(from)) query = query.gte("paid_at", `${from}T00:00:00+07:00`);
+  if (to && DAY_RE.test(to)) query = query.lte("paid_at", `${to}T23:59:59.999+07:00`);
+
+  if (q) {
+    // A full invoice number (YYYYMM-N) is derived, not stored: resolve it to
+    // the N-th paid order of that month.
+    const invoice = /^(\d{4})(0[1-9]|1[0-2])-(\d+)$/.exec(q);
+    if (invoice) {
+      const { start, end } = invoiceMonthRange(invoice[1] + invoice[2]);
+      const n = Number(invoice[3]);
+      const { data: hit } = await supabaseAdmin
+        .from("orders")
+        .select("id")
+        .eq("status", "paid")
+        .gte("paid_at", start)
+        .lt("paid_at", end)
+        .order("paid_at", { ascending: true })
+        .order("id")
+        .range(n - 1, n - 1);
+      if (!hit?.length) return { rows: [], total: 0 };
+      query = query.eq("id", hit[0].id);
+    } else {
+      // Quoted so a comma/parenthesis in the search isn't parsed as filter syntax.
+      const pattern = `"%${q.replace(/[\\"]/g, "\\$&")}%"`;
+      query = query.or(`customer_name.ilike.${pattern},customer_phone.ilike.${pattern}`);
+    }
   }
 
-  const { data, error } = await query;
+  const { data, error, count } = await query;
   if (error) throw error;
 
   type Row = {
@@ -608,10 +667,10 @@ export async function getOrdersList(status?: FulfillmentStatus): Promise<OrderLi
     deliveryAt: o.delivery_at ?? null,
   }));
 
-  // Date-based invoice numbers (YYYYMM-N). Group by Phnom Penh month,
-  // number oldest-first. Every month in this window is fully present except
-  // possibly the oldest one -- if the 200-row cap truncated it, one count
-  // query recovers how many earlier same-month orders were left out.
+  // Date-based invoice numbers (YYYYMM-N): an order's number is its position
+  // among ALL paid orders of its Phnom Penh month, oldest first. For each month
+  // on this page, count the earlier orders (base) and list the orders from the
+  // page's oldest to newest, so numbering matches regardless of filters/paging.
   const byMonth = new Map<string, OrderListRow[]>();
   for (const r of rows) {
     if (!r.paidAt) continue;
@@ -620,25 +679,62 @@ export async function getOrdersList(status?: FulfillmentStatus): Promise<OrderLi
     if (group) group.push(r);
     else byMonth.set(key, [r]);
   }
-  const oldestKey = [...byMonth.keys()].at(-1);
-  for (const [key, group] of byMonth) {
-    group.sort((a, b) => (a.paidAt! < b.paidAt! ? -1 : 1));
-    let base = 0;
-    if (key === oldestKey && rows.length >= 200) {
-      const { count } = await supabaseAdmin
-        .from("orders")
-        .select("id", { count: "exact", head: true })
-        .eq("status", "paid")
-        .gte("paid_at", invoiceMonthStartIso(group[0].paidAt!))
-        .lt("paid_at", group[0].paidAt!);
-      base = count ?? 0;
-    }
-    group.forEach((r, i) => {
-      r.invoiceNumber = formatInvoiceNumber(r.paidAt, base + i + 1);
-    });
-  }
+  await Promise.all(
+    [...byMonth.entries()].map(async ([stamp, group]) => {
+      const times = group.map((r) => r.paidAt!).sort();
+      const minPaid = times[0];
+      const maxPaid = times[times.length - 1];
+      const { start } = invoiceMonthRange(stamp);
+      const [{ count: before }, { data: span }] = await Promise.all([
+        supabaseAdmin
+          .from("orders")
+          .select("id", { count: "exact", head: true })
+          .eq("status", "paid")
+          .gte("paid_at", start)
+          .lt("paid_at", minPaid),
+        supabaseAdmin
+          .from("orders")
+          .select("id")
+          .eq("status", "paid")
+          .gte("paid_at", minPaid)
+          .lte("paid_at", maxPaid)
+          .order("paid_at", { ascending: true })
+          .order("id"),
+      ]);
+      const seq = new Map((span ?? []).map((o, i) => [o.id as string, (before ?? 0) + i + 1]));
+      for (const r of group) {
+        const n = seq.get(r.id);
+        if (n) r.invoiceNumber = formatInvoiceNumber(r.paidAt, n);
+      }
+    })
+  );
 
-  return rows;
+  return { rows, total: count ?? 0 };
+}
+
+// Counts for the Orders summary cards + header badge, over every paid order
+// (head-only count queries, no rows transferred).
+export async function getOrdersSummary(): Promise<{
+  total: number;
+  newToday: number;
+  inProgress: number;
+  delivered: number;
+}> {
+  const today = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Phnom_Penh" });
+  const paid = () =>
+    supabaseAdmin.from("orders").select("id", { count: "exact", head: true }).eq("status", "paid");
+  const [total, newToday, inProgress, delivered] = await Promise.all([
+    paid(),
+    paid().eq("fulfillment_status", "new_order").gte("paid_at", `${today}T00:00:00+07:00`),
+    paid().in("fulfillment_status", ["new_order", "processing"]),
+    paid().in("fulfillment_status", ["delivered", "complete"]),
+  ]);
+  return {
+    total: total.count ?? 0,
+    newToday: newToday.count ?? 0,
+    inProgress: inProgress.count ?? 0,
+    delivered: delivered.count ?? 0,
+  };
 }
 
 export type InvoiceData = {
@@ -1153,14 +1249,22 @@ export async function getMarginReport(
     };
   });
 
-  // Only the rows actually missing a cost need the extra lookup -- everyone
-  // else already has a real recorded unitCost and never shows this.
+  // Unit Cost follows Stock: the product's current effective cost (Stock's
+  // Total when linked to a website listing, else its own cost_price) wins over
+  // the cost recorded at sale time, and the row's COGS/profit/margin are
+  // re-derived from it so the row stays internally consistent. A product with
+  // no Stock cost keeps its recorded sale-time cost (or none).
   await Promise.all(
-    rows
-      .filter((r) => r.unitCost === null)
-      .map(async (r) => {
-        r.suggestedCost = await getEffectiveProductCost(r.productId).catch(() => null);
-      })
+    rows.map(async (r) => {
+      r.suggestedCost = await getEffectiveProductCost(r.productId).catch(() => null);
+      if (r.suggestedCost === null) return;
+      r.unitCost = round2(r.suggestedCost);
+      r.totalCogs = round2(r.suggestedCost * r.unitsSold);
+      const margin = computeGrossMargin(r.revenue, r.totalCogs);
+      r.grossProfit = margin.grossProfit;
+      r.grossMarginPct = margin.grossMarginPct;
+      r.hasUnknownCost = false;
+    })
   );
 
   return rows.sort((a, b) => b.revenue - a.revenue);
