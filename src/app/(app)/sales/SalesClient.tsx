@@ -50,7 +50,7 @@ import { updateOrderAction } from "@/app/(app)/orders/actions";
 import { ensurePosProductForSiteProduct, syncPosProductName } from "./websiteActions";
 import { notifySaleCharged } from "@/lib/saleCharged";
 import { notifyOrdersChanged } from "@/lib/ordersChanged";
-import { parseGrams, sizedLine } from "@/lib/weight";
+import { khmerNameWeight, parseGrams, sizedLine } from "@/lib/weight";
 import { COUNTRY_PREFIX, toFullPhone } from "@/lib/phone";
 
 // An existing order opened for editing via /sales?editOrder=<id> -- the
@@ -668,7 +668,11 @@ export default function SalesClient({
   // What the cart / receipt show for a line: the Khmer name when the product
   // has one, otherwise the English name.
   function lineName(line: CartLine): string {
-    return line.nameKm?.trim() || line.name;
+    const km = line.nameKm?.trim();
+    if (!km) return line.name;
+    // A Khmer name carries the weight the English one has ("(100g)").
+    const weight = khmerNameWeight(line);
+    return weight ? `${km} ${weight}` : km;
   }
 
   // The line's scale in Khmer when it has one, else the plain unit (pcs/kg/g).
@@ -1156,9 +1160,14 @@ export default function SalesClient({
               <div key={line.productId} className="flex items-center justify-between py-2 text-sm">
                 <div className="flex-1">
                   <div>
-                    {lineName(line)}
-                    {line.weightLabel && !packGrams && (
-                      <span className="ml-1.5 text-xs text-zinc-400">{line.weightLabel}</span>
+                    {line.nameKm?.trim() || line.name}
+                    {line.nameKm?.trim() ? (
+                      khmerNameWeight(line) && (
+                        <span className="ml-1.5 text-xs text-zinc-400">{khmerNameWeight(line)}</span>
+                      )
+                    ) : (
+                      line.weightLabel &&
+                      !packGrams && <span className="ml-1.5 text-xs text-zinc-400">{line.weightLabel}</span>
                     )}
                   </div>
                   <div className="flex items-center gap-1 text-zinc-500">

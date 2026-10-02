@@ -7,6 +7,7 @@ import { Check, Pencil, Plus, RefreshCw, Trash2, X } from "lucide-react";
 import { updateOrderAction } from "@/app/(app)/orders/actions";
 import { notifyOrdersChanged } from "@/lib/ordersChanged";
 import { PAYMENT_METHOD_LABELS, type PaymentMethod } from "@/lib/paymentMethods";
+import { khmerNameWeight } from "@/lib/weight";
 
 function formatMoney(n: number) {
   return `$${n.toFixed(2)}`;
@@ -371,7 +372,11 @@ export default function OrderEditor({
                   <td className="py-2 pr-2">
                     {r.nameKm?.trim() || r.name}
                     {r.sizeLabel ? ` — ${r.sizeLabel}` : ""}
-                    {r.weightLabel && <span className="ml-1.5 text-xs text-muted-foreground">{r.weightLabel}</span>}
+                    {(r.nameKm?.trim() ? khmerNameWeight(r) : r.weightLabel) && (
+                      <span className="ml-1.5 text-xs text-muted-foreground">
+                        {r.nameKm?.trim() ? khmerNameWeight(r) : r.weightLabel}
+                      </span>
+                    )}
                   </td>
                   <td className="py-2 text-right">
                     {editing ? (
