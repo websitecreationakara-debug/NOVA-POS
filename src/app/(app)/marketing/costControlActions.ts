@@ -123,12 +123,12 @@ export type SetItemDetail = {
   // The product's explicit Stock weight (grams per unit), if set -- takes
   // priority over guessing from productUnit/productName.
   productWeightGrams: number | null;
-  // The product's Set price for one native pack/unit -- its Price in Stock for
-  // a Stock product (see getSetItemPricing) -- fetched fresh each read (not
+  // The product's Set price for one native pack/unit -- its Purchase Cost in
+  // Stock for a Stock product (see getSetItemPricing) -- fetched fresh each read (not
   // the possibly stale/rescaled unit_cost below) -- the reference
   // computeUnitCostForScale rescales from when Scale changes.
   baseCostPerUnit: number | null;
-  // True when baseCostPerUnit is Stock's Price: the line's price then follows
+  // True when baseCostPerUnit comes from Stock: the line's price then follows
   // Stock and isn't hand-editable here.
   priceFromStock: boolean;
   amount: number;
@@ -576,7 +576,7 @@ export async function duplicateSetAction(
 
 // Adding a product auto-fills unit/unit_cost from Stock right now -- the
 // core UX point of the Set Builder (no re-typing a product's own price).
-// unit_cost is the product's Price in Stock -- see getSetItemPricing.
+// unit_cost is the product's Purchase Cost in Stock -- see getSetItemPricing.
 export async function addSetItemAction(input: {
   setId: string;
   productId: string;

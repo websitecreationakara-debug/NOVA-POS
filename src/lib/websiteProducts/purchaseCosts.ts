@@ -142,38 +142,52 @@ export async function getEffectiveProductCost(productId: string): Promise<number
   return total ?? product.cost_price;
 }
 
-// What a Set line is priced at, per native pack/unit. A product linked to a
-// website listing (everything Stock's Website tab shows) is priced at Stock's
-// own Price column -- products.price -- even when that is 0, never at its
-// purchase-cost Total. A product with no listing is a manual Set extra (Sauce,
-// Fried Garlic, ...): it has no selling price, so its own cost_price is the
-// price. `fromStock` says which -- a Stock-priced line isn't hand-editable in
-// the Set builder, since the price lives in Stock.
+// What a Set line is priced at, per native pack/unit: the product's Purchase
+// Cost in Stock (the average of Original Cost and Total Cost 10%). When a
+// product has no Purchase Cost entered, it falls back to its Total (a typed
+// Total, or Purchase Cost + Extra Cost), then its own cost_price -- so it
+// isn't left blank. A product with no website listing (a manual Set extra:
+// Sauce, Fried Garlic, ...) just uses its cost_price. `fromStock` says
+// whether the price comes from a Stock listing -- such a line isn't
+// hand-editable in the Set builder, since the cost lives in Stock.
 export async function getSetItemPricing(
   productId: string
 ): Promise<{ base: number | null; fromStock: boolean }> {
   const { data: product } = await supabaseAdmin
     .from("products")
-    .select("price, cost_price")
+    .select("cost_price")
     .eq("id", productId)
     .maybeSingle();
   if (!product) return { base: null, fromStock: false };
 
   const { data: link } = await supabaseAdmin
     .from("product_site_links")
-    .select("id")
+    .select("site, site_product_id, variation_id")
     .eq("product_id", productId)
     .limit(1)
     .maybeSingle();
-  if (link) return { base: product.price, fromStock: true };
-  // No listing: use its Price when it has one, else its own cost.
-  return { base: product.price > 0 ? product.price : product.cost_price, fromStock: false };
+  if (!link) return { base: product.cost_price, fromStock: false };
+
+  const { data: costRow } = await supabaseAdmin
+    .from("website_product_purchase_costs")
+    .select("original_cost, total_cost_10pct, extra_money, total_override")
+    .eq("site", link.site)
+    .eq("site_product_id", link.site_product_id)
+    .eq("variation_id", link.variation_id)
+    .maybeSingle();
+  const { purchaseCost, total } = derivePurchaseCost({
+    originalCost: costRow?.original_cost ?? null,
+    totalCost10pct: costRow?.total_cost_10pct ?? null,
+    extraMoney: costRow?.extra_money ?? null,
+    totalOverride: costRow?.total_override ?? null,
+  });
+  return { base: purchaseCost ?? total ?? product.cost_price, fromStock: true };
 }
 
 // Pushes a product's current Set price (see getSetItemPricing) into every Set
-// line item that uses it, so a change to its Price in Stock shows up in Cost
-// Control's Unit Cost / Line Total immediately -- not just the next time
-// someone happens to re-add or re-price that line by hand. Best-effort:
+// line item that uses it, so a change to its Purchase Cost in Stock shows up
+// in Cost Control's Unit Cost / Line Total immediately -- not just the next
+// time someone happens to re-add or re-price that line by hand. Best-effort:
 // called after the real change already succeeded, so a hiccup here shouldn't
 // fail that.
 //

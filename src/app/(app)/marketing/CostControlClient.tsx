@@ -6,7 +6,13 @@ import Link from "next/link";
 import { ChevronLeft, ChevronRight, Copy, Pencil, Plus, Trash2 } from "lucide-react";
 import type { Brand, SetStatus } from "@/types/database";
 import type { StockPickerItem } from "@/lib/supabase/queries";
-import { computeLineTotal, computeSetTotalCost, computeUnitCostForScale, productWeightGrams } from "@/lib/costControl";
+import {
+  computeLineTotal,
+  computeSetTotalCost,
+  computeUnitCostForScale,
+  parseWeightGramsFromName,
+  productWeightGrams,
+} from "@/lib/costControl";
 import {
   addManualSetItemAction,
   addSetItemAction,
@@ -103,6 +109,17 @@ const selectClass =
 // when it's not one of these (e.g. a custom unit typed before this dropdown
 // existed), so switching to a select never silently changes existing data.
 const SCALE_OPTIONS = ["pcs", "kg", "g", "box", "pack", "set"];
+
+// A product's name without its size, for matching a POS product to the website
+// listing it belongs to: "Japonica White Rice (100g)" -> "japonica white rice".
+function baseProductName(name: string): string {
+  return name
+    .toLowerCase()
+    .replace(/\([^)]*\)/g, " ")
+    .replace(/\b\d+(?:\.\d+)?\s*(?:kg|g|ml|pcs?)\b/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
 
 const PAGE_SIZE_OPTIONS = [10, 25, 50];
 
@@ -686,6 +703,42 @@ function SetEditor({
     for (const p of items) if (p.pos) map.set(p.pos.productId, p.weightGrams);
     return map;
   }, [items]);
+  // A line's image is the one Stock shows: the live image on the product's
+  // website listing (or add-on) from the picker list, falling back to the
+  // image saved on the POS product, which can be missing or out of date.
+  // The list is re-read on every refresh of this page, so a changed image in
+  // Stock follows here on its own.
+  const pickerImageByProduct = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const p of items) {
+      const url = p.website?.imageUrl ?? p.addon?.imageUrl;
+      if (p.pos && url) map.set(p.pos.productId, url);
+    }
+    return map;
+  }, [items]);
+  // Website listings that have an image, by name without size -- the fallback
+  // for a product that isn't linked to a listing (e.g. "Japonica White Rice
+  // (100g)" added by hand) but has a same-named one in Stock with a picture.
+  const imageCandidates = useMemo(
+    () =>
+      items.flatMap((p) => {
+        const url = p.website?.imageUrl ?? p.addon?.imageUrl;
+        return url ? [{ base: baseProductName(p.name), grams: p.weightGrams, url }] : [];
+      }),
+    [items]
+  );
+  function lineImageUrl(item: SetItemDetail): string | null {
+    const direct = pickerImageByProduct.get(item.productId) ?? item.productImageUrl;
+    if (direct) return direct;
+    const base = baseProductName(item.productName);
+    if (!base) return null;
+    const same = imageCandidates.filter((c) => c.base === base);
+    if (same.length === 0) return null;
+    // Several sizes of the same listing: prefer the one with this product's weight.
+    const grams = parseWeightGramsFromName(item.productName);
+    return (grams !== null ? same.find((c) => c.grams === grams) : undefined)?.url ?? same[0].url;
+  }
+
   function lineWeightGrams(item: SetItemDetail): number | null {
     const fromPicker = pickerWeightByProduct.get(item.productId);
     if (fromPicker !== undefined && fromPicker !== null) return fromPicker;
@@ -1229,9 +1282,9 @@ function SetEditor({
                     <td className="py-2 pr-3">
                       <div className="flex items-center gap-2">
                         <div className="h-14 w-14 shrink-0 overflow-hidden rounded border border-black/[.1] bg-zinc-100 dark:border-white/[.15] dark:bg-zinc-800">
-                          {item.productImageUrl ? (
+                          {lineImageUrl(item) ? (
                             // eslint-disable-next-line @next/next/no-img-element
-                            <img src={item.productImageUrl} alt="" className="h-full w-full object-cover" />
+                            <img src={lineImageUrl(item) as string} alt="" className="h-full w-full object-cover" />
                           ) : (
                             <div className="flex h-full w-full items-center justify-center text-[10px] text-zinc-400">
                               No img
@@ -1297,11 +1350,11 @@ function SetEditor({
                         </td>
                         <td className="py-2 pr-3 text-right tabular-nums">
                           {weightGramsForRow !== null && item.baseCostPerUnit !== null ? (
-                            <span className="text-zinc-500" title="Price in Stock, per pack weight">
+                            <span className="text-zinc-500" title="Purchase Cost in Stock, per pack weight">
                               {formatMoney(item.baseCostPerUnit)} / {weightGramsForRow}g
                             </span>
                           ) : item.priceFromStock && item.baseCostPerUnit !== null ? (
-                            <span className="text-zinc-500" title="Price in Stock -- change it there">
+                            <span className="text-zinc-500" title="Purchase Cost in Stock -- change it there">
                               {formatMoney(item.baseCostPerUnit)}
                             </span>
                           ) : (
