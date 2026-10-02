@@ -31,6 +31,7 @@ type Row = {
   sizeLabel?: string | null;
   nameKm?: string | null;
   unitKm?: string | null;
+  weightLabel?: string | null;
 };
 
 export type OrderEditorItem = {
@@ -44,6 +45,8 @@ export type OrderEditorItem = {
   // Khmer name / unit, shown instead of the English ones when the product has them.
   nameKm?: string | null;
   unitKm?: string | null;
+  // The product's weight text from its website listing ("1pc (125g)").
+  weightLabel?: string | null;
 };
 
 let rowSeq = 0;
@@ -368,6 +371,7 @@ export default function OrderEditor({
                   <td className="py-2 pr-2">
                     {r.nameKm?.trim() || r.name}
                     {r.sizeLabel ? ` — ${r.sizeLabel}` : ""}
+                    {r.weightLabel && <span className="ml-1.5 text-xs text-muted-foreground">{r.weightLabel}</span>}
                   </td>
                   <td className="py-2 text-right">
                     {editing ? (

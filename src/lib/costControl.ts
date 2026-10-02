@@ -55,11 +55,23 @@ export function computeMargin(
   return { grossProfit, marginPct };
 }
 
-// Parses a weight-only unit label ("500g", "1kg", "0.5 kg") into grams.
-// Anything else -- "pcs", "packet", bare "kg"/"g" with no number, etc --
-// returns null.
+// Parses a weight-only unit label ("500g", "1kg", "0.5 kg") into grams. Only
+// what comes before a "/" counts, so "250g/pkt" reads as 250g. Anything else
+// -- "pcs", "packet", bare "kg"/"g" with no number, etc -- returns null.
 export function parseWeightGrams(unit: string): number | null {
-  const match = unit.trim().match(/^(\d+(?:\.\d+)?)\s*(kg|g)$/i);
+  const match = unit.trim().match(/^(\d+(?:\.\d+)?)\s*(kg|g)(?:\s*\/.*)?$/i);
+  if (!match) return null;
+  const value = parseFloat(match[1]);
+  if (Number.isNaN(value) || value <= 0) return null;
+  return match[2].toLowerCase() === "kg" ? value * 1000 : value;
+}
+
+// The pack weight written on a website listing's weight field: the weight at
+// the start of the text, ignoring anything after it ("250g/pkt" -> 250,
+// "600g ($220/kg)" -> 600). A range or estimate ("800g-900g", "1.5kg+",
+// "100g up", "1-1.5kg/pc") has no single pack weight, so it returns null.
+export function parseSiteWeightGrams(text: string): number | null {
+  const match = text.trim().match(/^(\d+(?:\.\d+)?)\s*(kg|g)\b(?!\s*(?:-|–|\+|up\b))/i);
   if (!match) return null;
   const value = parseFloat(match[1]);
   if (Number.isNaN(value) || value <= 0) return null;
@@ -84,22 +96,31 @@ export function parseWeightGramsFromName(name: string): number | null {
 // line's Scale can be safely switched between pcs/box/... and kg/g without
 // the cost silently meaning something else. Tries, in order: the product's
 // own explicit Stock weight (products.weight_grams -- works for any
-// product, e.g. any "pcs" item), a weight-only unit ("500g"), a bare
-// "kg"/"g" unit (product is already priced per kilo/gram), then a weight
-// parenthesized in the product name. null when none of these apply, so
-// kg/g can't be offered/converted for that product.
+// product, e.g. any "pcs" item), a weight-only unit ("500g"), a weight in the
+// product name ("Caplin Roe Masago (500g)" -- checked before the bare unit so
+// a product whose unit is just "g" still gets its pack weight), then a bare
+// "kg"/"g" unit with no weight anywhere (product is already priced per
+// kilo/gram). `siteWeightText` is the weight written on the product's website
+// listing ("250g/pkt") -- read after the name, so a product whose weight is
+// only recorded there (not in its name) still resolves. null when none of
+// these apply, so kg/g can't be offered/converted for that product.
 export function productWeightGrams(
   unit: string,
   name: string,
-  explicitWeightGrams?: number | null
+  explicitWeightGrams?: number | null,
+  siteWeightText?: string | null
 ): number | null {
   if (explicitWeightGrams !== undefined && explicitWeightGrams !== null) return explicitWeightGrams;
   const fromUnit = parseWeightGrams(unit);
   if (fromUnit !== null) return fromUnit;
+  const fromName = parseWeightGramsFromName(name);
+  if (fromName !== null) return fromName;
+  const fromSite = siteWeightText ? parseSiteWeightGrams(siteWeightText) : null;
+  if (fromSite !== null) return fromSite;
   const trimmed = unit.trim().toLowerCase();
   if (trimmed === "kg") return 1000;
   if (trimmed === "g") return 1;
-  return parseWeightGramsFromName(name);
+  return null;
 }
 
 // Unit cost for a Set line's chosen Scale, given the product's base cost

@@ -918,6 +918,17 @@ export default function WebsiteProductsPanel({
   const filteredAddons = (addons ?? []).filter(
     (a) => !q || a.title.toLowerCase().includes(q) || (a.description ?? "").toLowerCase().includes(q)
   );
+  // Searching on the "All" chip also lists matching addons (below the
+  // products) -- they live in their own table, so without this a search for an
+  // addon only worked after switching to the Addons chip.
+  const showAddonMatches =
+    !categoryFilter && !!q && !outOfStockOnly && !lowStockOnly && filteredAddons.length > 0;
+  // Linked POS product's cost_price per addon -- the Total box's fallback.
+  const addonFallbackCosts: Record<string, number> = {};
+  for (const a of addons ?? []) {
+    const cost = posByEntryKey.get(posEntryKey(a.id, ""))?.cost_price;
+    if (cost != null) addonFallbackCosts[a.id] = cost;
+  }
   const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize));
   // Snap back to page 1 whenever the result set changes under the current page.
   const filterKey = `${q}|${categoryFilter}|${outOfStockOnly}|${lowStockOnly}|${pageSize}|${pageCount}`;
@@ -1391,7 +1402,13 @@ export default function WebsiteProductsPanel({
 
       <div className="overflow-x-auto lg:flex-1 lg:overflow-auto">
         {categoryFilter === ADDONS_FILTER_ID ? (
-          <WebsiteAddonsTable catalogId={catalogId} addons={filteredAddons} />
+          <WebsiteAddonsTable
+            catalogId={catalogId}
+            addons={filteredAddons}
+            purchaseCosts={purchaseCosts}
+            fallbackCosts={addonFallbackCosts}
+            onPreviewImage={setPreviewImage}
+          />
         ) : (
         <>
         {loadError && <p className="px-6 py-3 text-sm text-red-500">{loadError}</p>}
@@ -1855,7 +1872,7 @@ export default function WebsiteProductsPanel({
                   </tr>
                 );
               })}
-              {filtered.length === 0 && (
+              {filtered.length === 0 && !(showAddonMatches) && (
                 <tr>
                   <td colSpan={13} className="px-6 py-8 text-center text-sm text-zinc-500">
                     {q ? "No products match your search." : "No website products yet."}
@@ -1864,6 +1881,17 @@ export default function WebsiteProductsPanel({
               )}
             </tbody>
           </table>
+        )}
+        {showAddonMatches && (
+          <div className="border-t border-black/[.08] dark:border-white/[.145]">
+            <WebsiteAddonsTable
+            catalogId={catalogId}
+            addons={filteredAddons}
+            purchaseCosts={purchaseCosts}
+            fallbackCosts={addonFallbackCosts}
+            onPreviewImage={setPreviewImage}
+          />
+          </div>
         )}
         </>
         )}

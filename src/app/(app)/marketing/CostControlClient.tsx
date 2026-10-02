@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useTransition } from "react";
+import { useEffect, useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { ChevronLeft, ChevronRight, Copy, Pencil, Plus, Trash2 } from "lucide-react";
@@ -676,6 +676,22 @@ function SetEditor({
   const [isPending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
 
+  // A line's pack weight. The picker list already resolves each product's
+  // weight including the one written on its website listing ("250g/pkt"),
+  // which the line's own product fields don't carry -- without it a product
+  // whose unit is just "g" and whose weight lives only on the website would
+  // read as 1 g.
+  const pickerWeightByProduct = useMemo(() => {
+    const map = new Map<string, number | null>();
+    for (const p of items) if (p.pos) map.set(p.pos.productId, p.weightGrams);
+    return map;
+  }, [items]);
+  function lineWeightGrams(item: SetItemDetail): number | null {
+    const fromPicker = pickerWeightByProduct.get(item.productId);
+    if (fromPicker !== undefined && fromPicker !== null) return fromPicker;
+    return productWeightGrams(item.productUnit, item.productName, item.productWeightGrams);
+  }
+
   // A product's cost can change from somewhere else entirely (Stock's
   // Purchase Cost Total, Margin Report's Unit Cost) -- see
   // syncSetItemCostsForProduct. Poll while this page is visible so that
@@ -779,7 +795,8 @@ function SetEditor({
   function pickProduct(p: StockPickerItem) {
     setPendingKey(p.key);
     setQuery(p.name);
-    setAmountDraft("");
+    // A product with a known pack weight starts at that weight (in grams).
+    setAmountDraft(p.weightGrams === null ? "" : String(p.weightGrams));
   }
 
   function confirmAdd() {
@@ -822,7 +839,7 @@ function SetEditor({
           ).productId;
         }
         if (!productId) throw new Error("Cannot add this product");
-        await addSetItemAction({ setId: set.id, productId, amount });
+        await addSetItemAction({ setId: set.id, productId, amount, weightGrams: pendingItem.weightGrams });
         setPendingKey(null);
         setQuery("");
         setAmountDraft("");
@@ -863,7 +880,7 @@ function SetEditor({
   // 500g pack at $31.50 shows $63.00 for kg or $0.0630 for g instead of
   // reusing the flat pack price under a misleading unit.
   function changeScale(item: SetItemDetail, newScale: string) {
-    const weightGrams = productWeightGrams(item.productUnit, item.productName, item.productWeightGrams);
+    const weightGrams = lineWeightGrams(item);
     const newUnitCost =
       item.baseCostPerUnit === null ? null : computeUnitCostForScale(item.baseCostPerUnit, weightGrams, newScale);
 
@@ -953,9 +970,7 @@ function SetEditor({
           // price the user meant to make permanent.
           if (draft.unitCost !== undefined && draft.unitCost.trim() !== "") {
             const item = set.items.find((i) => i.id === itemId);
-            const weightGrams = item
-              ? productWeightGrams(item.productUnit, item.productName, item.productWeightGrams)
-              : null;
+            const weightGrams = item ? lineWeightGrams(item) : null;
             if (item && weightGrams === null) {
               out.push(syncManualItemProductCostAction(item.productId, parseFloat(draft.unitCost)));
             }
@@ -1138,14 +1153,14 @@ function SetEditor({
           <div className="mt-3 flex flex-wrap items-center gap-3 rounded border border-black/[.15] px-3 py-2 dark:border-white/[.2]">
             <span className="font-medium">{pendingItem.name}</span>
             <span className="text-xs text-zinc-500">
-              Unit: {pendingItem.unit} · Cost:{" "}
+              Unit: {pendingItem.weightGrams === null ? pendingItem.unit : "g"} · Cost:{" "}
               {pendingItem.costPrice === null ? "unknown" : formatMoney(pendingItem.costPrice)}
             </span>
             <input
               type="number"
               min={0}
               step="0.01"
-              placeholder="Amount"
+              placeholder={pendingItem.weightGrams === null ? "Amount" : "Amount (g)"}
               value={amountDraft}
               autoFocus
               onChange={(e) => setAmountDraft(e.target.value)}
@@ -1199,7 +1214,7 @@ function SetEditor({
                 const amountValue = draft.amount ?? String(item.amount);
                 const unitValue = draft.unit ?? item.unit;
                 const unitCostValue = draft.unitCost ?? (item.unitCost === null ? "" : String(item.unitCost));
-                const weightGramsForRow = productWeightGrams(item.productUnit, item.productName, item.productWeightGrams);
+                const weightGramsForRow = lineWeightGrams(item);
                 const confirming = confirmRemove === item.id;
                 // Recompute live from whatever's currently in the boxes --
                 // don't wait for Save to see the effect of an edit.
@@ -1282,8 +1297,12 @@ function SetEditor({
                         </td>
                         <td className="py-2 pr-3 text-right tabular-nums">
                           {weightGramsForRow !== null && item.baseCostPerUnit !== null ? (
-                            <span className="text-zinc-500" title="Auto-calculated from Stock">
+                            <span className="text-zinc-500" title="Price in Stock, per pack weight">
                               {formatMoney(item.baseCostPerUnit)} / {weightGramsForRow}g
+                            </span>
+                          ) : item.priceFromStock && item.baseCostPerUnit !== null ? (
+                            <span className="text-zinc-500" title="Price in Stock -- change it there">
+                              {formatMoney(item.baseCostPerUnit)}
                             </span>
                           ) : (
                             <label className="inline-flex w-20 items-center gap-1 rounded border border-black/[.15] px-2 py-1 text-sm dark:border-white/[.2]">

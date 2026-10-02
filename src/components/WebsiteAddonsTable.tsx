@@ -7,9 +7,16 @@ import type { WebsiteAddon, WebsiteAddonWrite, WebsiteCatalogId } from "@/lib/we
 import {
   createWebsiteAddonAction,
   deleteWebsiteAddonAction,
+  setWebsitePurchaseCostAction,
   updateWebsiteAddonAction,
   uploadWebsiteImageAction,
 } from "@/app/(app)/stock/websiteActions";
+import {
+  derivePurchaseCost,
+  EMPTY_PURCHASE_COSTS,
+  purchaseCostKey,
+  type PurchaseCostFields,
+} from "@/lib/websiteProducts/purchaseCosts";
 import DeleteWebsiteAddonDialog from "@/components/DeleteWebsiteAddonDialog";
 
 const fieldInputClass =
@@ -26,6 +33,25 @@ const emptyForm: WebsiteAddonWrite = {
 // table's.
 const PAGE_SIZE_OPTIONS = [10, 25, 50];
 
+function formatMoney(n: number) {
+  return `$${n.toFixed(2)}`;
+}
+
+type CostField = "original" | "total10" | "extra" | "total";
+const COST_DB_FIELD: Record<
+  CostField,
+  "original_cost" | "total_cost_10pct" | "extra_money" | "total_override"
+> = {
+  original: "original_cost",
+  total10: "total_cost_10pct",
+  extra: "extra_money",
+  total: "total_override",
+};
+
+const costInputClass =
+  "inline-flex w-16 items-center gap-1 rounded border border-black/[.15] px-2 py-1 text-sm tabular-nums focus-within:border-black/40 dark:border-white/[.2] dark:focus-within:border-white/50";
+const costCellClass = "bg-black/[.015] px-2 py-2 text-right dark:bg-white/[.02]";
+
 // Inline replacement for the product table when the "Addons" chip is active
 // -- same page, same table area, no popup. Price/stock edits and deletes go
 // straight to the storefront's own add-on table (PATCH/DELETE
@@ -36,9 +62,21 @@ const PAGE_SIZE_OPTIONS = [10, 25, 50];
 export default function WebsiteAddonsTable({
   catalogId,
   addons,
+  purchaseCosts,
+  fallbackCosts,
+  onPreviewImage,
 }: {
   catalogId: WebsiteCatalogId;
   addons: WebsiteAddon[];
+  // Opens the panel's full-size image pop-up (same one the product table uses).
+  onPreviewImage?: (image: { url: string; title: string }) => void;
+  // Purchase-cost records for the whole storefront, keyed by purchaseCostKey
+  // (an addon is stored under its own id with an empty variation id, the same
+  // key its linked POS product uses).
+  purchaseCosts?: Record<string, PurchaseCostFields>;
+  // addon id -> its linked POS product's cost_price, shown as the Total's
+  // placeholder when no Total is entered (same as the product table).
+  fallbackCosts?: Record<string, number>;
 }) {
   const router = useRouter();
   const [, startTransition] = useTransition();
@@ -56,6 +94,9 @@ export default function WebsiteAddonsTable({
   // "Add Stock": a quantity being *received*, added to the current stock on
   // blur then cleared back to empty -- see the product table's addStockDrafts.
   const [addStockDrafts, setAddStockDrafts] = useState<Record<string, string>>({});
+  // Draft text for the Original Cost / Total Cost 10% / Extra Cost / Total
+  // boxes, keyed by addon id -- each saves on blur, same as the product table.
+  const [costDrafts, setCostDrafts] = useState<Record<string, Partial<Record<CostField, string>>>>({});
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState<WebsiteAddonWrite>(emptyForm);
   const [formError, setFormError] = useState<string | null>(null);
@@ -227,6 +268,37 @@ export default function WebsiteAddonsTable({
     }
     if (stock === a.stock) return;
     saveField(a, { stock });
+  }
+
+  function saveCostField(a: WebsiteAddon, field: CostField, currentValue: number | null) {
+    const raw = costDrafts[a.id]?.[field];
+    if (raw === undefined) return;
+    const clearField = () =>
+      setCostDrafts((prev) => {
+        const rowDraft = { ...(prev[a.id] ?? {}) };
+        delete rowDraft[field];
+        const next = { ...prev };
+        if (Object.keys(rowDraft).length === 0) delete next[a.id];
+        else next[a.id] = rowDraft;
+        return next;
+      });
+
+    const trimmed = raw.trim();
+    const value = trimmed === "" ? null : parseFloat(trimmed);
+    if ((value !== null && (Number.isNaN(value) || value < 0)) || value === currentValue) {
+      clearField();
+      return;
+    }
+    startTransition(async () => {
+      try {
+        await setWebsitePurchaseCostAction(catalogId, a.id, "", { [COST_DB_FIELD[field]]: value });
+        router.refresh();
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Failed to save cost");
+      } finally {
+        clearField();
+      }
+    });
   }
 
   function applyAddStock(a: WebsiteAddon) {
@@ -478,6 +550,21 @@ export default function WebsiteAddonsTable({
             </th>
             <th className="w-14 px-3 py-2 font-medium">Image</th>
             <th className="px-3 py-2 font-medium">Addon</th>
+            <th className="w-20 bg-black/[.015] px-2 py-2 text-right font-medium dark:bg-white/[.02]">
+              Original Cost
+            </th>
+            <th className="w-20 bg-black/[.015] px-2 py-2 text-right font-medium dark:bg-white/[.02]">
+              Total Cost 10%
+            </th>
+            <th className="w-20 bg-black/[.015] px-2 py-2 text-right font-medium dark:bg-white/[.02]">
+              Purchase Cost
+            </th>
+            <th className="w-20 bg-black/[.015] px-2 py-2 text-right font-medium dark:bg-white/[.02]">
+              Extra Cost
+            </th>
+            <th className="w-20 border-r border-black/[.08] bg-black/[.015] px-2 py-2 text-right font-medium dark:border-white/[.145] dark:bg-white/[.02]">
+              Total
+            </th>
             <th className="w-24 px-3 py-2 text-right font-medium">Price</th>
             <th className="w-20 px-3 py-2 text-right font-medium">Stock</th>
             <th className="w-20 px-3 py-2 text-right font-medium">Add Stock</th>
@@ -490,6 +577,37 @@ export default function WebsiteAddonsTable({
             const priceValue = drafts[a.id]?.price ?? String(a.price);
             const stockValue = drafts[a.id]?.stock ?? (a.stock === null ? "" : String(a.stock));
             const busy = pendingId === a.id;
+            const savedCosts = purchaseCosts?.[purchaseCostKey(a.id, "")] ?? EMPTY_PURCHASE_COSTS;
+            const { purchaseCost, total } = derivePurchaseCost(savedCosts);
+            const draft = costDrafts[a.id];
+            const costText = (v: number | null) => (v === null ? "" : String(v));
+            const fallback = fallbackCosts?.[a.id];
+            const totalPlaceholder =
+              savedCosts.totalOverride !== null
+                ? "—"
+                : (total ?? fallback) != null
+                  ? (total ?? (fallback as number)).toFixed(2)
+                  : "—";
+            const costBox = (field: CostField, value: string, saved: number | null, placeholder = "—") => (
+              <label className={costInputClass}>
+                <span className="select-none text-zinc-400">$</span>
+                <input
+                  type="number"
+                  min={0}
+                  step="0.01"
+                  placeholder={placeholder}
+                  value={value}
+                  onChange={(e) =>
+                    setCostDrafts((prev) => ({ ...prev, [a.id]: { ...prev[a.id], [field]: e.target.value } }))
+                  }
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") e.currentTarget.blur();
+                  }}
+                  onBlur={() => saveCostField(a, field, saved)}
+                  className="w-full min-w-0 bg-transparent text-right outline-none"
+                />
+              </label>
+            );
             return (
               <tr
                 key={a.id}
@@ -507,20 +625,44 @@ export default function WebsiteAddonsTable({
                   />
                 </td>
                 <td className="px-3 py-2">
-                  <div className="h-10 w-10 shrink-0 overflow-hidden rounded border border-black/[.1] bg-zinc-100 dark:border-white/[.15] dark:bg-zinc-800">
-                    {a.image_url ? (
-                      // eslint-disable-next-line @next/next/no-img-element
+                  {a.image_url ? (
+                    <button
+                      type="button"
+                      onClick={() => onPreviewImage?.({ url: a.image_url as string, title: a.title })}
+                      className="block h-10 w-10 shrink-0 overflow-hidden rounded border border-black/[.1] bg-zinc-100 dark:border-white/[.15] dark:bg-zinc-800"
+                    >
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
                       <img src={a.image_url} alt="" className="h-full w-full object-cover" />
-                    ) : (
-                      <div className="flex h-full w-full items-center justify-center text-[9px] text-zinc-400">
-                        No img
-                      </div>
-                    )}
-                  </div>
+                    </button>
+                  ) : (
+                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded border border-black/[.1] bg-zinc-100 text-[9px] text-zinc-400 dark:border-white/[.15] dark:bg-zinc-800">
+                      No img
+                    </div>
+                  )}
                 </td>
                 <td className="px-3 py-2">
                   <div className="font-medium">{a.title}</div>
                   {a.description && <div className="text-xs text-zinc-400">{a.description}</div>}
+                </td>
+                <td className={costCellClass}>
+                  {costBox("original", draft?.original ?? costText(savedCosts.originalCost), savedCosts.originalCost)}
+                </td>
+                <td className={costCellClass}>
+                  {costBox("total10", draft?.total10 ?? costText(savedCosts.totalCost10pct), savedCosts.totalCost10pct)}
+                </td>
+                <td className={`${costCellClass} tabular-nums text-zinc-500`}>
+                  {purchaseCost === null ? "—" : formatMoney(purchaseCost)}
+                </td>
+                <td className={costCellClass}>
+                  {costBox("extra", draft?.extra ?? costText(savedCosts.extraMoney), savedCosts.extraMoney)}
+                </td>
+                <td className="border-r border-black/[.08] bg-black/[.015] px-2 py-2 text-right dark:border-white/[.145] dark:bg-white/[.02]">
+                  {costBox(
+                    "total",
+                    draft?.total ?? costText(savedCosts.totalOverride),
+                    savedCosts.totalOverride,
+                    totalPlaceholder
+                  )}
                 </td>
                 <td className="px-3 py-2 text-right">
                   <label className="inline-flex w-20 items-center gap-1 rounded border border-black/[.15] px-2 py-1 text-sm focus-within:border-black/40 dark:border-white/[.2] dark:focus-within:border-white/50">
@@ -614,7 +756,7 @@ export default function WebsiteAddonsTable({
           })}
           {paged.length === 0 && (
             <tr>
-              <td colSpan={8} className="px-6 py-8 text-center text-sm text-zinc-500">
+              <td colSpan={13} className="px-6 py-8 text-center text-sm text-zinc-500">
                 No add-ons.
               </td>
             </tr>

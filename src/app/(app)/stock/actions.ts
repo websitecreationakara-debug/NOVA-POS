@@ -7,8 +7,8 @@ import { requireStockAccess } from "@/lib/stockAccess";
 import { computeLineCogs, computeRecipeUnitCost } from "@/lib/cogs";
 import {
   getEffectiveProductCost,
-  setWebsitePurchaseCost,
   syncSetItemCostsForProduct,
+  writeCostToStockTotal,
 } from "@/lib/websiteProducts/purchaseCosts";
 import type { ProductSiteLink, StockAdjustmentCategory } from "@/types/database";
 
@@ -216,9 +216,13 @@ export async function setProductPriceAction(input: {
 
   if (error) throw error;
 
+  // Set lines are priced at Stock's Price (see getSetItemPricing).
+  await syncSetItemCostsForProduct(productId);
+
   revalidatePath("/stock");
   revalidatePath("/sales");
   revalidatePath("/accountance");
+  revalidatePath("/marketing");
 }
 
 // null clears the cost price back to "unknown" -- COGS/margin reporting
@@ -246,17 +250,7 @@ export async function setProductCostAction(input: {
   // (website_product_purchase_costs), so a cost set here -- e.g. from the
   // Margin Report's Unit Cost -- would otherwise leave Total blank or stale
   // for a linked product, and that Total wins in getEffectiveProductCost.
-  const { data: siteLink } = await supabaseAdmin
-    .from("product_site_links")
-    .select("site, site_product_id, variation_id")
-    .eq("product_id", productId)
-    .limit(1)
-    .maybeSingle();
-  if (siteLink) {
-    await setWebsitePurchaseCost(siteLink.site, siteLink.site_product_id, siteLink.variation_id, {
-      total_override: costPrice,
-    });
-  }
+  await writeCostToStockTotal(productId, costPrice);
 
   // A Set item's Unit Cost only wins over this when the product also has a
   // fully-entered Purchase Cost Total (see getEffectiveProductCost) --
