@@ -1,12 +1,13 @@
 import { supabaseAdmin } from "@/lib/supabase/server";
 import { catalogForBrandSlug, configuredCatalogs } from "@/lib/websiteProducts/catalogs";
-import { listWebsiteAddons, listWebsiteProducts } from "@/lib/websiteProducts/client";
+import { getWebsiteProduct, listWebsiteAddons, listWebsiteProducts } from "@/lib/websiteProducts/client";
 import { countLowStock } from "@/lib/websiteProducts/stock";
 import type { WebsiteCatalogId } from "@/lib/websiteProducts/types";
 import { formatInvoiceNumber, invoiceMonthStamp, invoiceMonthStartIso } from "@/lib/invoiceNumber";
 import { COUNTED_FULFILLMENT_STATUSES } from "@/lib/orderStatus";
 import { ALL_PAYMENT_METHODS, type PaymentMethod } from "@/lib/paymentMethods";
 import { aggregateStrictCogs, computeGrossMargin } from "@/lib/cogs";
+import { productWeightGrams } from "@/lib/costControl";
 import { getEffectiveProductCost } from "@/lib/websiteProducts/purchaseCosts";
 import type {
   Brand,
@@ -760,8 +761,50 @@ export type InvoiceData = {
     nameKm: string | null;
     // The unit written in Khmer, printed with the English unit.
     unitKm: string | null;
+    // The weight text shown for the product on its website listing and in
+    // Stock ("1pc (125g)"), printed after the name. null when the product has
+    // none, the name already says it, or the line is a custom size.
+    weightLabel: string | null;
   }[];
 };
+
+// The weight text the storefront shows per product ("1pc (125g)"), keyed by
+// POS product id. Looked up live from the storefront (best-effort -- a hiccup
+// just means no label) and kept briefly so a bulk invoice run doesn't ask for
+// the same listing again for every order.
+const siteWeightCache = new Map<string, { at: number; text: string | null }>();
+const SITE_WEIGHT_TTL_MS = 60_000;
+
+async function getSiteWeightLabels(productIds: string[]): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  if (productIds.length === 0) return out;
+  const { data: links } = await supabaseAdmin
+    .from("product_site_links")
+    .select("product_id, site, site_product_id, variation_id")
+    .in("product_id", productIds);
+  await Promise.all(
+    (links ?? []).map(async (l) => {
+      const catalog = catalogForBrandSlug(l.site);
+      if (!catalog) return;
+      const key = `${l.site}|${l.site_product_id}|${l.variation_id}`;
+      let hit = siteWeightCache.get(key);
+      if (!hit || Date.now() - hit.at > SITE_WEIGHT_TTL_MS) {
+        let text: string | null = null;
+        try {
+          const wp = await getWebsiteProduct(catalog.id, l.site_product_id);
+          const raw = l.variation_id ? wp.variations?.find((v) => v.id === l.variation_id)?.weight : wp.weight;
+          text = raw?.trim() || null;
+        } catch {
+          /* storefront unreachable -- no label */
+        }
+        hit = { at: Date.now(), text };
+        siteWeightCache.set(key, hit);
+      }
+      if (hit.text) out.set(l.product_id, hit.text);
+    })
+  );
+  return out;
+}
 
 export async function getInvoice(orderId: string): Promise<InvoiceData | null> {
   const { data: order, error: orderError } = await supabaseAdmin
@@ -806,6 +849,9 @@ export async function getInvoice(orderId: string): Promise<InvoiceData | null> {
     invoiceNumber = formatInvoiceNumber(orderFields.paid_at, (count ?? 0) + 1)!;
   }
 
+  const weightLabels = await getSiteWeightLabels([...new Set(((items ?? []) as ItemRow[]).map((i) => i.product_id))]);
+  const squash = (t: string) => t.toLowerCase().replace(/\s+/g, "");
+
   return {
     order: orderFields,
     invoiceNumber,
@@ -823,6 +869,11 @@ export async function getInvoice(orderId: string): Promise<InvoiceData | null> {
       sizeLabel: i.size_label,
       nameKm: i.products?.name_km ?? null,
       unitKm: i.products?.unit_km ?? null,
+      weightLabel: (() => {
+        const label = weightLabels.get(i.product_id) ?? null;
+        if (!label || i.size_label) return null;
+        return squash(i.products?.name ?? "").includes(squash(label)) ? null : label;
+      })(),
     })),
   };
 }
@@ -1027,6 +1078,10 @@ export type StockPickerItem = {
   // stock and has never been tracked as a real count.
   displayStock: number | null;
   costPrice: number | null;
+  // The pack's weight in grams when it can be read reliably (the product's own
+  // Stock weight, a weight-only unit, a weight in the name, or a plain weight
+  // label like "150g") -- Cost Control prefills a new line's Amount with it.
+  weightGrams: number | null;
   pos: { productId: string; currentStock: number } | null;
   website: {
     catalogId: WebsiteCatalogId;
@@ -1079,6 +1134,7 @@ export async function getStockPickerItems(
               price: v.price,
               imageUrl: v.image_url ?? wp.image_url,
               label: [wp.title, v.weight || v.flavor].filter(Boolean).join(" "),
+              weightText: v.weight ?? null,
             }))
           : [
               {
@@ -1087,6 +1143,7 @@ export async function getStockPickerItems(
                 price: wp.price,
                 imageUrl: wp.image_url,
                 label: wp.title,
+                weightText: wp.weight ?? null,
               },
             ];
         for (const e of entries) {
@@ -1105,6 +1162,12 @@ export async function getStockPickerItems(
             unit: "pcs",
             displayStock: linked ? linked.stock_quantity : e.stock,
             costPrice: linked?.cost_price ?? null,
+            weightGrams: productWeightGrams(
+              linked?.unit ?? "pcs",
+              linked?.name ?? e.label,
+              linked?.weight_grams,
+              e.weightText
+            ),
             pos: linked ? { productId: linked.id, currentStock: linked.stock_quantity } : null,
             website: {
               catalogId: catalog.id,
@@ -1138,6 +1201,7 @@ export async function getStockPickerItems(
             unit: "pcs",
             displayStock: linked ? linked.stock_quantity : a.stock,
             costPrice: linked?.cost_price ?? null,
+            weightGrams: productWeightGrams(linked?.unit ?? "pcs", linked?.name ?? a.title, linked?.weight_grams),
             pos: linked ? { productId: linked.id, currentStock: linked.stock_quantity } : null,
             website: null,
             addon: { catalogId: catalog.id, addonId: a.id, stock: a.stock, price: a.price, imageUrl: a.image_url },
@@ -1158,6 +1222,7 @@ export async function getStockPickerItems(
       unit: p.unit,
       displayStock: p.stock_quantity,
       costPrice: p.cost_price,
+      weightGrams: productWeightGrams(p.unit, p.name, p.weight_grams),
       pos: { productId: p.id, currentStock: p.stock_quantity },
       website: null,
       addon: null,

@@ -1,5 +1,12 @@
 import { supabaseAdmin } from "@/lib/supabase/server";
-import { computeSetPricing, computeSetTotalCost } from "@/lib/costControl";
+import {
+  computeSetPricing,
+  computeSetTotalCost,
+  computeUnitCostForScale,
+  productWeightGrams,
+} from "@/lib/costControl";
+import { catalogForBrandSlug } from "./catalogs";
+import { getWebsiteProduct } from "./client";
 import type { ProductSiteLink } from "@/types/database";
 
 // Manually-entered purchase-cost inputs for one storefront item -- see
@@ -135,15 +142,117 @@ export async function getEffectiveProductCost(productId: string): Promise<number
   return total ?? product.cost_price;
 }
 
-// Pushes a product's current effective cost (see getEffectiveProductCost)
-// into every Set line item that uses it, so a change to Stock's Purchase
-// Cost Total (or a plain cost price edit) shows up in Cost Control's Unit
-// Cost / Line Total immediately -- not just the next time someone happens to
-// re-add or re-price that line by hand. Best-effort: called after the real
-// cost change already succeeded, so a hiccup here shouldn't fail that.
+// What a Set line is priced at, per native pack/unit. A product linked to a
+// website listing (everything Stock's Website tab shows) is priced at Stock's
+// own Price column -- products.price -- even when that is 0, never at its
+// purchase-cost Total. A product with no listing is a manual Set extra (Sauce,
+// Fried Garlic, ...): it has no selling price, so its own cost_price is the
+// price. `fromStock` says which -- a Stock-priced line isn't hand-editable in
+// the Set builder, since the price lives in Stock.
+export async function getSetItemPricing(
+  productId: string
+): Promise<{ base: number | null; fromStock: boolean }> {
+  const { data: product } = await supabaseAdmin
+    .from("products")
+    .select("price, cost_price")
+    .eq("id", productId)
+    .maybeSingle();
+  if (!product) return { base: null, fromStock: false };
+
+  const { data: link } = await supabaseAdmin
+    .from("product_site_links")
+    .select("id")
+    .eq("product_id", productId)
+    .limit(1)
+    .maybeSingle();
+  if (link) return { base: product.price, fromStock: true };
+  // No listing: use its Price when it has one, else its own cost.
+  return { base: product.price > 0 ? product.price : product.cost_price, fromStock: false };
+}
+
+// Pushes a product's current Set price (see getSetItemPricing) into every Set
+// line item that uses it, so a change to its Price in Stock shows up in Cost
+// Control's Unit Cost / Line Total immediately -- not just the next time
+// someone happens to re-add or re-price that line by hand. Best-effort:
+// called after the real change already succeeded, so a hiccup here shouldn't
+// fail that.
+//
+// Each line gets the cost for its own Scale: a pcs/box/... line takes the
+// product's cost as-is, but a g/kg line is priced per gram/kilo (the product's
+// cost divided by its pack weight) -- writing the whole-pack cost into it
+// would multiply the line's cost by the pack weight. A g/kg line whose pack
+// weight can't be worked out is left as it was rather than blanked.
 export async function syncSetItemCostsForProduct(productId: string): Promise<void> {
-  const unitCost = await getEffectiveProductCost(productId).catch(() => null);
-  await supabaseAdmin.from("set_items").update({ unit_cost: unitCost }).eq("product_id", productId);
+  const baseCost = await getSetItemPricing(productId)
+    .then((p) => p.base)
+    .catch(() => null);
+
+  const { data: lines } = await supabaseAdmin.from("set_items").select("id, unit").eq("product_id", productId);
+  if (!lines || lines.length === 0) return;
+
+  const isWeightScale = (unit: string) => ["kg", "g"].includes(unit.trim().toLowerCase());
+  const weightGrams =
+    baseCost !== null && lines.some((l) => isWeightScale(l.unit)) ? await resolveProductWeightGrams(productId) : null;
+
+  const idsByCost = new Map<number | null, string[]>();
+  for (const line of lines) {
+    const cost = baseCost === null ? null : computeUnitCostForScale(baseCost, weightGrams, line.unit);
+    if (baseCost !== null && cost === null) continue; // weight scale, weight unknown
+    const ids = idsByCost.get(cost) ?? [];
+    ids.push(line.id);
+    idsByCost.set(cost, ids);
+  }
+  await Promise.all(
+    [...idsByCost].map(([cost, ids]) => supabaseAdmin.from("set_items").update({ unit_cost: cost }).in("id", ids))
+  );
+}
+
+// The product's pack weight the way Cost Control reads it: its own Stock
+// weight, a weight in its unit or name, then the weight written on its
+// website listing ("250g/pkt"). Best-effort -- a storefront hiccup just means
+// the listing's weight isn't used.
+async function resolveProductWeightGrams(productId: string): Promise<number | null> {
+  const { data: product } = await supabaseAdmin
+    .from("products")
+    .select("name, unit, weight_grams")
+    .eq("id", productId)
+    .single();
+  if (!product) return null;
+
+  let siteWeightText: string | null = null;
+  const { data: link } = await supabaseAdmin
+    .from("product_site_links")
+    .select("site, site_product_id, variation_id")
+    .eq("product_id", productId)
+    .limit(1)
+    .maybeSingle();
+  const catalog = link ? catalogForBrandSlug(link.site) : null;
+  if (link && catalog) {
+    try {
+      const site = await getWebsiteProduct(catalog.id, link.site_product_id);
+      siteWeightText = link.variation_id
+        ? (site.variations?.find((v) => v.id === link.variation_id)?.weight ?? null)
+        : (site.weight ?? null);
+    } catch {
+      /* fall through without the listing's weight */
+    }
+  }
+  return productWeightGrams(product.unit, product.name, product.weight_grams, siteWeightText);
+}
+
+// A cost typed somewhere other than Stock (the Margin Report's Unit Cost, a
+// Set line's Unit Cost) also becomes Stock's Total for a product linked to a
+// website listing -- Stock's Total is its own store and wins in
+// getEffectiveProductCost, so without this the typed cost would show up
+// everywhere except Stock.
+export async function writeCostToStockTotal(productId: string, cost: number | null): Promise<void> {
+  const { data: link } = await supabaseAdmin
+    .from("product_site_links")
+    .select("site, site_product_id, variation_id")
+    .eq("product_id", productId)
+    .limit(1)
+    .maybeSingle();
+  if (link) await setWebsitePurchaseCost(link.site, link.site_product_id, link.variation_id, { total_override: cost });
 }
 
 // Upserts only the fields provided -- e.g. `{ original_cost: 5 }` leaves an

@@ -8,10 +8,15 @@ import {
   computeMargin,
   computeSetPricing,
   computeSetTotalCost,
+  computeUnitCostForScale,
   countItemsMissingCost,
   type SetPricing,
 } from "@/lib/costControl";
-import { getEffectiveProductCost, syncSetItemCostsForProduct } from "@/lib/websiteProducts/purchaseCosts";
+import {
+  getSetItemPricing,
+  syncSetItemCostsForProduct,
+  writeCostToStockTotal,
+} from "@/lib/websiteProducts/purchaseCosts";
 import { ensurePosProductForSiteProduct } from "@/app/(app)/sales/websiteActions";
 import { catalogForBrandSlug } from "@/lib/websiteProducts/catalogs";
 import { createWebsiteProduct, deleteWebsiteProduct, updateWebsiteProduct } from "@/lib/websiteProducts/client";
@@ -118,10 +123,14 @@ export type SetItemDetail = {
   // The product's explicit Stock weight (grams per unit), if set -- takes
   // priority over guessing from productUnit/productName.
   productWeightGrams: number | null;
-  // The product's cost for one native pack/unit, fetched fresh each read
-  // (not the possibly stale/rescaled unit_cost below) -- the reference
+  // The product's Set price for one native pack/unit -- its Price in Stock for
+  // a Stock product (see getSetItemPricing) -- fetched fresh each read (not
+  // the possibly stale/rescaled unit_cost below) -- the reference
   // computeUnitCostForScale rescales from when Scale changes.
   baseCostPerUnit: number | null;
+  // True when baseCostPerUnit is Stock's Price: the line's price then follows
+  // Stock and isn't hand-editable here.
+  priceFromStock: boolean;
   amount: number;
   unit: string;
   unitCost: number | null;
@@ -171,7 +180,7 @@ export async function getSetAction(setId: string): Promise<SetDetail | null> {
   const rawItems = ((set.set_items as SetItemDetailRow[] | null) ?? [])
     .slice()
     .sort((a, b) => a.sort_order - b.sort_order);
-  const baseCosts = await Promise.all(rawItems.map((i) => getEffectiveProductCost(i.product_id)));
+  const pricings = await Promise.all(rawItems.map((i) => getSetItemPricing(i.product_id)));
   const items: SetItemDetail[] = rawItems.map((i, idx) => ({
     id: i.id,
     productId: i.product_id,
@@ -179,7 +188,8 @@ export async function getSetAction(setId: string): Promise<SetDetail | null> {
     productImageUrl: i.products?.image_url ?? null,
     productUnit: i.products?.unit ?? "",
     productWeightGrams: i.products?.weight_grams ?? null,
-    baseCostPerUnit: baseCosts[idx],
+    baseCostPerUnit: pricings[idx].base,
+    priceFromStock: pricings[idx].fromStock,
     amount: i.amount,
     unit: i.unit,
     unitCost: i.unit_cost,
@@ -565,13 +575,15 @@ export async function duplicateSetAction(
 }
 
 // Adding a product auto-fills unit/unit_cost from Stock right now -- the
-// core UX point of the Set Builder (no re-typing a product's own cost).
-// unit_cost prefers the product's linked storefront listing Total (Website
-// Products panel) over its plain cost_price -- see getEffectiveProductCost.
+// core UX point of the Set Builder (no re-typing a product's own price).
+// unit_cost is the product's Price in Stock -- see getSetItemPricing.
 export async function addSetItemAction(input: {
   setId: string;
   productId: string;
   amount: number;
+  // Set when the Amount is a weight in grams taken from the product's pack
+  // weight: the line is then stored in g, with its Unit Cost per gram.
+  weightGrams?: number | null;
 }): Promise<void> {
   await requireMarketingAccess();
   if (Number.isNaN(input.amount) || input.amount <= 0) {
@@ -584,7 +596,10 @@ export async function addSetItemAction(input: {
     .eq("id", input.productId)
     .single();
   if (prodErr || !product) throw new Error(prodErr?.message ?? "Product not found");
-  const unitCost = await getEffectiveProductCost(input.productId);
+  const { base: baseCost } = await getSetItemPricing(input.productId);
+  const byWeight = !!input.weightGrams && input.weightGrams > 0;
+  const unitCost =
+    byWeight && baseCost !== null ? computeUnitCostForScale(baseCost, input.weightGrams as number, "g") : baseCost;
 
   const { count } = await supabaseAdmin
     .from("set_items")
@@ -595,7 +610,7 @@ export async function addSetItemAction(input: {
     set_id: input.setId,
     product_id: input.productId,
     amount: input.amount,
-    unit: product.unit,
+    unit: byWeight ? "g" : product.unit,
     unit_cost: unitCost,
     sort_order: count ?? 0,
   });
@@ -688,6 +703,8 @@ export async function syncManualItemProductCostAction(productId: string, unitCos
   const { error } = await supabaseAdmin.from("products").update({ cost_price: unitCost }).eq("id", productId);
   if (error) throw new Error(error.message);
 
+  // Stock's Total must show the same price (and wins over cost_price below).
+  await writeCostToStockTotal(productId, unitCost);
   await syncSetItemCostsForProduct(productId);
 
   revalidatePath("/marketing");

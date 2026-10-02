@@ -186,6 +186,7 @@ export function InvoiceDoc({
                 {/* Khmer name when the product has one, otherwise the English name. */}
                 {item.nameKm?.trim() || item.name}
                 {item.sizeLabel ? ` — ${item.sizeLabel}` : ""}
+                {item.weightLabel && <span className="ml-1.5 text-[12px] text-gray-600">{item.weightLabel}</span>}
               </Td>
               <Td className="text-center tabular-nums">{item.quantity.toFixed(2)}</Td>
               <Td className="text-center">

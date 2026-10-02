@@ -80,6 +80,11 @@ describe("parseWeightGrams", () => {
     expect(parseWeightGrams("0.5 kg")).toBe(500);
   });
 
+  it("only reads what comes before a slash", () => {
+    expect(parseWeightGrams("250g/pkt")).toBe(250);
+    expect(parseWeightGrams("1kg / pack")).toBe(1000);
+  });
+
   it("is null for non-weight or bare unit labels", () => {
     expect(parseWeightGrams("pcs")).toBeNull();
     expect(parseWeightGrams("kg")).toBeNull();
@@ -119,6 +124,24 @@ describe("productWeightGrams", () => {
 
   it("falls back to a weight in the product name", () => {
     expect(productWeightGrams("pcs", "Herring Roe Nishin Red (500g)")).toBe(500);
+  });
+
+  it("reads the website listing's weight before a bare g/kg unit", () => {
+    expect(productWeightGrams("g", "Frozen Minced Tuna Negitoro", null, "250g/pkt")).toBe(250);
+    expect(productWeightGrams("g", "Fresh Pacific Saury Sanma", null, "150g ($95/kg)")).toBe(150);
+    expect(productWeightGrams("g", "Fresh Cod Sperm", null, "1kg ($85/kg)")).toBe(1000);
+    // A range or estimate has no single pack weight -> falls through to the bare unit.
+    expect(productWeightGrams("g", "Fresh Pike Eel Hamo", null, "800g-900g ($115/kg)")).toBe(1);
+    expect(productWeightGrams("g", "Gindara Black Cod Fillet", null, "1.5kg+")).toBe(1);
+    expect(productWeightGrams("g", "Fresh Japanese Sardine Iwashi", null, "100g up ($75/kg)")).toBe(1);
+    expect(productWeightGrams("g", "Boiled Octopus Tako", null, "1-1.5kg/pc")).toBe(1);
+    expect(productWeightGrams("g", "Frozen Minced Tuna Negitoro", null, null)).toBe(1);
+  });
+
+  it("reads the name's weight before a bare g/kg unit", () => {
+    expect(productWeightGrams("g", "Caplin Roe Masago (500g)")).toBe(500);
+    expect(productWeightGrams("kg", "Whole Salmon (2kg)")).toBe(2000);
+    expect(productWeightGrams("g", "Deep Fried Capelin (180g/pkt)")).toBe(180);
   });
 
   it("is null when nothing indicates a weight", () => {
