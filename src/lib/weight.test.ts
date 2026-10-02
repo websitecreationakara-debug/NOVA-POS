@@ -1,5 +1,27 @@
 import { describe, expect, it } from "vitest";
-import { formatGrams, parseGrams, sizedLine } from "./weight";
+import { formatGrams, khmerNameWeight, parseGrams, sizedLine } from "./weight";
+
+describe("khmerNameWeight", () => {
+  const khmer = "ពងត្រីសាលម៉ុនអ៊ីគូរ៉ា";
+
+  it("gives a Khmer name the weight written in the English name", () => {
+    expect(khmerNameWeight({ nameKm: khmer, name: "Salmon Roe Ikura (100g)" })).toBe("(100g)");
+    expect(khmerNameWeight({ nameKm: khmer, name: "Whole Salmon 1kg" })).toBe("(1kg)");
+    expect(khmerNameWeight({ nameKm: khmer, name: "Deep Fried Capelin (180g/pkt)" })).toBe("(180g/pkt)");
+  });
+
+  it("prefers the website listing's weight text", () => {
+    expect(khmerNameWeight({ nameKm: khmer, name: "Herring With Red Fish Roe 1Pc", weightLabel: "1pc (125g)" })).toBe(
+      "1pc (125g)"
+    );
+  });
+
+  it("is null without a Khmer name, a weight, or when the Khmer name already has one", () => {
+    expect(khmerNameWeight({ nameKm: null, name: "Salmon Roe Ikura (100g)" })).toBeNull();
+    expect(khmerNameWeight({ nameKm: khmer, name: "Azuma Boiled Octopus Wasabi" })).toBeNull();
+    expect(khmerNameWeight({ nameKm: `${khmer} 100g`, name: "Salmon Roe Ikura (100g)" })).toBeNull();
+  });
+});
 
 describe("parseGrams", () => {
   it("reads grams and kilograms from a name", () => {

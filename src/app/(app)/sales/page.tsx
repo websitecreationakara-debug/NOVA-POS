@@ -144,6 +144,7 @@ export default async function SalesPage({
           nameKm: i.nameKm,
           unit: i.unit,
           unitKm: i.unitKm,
+          weightLabel: i.weightLabel,
         })),
       }
     : null;

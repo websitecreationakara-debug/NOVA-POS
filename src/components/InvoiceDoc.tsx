@@ -3,6 +3,7 @@ import type { InvoiceData } from "@/lib/supabase/queries";
 import type { InvoiceBrandConfig } from "@/lib/invoiceBrands";
 import { SITE_LABEL } from "@/lib/site-sync";
 import { ORDER_SOURCE_LABELS } from "@/lib/orderSource";
+import { khmerNameWeight } from "@/lib/weight";
 import type { OrderSource, ProductSiteLink } from "@/types/database";
 
 // Khmer + Latin webfont for the printed document so the bilingual labels
@@ -186,7 +187,11 @@ export function InvoiceDoc({
                 {/* Khmer name when the product has one, otherwise the English name. */}
                 {item.nameKm?.trim() || item.name}
                 {item.sizeLabel ? ` — ${item.sizeLabel}` : ""}
-                {item.weightLabel && <span className="ml-1.5 text-[12px] text-gray-600">{item.weightLabel}</span>}
+                {(item.nameKm?.trim() ? khmerNameWeight(item) : item.weightLabel) && (
+                  <span className="ml-1.5 text-[12px] text-gray-600">
+                    {item.nameKm?.trim() ? khmerNameWeight(item) : item.weightLabel}
+                  </span>
+                )}
               </Td>
               <Td className="text-center tabular-nums">{item.quantity.toFixed(2)}</Td>
               <Td className="text-center">
