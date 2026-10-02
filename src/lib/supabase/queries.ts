@@ -1315,22 +1315,18 @@ export async function getMarginReport(
     };
   });
 
-  // Unit Cost follows Stock: the product's current effective cost (Stock's
-  // Total when linked to a website listing, else its own cost_price) wins over
-  // the cost recorded at sale time, and the row's COGS/profit/margin are
-  // re-derived from it so the row stays internally consistent. A product with
-  // no Stock cost keeps its recorded sale-time cost (or none).
+  // Unit Cost is the cost recorded when each sale was made -- the product's
+  // Stock Total at that moment (see effective_product_cost, used by charge_order
+  // and the website order import). Changing the Total in Stock later never
+  // rewrites a past sale; only sales made after the change pick up the new
+  // Total. Only a row with no recorded cost at all (sold before costs were
+  // tracked) falls back to the product's current Stock cost, as a suggestion.
   await Promise.all(
-    rows.map(async (r) => {
-      r.suggestedCost = await getEffectiveProductCost(r.productId).catch(() => null);
-      if (r.suggestedCost === null) return;
-      r.unitCost = round2(r.suggestedCost);
-      r.totalCogs = round2(r.suggestedCost * r.unitsSold);
-      const margin = computeGrossMargin(r.revenue, r.totalCogs);
-      r.grossProfit = margin.grossProfit;
-      r.grossMarginPct = margin.grossMarginPct;
-      r.hasUnknownCost = false;
-    })
+    rows
+      .filter((r) => r.unitCost === null)
+      .map(async (r) => {
+        r.suggestedCost = await getEffectiveProductCost(r.productId).catch(() => null);
+      })
   );
 
   return rows.sort((a, b) => b.revenue - a.revenue);

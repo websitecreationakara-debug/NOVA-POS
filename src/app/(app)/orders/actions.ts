@@ -5,6 +5,7 @@ import { supabaseAdmin } from "@/lib/supabase/server";
 import { pushOrderStatusToSite, pushStockToSites } from "@/lib/site-sync";
 import { getCategoriesFingerprintAction } from "@/app/(app)/stock/actions";
 import { computeLineCogs, computeRecipeUnitCost } from "@/lib/cogs";
+import { getEffectiveProductCost } from "@/lib/websiteProducts/purchaseCosts";
 import type { FulfillmentStatus, OrderSource, PaymentMethod, ProductSiteLink } from "@/types/database";
 
 export type DueDelivery = {
@@ -167,7 +168,7 @@ export async function updateOrderAction(
 
   const [{ data: order, error: orderErr }, { data: existing, error: itemsErr }] = await Promise.all([
     supabaseAdmin.from("orders").select("id, customer_id").eq("id", orderId).maybeSingle(),
-    supabaseAdmin.from("order_items").select("id, product_id, quantity").eq("order_id", orderId),
+    supabaseAdmin.from("order_items").select("id, product_id, quantity, unit_cost, cost_source").eq("order_id", orderId),
   ]);
   if (orderErr) throw orderErr;
   if (itemsErr) throw itemsErr;
@@ -185,9 +186,12 @@ export async function updateOrderAction(
   if (existingIngErr) throw existingIngErr;
 
   // Price each new line the same way charge_order() does: from the
-  // product's own cost_price ("direct"), or, if it has a recipe, from
-  // summing the recipe's ingredient costs ("recipe") -- and work out what
-  // that recipe now needs to consume.
+  // product's Stock Total at this moment ("direct" -- see
+  // getEffectiveProductCost), or, if it has a recipe, from summing the
+  // recipe's ingredient costs ("recipe") -- and work out what that recipe now
+  // needs to consume. A product that was ALREADY on this order keeps the cost
+  // recorded when it was sold: editing an order (a quantity, the customer, a
+  // price) must not re-cost lines at today's Total.
   const productIds = [...new Set(clean.map((i) => i.productId))];
   const { data: recipeRows, error: recipeErr } = productIds.length
     ? await supabaseAdmin
@@ -214,11 +218,22 @@ export async function updateOrderAction(
   }
 
   const directCostProductIds = productIds.filter((id) => !recipesByProduct.has(id));
-  const { data: directCostRows, error: directCostErr } = directCostProductIds.length
-    ? await supabaseAdmin.from("products").select("id, cost_price").in("id", directCostProductIds)
-    : { data: [], error: null };
-  if (directCostErr) throw directCostErr;
-  const directCostByProduct = new Map((directCostRows ?? []).map((p) => [p.id, p.cost_price]));
+  // The cost already recorded on this order for a product, if any.
+  const recordedCostByProduct = new Map<string, number>();
+  for (const row of existing ?? []) {
+    if (row.cost_source === "direct" && row.unit_cost !== null && !recordedCostByProduct.has(row.product_id)) {
+      recordedCostByProduct.set(row.product_id, Number(row.unit_cost));
+    }
+  }
+  const directCostByProduct = new Map<string, number | null>();
+  await Promise.all(
+    directCostProductIds.map(async (id) => {
+      directCostByProduct.set(
+        id,
+        recordedCostByProduct.get(id) ?? (await getEffectiveProductCost(id).catch(() => null))
+      );
+    })
+  );
 
   const pricedItems = clean.map((it) => {
     const recipe = recipesByProduct.get(it.productId);
