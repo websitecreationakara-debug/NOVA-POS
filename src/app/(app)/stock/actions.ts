@@ -216,13 +216,9 @@ export async function setProductPriceAction(input: {
 
   if (error) throw error;
 
-  // Set lines are priced at Stock's Price (see getSetItemPricing).
-  await syncSetItemCostsForProduct(productId);
-
   revalidatePath("/stock");
   revalidatePath("/sales");
   revalidatePath("/accountance");
-  revalidatePath("/marketing");
 }
 
 // null clears the cost price back to "unknown" -- COGS/margin reporting
