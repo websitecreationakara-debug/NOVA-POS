@@ -6,7 +6,7 @@
 // that downloads immediately. html2canvas-pro (not the unmaintained
 // html2canvas) is required: Tailwind v4's default palette uses oklch()
 // colors, which plain html2canvas can't parse and throws on.
-import { prepareInvoiceClone } from "./invoiceCapture";
+import { captureInvoiceSheet } from "./invoiceCapture";
 
 export async function exportInvoicePdf(filename: string): Promise<void> {
   const [{ default: html2canvas }, { jsPDF }] = await Promise.all([
@@ -63,12 +63,8 @@ export async function exportInvoicePdf(filename: string): Promise<void> {
 
     let canvas: HTMLCanvasElement;
     try {
-      canvas = await html2canvas(sheet, {
-        scale: 2,
-        backgroundColor: "#ffffff",
-        useCORS: true,
-        onclone: prepareInvoiceClone(sheet),
-      });
+      // Checked and retried: never puts a page drawn without its styles in the PDF.
+      canvas = await captureInvoiceSheet(html2canvas, sheet, sheet.dataset.invoice || `#${i + 1}`);
     } finally {
       if (zoomEl) zoomEl.style.zoom = prevZoom;
       sheet.style.border = prevBorder;
