@@ -37,6 +37,23 @@ export const DEFAULT_BRAND_SLUG = "bosba-premium-foods";
 // see it, combining all brands' rows instead of scoping to one.
 export const ALL_BUSINESSES_ID = "all";
 
+// The database returns at most 1000 rows per request, so a plain select over a
+// big table is silently cut short (once there were >1000 orders, whole months
+// vanished from the Dashboard). Reads every row, 1000 at a time -- the query
+// needs a stable .order() so the pages don't overlap.
+type RowPage<T> = {
+  range(from: number, to: number): PromiseLike<{ data: T[] | null; error: { message: string } | null }>;
+};
+async function selectAll<T>(query: RowPage<T>): Promise<{ data: T[]; error: { message: string } | null }> {
+  const out: T[] = [];
+  for (let from = 0; ; from += 1000) {
+    const { data, error } = await query.range(from, from + 999);
+    if (error) return { data: out, error };
+    out.push(...(data ?? []));
+    if (!data || data.length < 1000) return { data: out, error: null };
+  }
+}
+
 export async function getBrands(): Promise<Brand[]> {
   const { data, error } = await supabaseAdmin.from("brands").select("*").order("name");
   if (error) throw error;
@@ -155,12 +172,13 @@ export async function getDailySales(
     .in("fulfillment_status", COUNTED_FULFILLMENT_STATUSES)
     .gte("paid_at", ppDayStart(fromDate))
     .lte("paid_at", ppDayEnd(toDate))
-    .order("paid_at", { ascending: false });
+    .order("paid_at", { ascending: false })
+    .order("id");
   if (brandId !== ALL_BUSINESSES_ID) query = query.eq("brand_id", brandId);
-  const { data, error } = await query;
+  const { data, error } = await selectAll(query);
 
   if (error) throw error;
-  const orders = data ?? [];
+  const orders = data;
   // A paid order with no payment_method recorded (create_online_order()
   // allows it, and it can be cleared via Edit) still got paid somehow --
   // counted as cash, the POS's own default, rather than left out of every
@@ -363,12 +381,12 @@ export async function getDashboardStats(
     { data: orderItemsData, error: itemsError },
     { data: adjustmentsData, error: adjError },
   ] = await Promise.all([
-    ordersQuery,
+    selectAll(ordersQuery.order("id")),
     productsQuery,
     getLowStockCount(),
     recentOrdersQuery,
-    orderItemsQuery,
-    adjustmentsQuery,
+    selectAll(orderItemsQuery.order("id")),
+    selectAll(adjustmentsQuery.order("id")),
   ]);
 
   if (ordersError) throw ordersError;
@@ -953,8 +971,8 @@ export async function getCogsSummary(
   if (brandId !== ALL_BUSINESSES_ID) adjustmentsQuery = adjustmentsQuery.eq("products.brand_id", brandId);
 
   const [{ data: items, error: itemsError }, { data: adjustments, error: adjError }] = await Promise.all([
-    itemsQuery,
-    adjustmentsQuery,
+    selectAll(itemsQuery.order("id")),
+    selectAll(adjustmentsQuery.order("id")),
   ]);
   if (itemsError) throw itemsError;
   if (adjError) throw adjError;
@@ -1274,17 +1292,21 @@ export async function getMarginReport(
     .lte("orders.paid_at", ppDayEnd(toDate));
   if (brandId !== ALL_BUSINESSES_ID) query = query.eq("orders.brand_id", brandId);
 
-  const { data: items, error } = await query;
+  const { data: items, error } = await selectAll(query.order("id"));
   if (error) throw error;
-  if (!items || items.length === 0) return [];
+  if (items.length === 0) return [];
 
   const productIds = [...new Set(items.map((i) => i.product_id))];
-  const { data: products, error: prodError } = await supabaseAdmin
-    .from("products")
-    .select("id, name, price, categories(name)")
-    .in("id", productIds);
-  if (prodError) throw prodError;
-  const productById = new Map((products ?? []).map((p) => [p.id, p]));
+  // In chunks: hundreds of ids in one .in() make the request URL too long.
+  const productById = new Map<string, { id: string; name: string; price: number; categories: { name: string } | null }>();
+  for (let i = 0; i < productIds.length; i += 150) {
+    const { data: products, error: prodError } = await supabaseAdmin
+      .from("products")
+      .select("id, name, price, categories(name)")
+      .in("id", productIds.slice(i, i + 150));
+    if (prodError) throw prodError;
+    for (const p of (products ?? []) as unknown as { id: string; name: string; price: number; categories: { name: string } | null }[]) productById.set(p.id, p);
+  }
 
   const byProduct = new Map<string, { unitsSold: number; revenue: number; cogsValues: (number | null)[] }>();
   for (const item of items) {

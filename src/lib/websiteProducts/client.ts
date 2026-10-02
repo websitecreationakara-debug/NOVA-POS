@@ -333,7 +333,13 @@ export async function createWebsiteCategory(
 export async function updateWebsiteAddon(
   catalogId: WebsiteCatalogId,
   id: string,
-  input: { price?: number; stock?: number | null; status?: WebsiteAddon["status"] }
+  input: {
+    price?: number;
+    stock?: number | null;
+    status?: WebsiteAddon["status"];
+    title?: string;
+    image_url?: string | null;
+  }
 ): Promise<WebsiteAddon> {
   const baseUrl = addonsBaseUrl(catalogId);
   const payload = await request<unknown>(catalogId, `/${id}`, {

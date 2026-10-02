@@ -2,11 +2,12 @@
 
 import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { ChevronLeft, ChevronRight, Trash2, TriangleAlert } from "lucide-react";
+import { ChevronLeft, ChevronRight, Pencil, Trash2, TriangleAlert } from "lucide-react";
 import type { WebsiteAddon, WebsiteAddonWrite, WebsiteCatalogId } from "@/lib/websiteProducts/types";
 import {
   createWebsiteAddonAction,
   deleteWebsiteAddonAction,
+  setAddonDetailsAction,
   setWebsitePurchaseCostAction,
   updateWebsiteAddonAction,
   uploadWebsiteImageAction,
@@ -18,6 +19,7 @@ import {
   type PurchaseCostFields,
 } from "@/lib/websiteProducts/purchaseCosts";
 import DeleteWebsiteAddonDialog from "@/components/DeleteWebsiteAddonDialog";
+import { ENGLISH_SCALES, KHMER_SCALES } from "@/lib/khmerScales";
 
 const fieldInputClass =
   "rounded border border-black/[.15] bg-transparent px-2.5 py-1.5 text-sm outline-none focus:border-black/40 dark:border-white/[.2] dark:focus:border-white/50";
@@ -64,6 +66,7 @@ export default function WebsiteAddonsTable({
   addons,
   purchaseCosts,
   fallbackCosts,
+  linkedDetails,
   onPreviewImage,
 }: {
   catalogId: WebsiteCatalogId;
@@ -77,6 +80,9 @@ export default function WebsiteAddonsTable({
   // addon id -> its linked POS product's cost_price, shown as the Total's
   // placeholder when no Total is entered (same as the product table).
   fallbackCosts?: Record<string, number>;
+  // addon id -> the Khmer name / scale saved on its linked POS product, for the
+  // Edit box (an addon nobody has linked yet has none).
+  linkedDetails?: Record<string, { nameKm: string; unit: string; unitKm: string }>;
 }) {
   const router = useRouter();
   const [, startTransition] = useTransition();
@@ -97,6 +103,14 @@ export default function WebsiteAddonsTable({
   // Draft text for the Original Cost / Total Cost 10% / Extra Cost / Total
   // boxes, keyed by addon id -- each saves on blur, same as the product table.
   const [costDrafts, setCostDrafts] = useState<Record<string, Partial<Record<CostField, string>>>>({});
+  // The pencil's Edit box (one addon at a time): name, Khmer name, scale, Khmer
+  // scale and picture. editImage is the newly uploaded picture's URL, null while
+  // unchanged, "" once Remove image is picked.
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editDraft, setEditDraft] = useState({ title: "", nameKm: "", unit: "pcs", unitKm: "" });
+  const [editImage, setEditImage] = useState<string | null>(null);
+  const [editImageUploading, setEditImageUploading] = useState(false);
+  const [editImageError, setEditImageError] = useState<string | null>(null);
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState<WebsiteAddonWrite>(emptyForm);
   const [formError, setFormError] = useState<string | null>(null);
@@ -297,6 +311,78 @@ export default function WebsiteAddonsTable({
         setError(e instanceof Error ? e.message : "Failed to save cost");
       } finally {
         clearField();
+      }
+    });
+  }
+
+  function openEdit(a: WebsiteAddon) {
+    const linked = linkedDetails?.[a.id];
+    setEditDraft({
+      title: a.title,
+      nameKm: linked?.nameKm ?? "",
+      unit: linked?.unit ?? "pcs",
+      unitKm: linked?.unitKm ?? "",
+    });
+    setEditImage(null);
+    setEditImageError(null);
+    setEditingId(a.id);
+  }
+
+  function handleEditImagePick(file: File | null) {
+    if (!file) return;
+    if (!file.type.startsWith("image/")) {
+      setEditImageError("File must be an image");
+      return;
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      setEditImageError("Image must be under 5MB");
+      return;
+    }
+    setEditImageError(null);
+    setEditImageUploading(true);
+    const fd = new FormData();
+    fd.set("file", file);
+    startTransition(async () => {
+      try {
+        const { url } = await uploadWebsiteImageAction(fd);
+        setEditImage(url);
+      } catch (e) {
+        setEditImageError(e instanceof Error ? e.message : "Upload failed");
+      } finally {
+        setEditImageUploading(false);
+      }
+    });
+  }
+
+  function saveEdit(a: WebsiteAddon) {
+    if (!editDraft.title.trim()) {
+      setError("Name is required");
+      return;
+    }
+    setError(null);
+    setPendingId(a.id);
+    startTransition(async () => {
+      try {
+        await setAddonDetailsAction({
+          catalogId,
+          addonId: a.id,
+          currentTitle: a.title,
+          title: editDraft.title,
+          imageUrl: editImage || null,
+          removeImage: editImage === "",
+          currentImageUrl: a.image_url,
+          price: a.price,
+          stock: a.stock,
+          nameKm: editDraft.nameKm,
+          unit: editDraft.unit,
+          unitKm: editDraft.unitKm,
+        });
+        setEditingId(null);
+        router.refresh();
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Failed to save");
+      } finally {
+        setPendingId(null);
       }
     });
   }
@@ -549,7 +635,7 @@ export default function WebsiteAddonsTable({
               />
             </th>
             <th className="w-14 px-3 py-2 font-medium">Image</th>
-            <th className="px-3 py-2 font-medium">Addon</th>
+            <th className="min-w-[14rem] px-3 py-2 font-medium">Addon</th>
             <th className="w-20 bg-black/[.015] px-2 py-2 text-right font-medium dark:bg-white/[.02]">
               Original Cost
             </th>
@@ -642,7 +728,150 @@ export default function WebsiteAddonsTable({
                 </td>
                 <td className="px-3 py-2">
                   <div className="font-medium">{a.title}</div>
+                  {(linkedDetails?.[a.id]?.nameKm || linkedDetails?.[a.id]?.unitKm) && (
+                    <div className="text-xs text-zinc-500">
+                      {linkedDetails?.[a.id]?.nameKm && <span lang="km">{linkedDetails[a.id].nameKm} </span>}
+                      <span>
+                        {linkedDetails?.[a.id]?.unit}
+                        {linkedDetails?.[a.id]?.unitKm && (
+                          <>
+                            {" · "}
+                            <span lang="km">{linkedDetails[a.id].unitKm}</span>
+                          </>
+                        )}
+                      </span>
+                    </div>
+                  )}
                   {a.description && <div className="text-xs text-zinc-400">{a.description}</div>}
+                  {editingId === a.id && (
+                    <div className="mt-2 space-y-2 rounded-lg border border-black/[.1] bg-black/[.02] p-3 dark:border-white/[.15] dark:bg-white/[.03]">
+                      <label className="block text-xs text-zinc-500">
+                        Name now
+                        <input
+                          type="text"
+                          value={editDraft.title}
+                          onChange={(e) => setEditDraft((d) => ({ ...d, title: e.target.value }))}
+                          className="mt-0.5 w-full rounded border border-black/[.15] bg-transparent px-2 py-1 text-sm text-foreground dark:border-white/[.2]"
+                        />
+                      </label>
+                      <label className="block text-xs text-zinc-500">
+                        Name in Khmer
+                        <input
+                          type="text"
+                          lang="km"
+                          placeholder="ឈ្មោះជាភាសាខ្មែរ"
+                          value={editDraft.nameKm}
+                          onChange={(e) => setEditDraft((d) => ({ ...d, nameKm: e.target.value }))}
+                          className="mt-0.5 w-full rounded border border-black/[.15] bg-transparent px-2 py-1 text-sm text-foreground dark:border-white/[.2]"
+                        />
+                      </label>
+                      <label className="block text-xs text-zinc-500">
+                        Scale
+                        <select
+                          value={editDraft.unit}
+                          onChange={(e) => setEditDraft((d) => ({ ...d, unit: e.target.value }))}
+                          className="mt-0.5 w-full rounded border border-black/[.15] bg-card px-2 py-1 text-sm text-foreground dark:border-white/[.2]"
+                        >
+                          {[...new Set([...ENGLISH_SCALES, editDraft.unit])].map((u) => (
+                            <option key={u} value={u}>
+                              {u}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <label className="block text-xs text-zinc-500">
+                        Scale in Khmer
+                        <select
+                          lang="km"
+                          value={editDraft.unitKm}
+                          onChange={(e) => setEditDraft((d) => ({ ...d, unitKm: e.target.value }))}
+                          className="mt-0.5 w-full rounded border border-black/[.15] bg-card px-2 py-1 text-sm text-foreground dark:border-white/[.2]"
+                        >
+                          <option value="">—</option>
+                          {[...new Set([...KHMER_SCALES, editDraft.unitKm].filter(Boolean))].map((u) => (
+                            <option key={u} value={u}>
+                              {u}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <div className="block text-xs text-zinc-500">
+                        Image
+                        <div className="mt-0.5 flex items-center gap-3">
+                          <div className="h-14 w-14 shrink-0 overflow-hidden rounded border border-black/[.1] bg-zinc-100 dark:border-white/[.15] dark:bg-zinc-800">
+                            {(editImage === "" ? null : (editImage ?? a.image_url)) ? (
+                              // eslint-disable-next-line @next/next/no-img-element
+                              <img
+                                src={(editImage === "" ? null : (editImage ?? a.image_url)) as string}
+                                alt=""
+                                className="h-full w-full object-cover"
+                              />
+                            ) : (
+                              <div className="flex h-full w-full items-center justify-center text-[9px] text-zinc-400">
+                                No image
+                              </div>
+                            )}
+                          </div>
+                          <label className="cursor-pointer rounded border border-black/[.15] px-3 py-1.5 text-sm text-foreground dark:border-white/[.2]">
+                            {editImageUploading
+                              ? "Uploading…"
+                              : editImage || (editImage === null && a.image_url)
+                                ? "Replace image"
+                                : "Upload image"}
+                            <input
+                              type="file"
+                              accept="image/*"
+                              className="hidden"
+                              disabled={editImageUploading}
+                              onChange={(e) => {
+                                const file = e.target.files?.[0] ?? null;
+                                e.target.value = "";
+                                handleEditImagePick(file);
+                              }}
+                            />
+                          </label>
+                        </div>
+                        {/* Always shown; greyed out while there is no picture to remove. */}
+                        <button
+                          type="button"
+                          onClick={() => setEditImage("")}
+                          disabled={editImageUploading || (editImage === "" ? true : !(editImage ?? a.image_url))}
+                          className="mt-1.5 block text-xs font-medium text-red-600 hover:underline disabled:cursor-not-allowed disabled:no-underline disabled:opacity-40 dark:text-red-400"
+                        >
+                          Remove image
+                        </button>
+                        {editImage && (
+                          <span className="mt-1 block text-[11px] text-zinc-500">
+                            New picture -- it replaces the old one when you press Save.
+                          </span>
+                        )}
+                        {editImage === "" && (
+                          <span className="mt-1 block text-[11px] text-zinc-500">
+                            The picture will be removed when you press Save.
+                          </span>
+                        )}
+                        {editImageError && <span className="mt-1 block text-red-500">{editImageError}</span>}
+                      </div>
+                      <div className="flex justify-end gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setEditingId(null)}
+                          disabled={busy}
+                          className="rounded-full border border-black/[.15] px-3 py-1 text-xs font-medium hover:bg-black/[.04] disabled:opacity-50 dark:border-white/[.2] dark:hover:bg-white/[.06]"
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => saveEdit(a)}
+                          disabled={busy || editImageUploading}
+                          className="rounded-full bg-brand px-3 py-1 text-xs font-semibold text-white disabled:opacity-50"
+                        >
+                          {busy ? "Saving…" : "Save"}
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </td>
                 <td className={costCellClass}>
                   {costBox("original", draft?.original ?? costText(savedCosts.originalCost), savedCosts.originalCost)}
@@ -737,7 +966,17 @@ export default function WebsiteAddonsTable({
                     {a.status === "published" ? "Published" : "Draft"}
                   </button>
                 </td>
-                <td className="px-3 py-2 text-right">
+                <td className="px-3 py-2 text-right whitespace-nowrap">
+                  <button
+                    type="button"
+                    onClick={() => (editingId === a.id ? setEditingId(null) : openEdit(a))}
+                    title="Edit name, Khmer name, scale and image"
+                    aria-label="Edit"
+                    aria-expanded={editingId === a.id}
+                    className="mr-1 inline-flex size-8 items-center justify-center rounded-md text-zinc-400 transition-colors hover:bg-black/[.05] hover:text-foreground dark:hover:bg-white/[.08]"
+                  >
+                    <Pencil className="size-4" />
+                  </button>
                   <button
                     type="button"
                     title="Delete"

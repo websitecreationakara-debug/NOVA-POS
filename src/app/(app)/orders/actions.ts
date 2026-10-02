@@ -6,6 +6,10 @@ import { pushOrderStatusToSite, pushStockToSites } from "@/lib/site-sync";
 import { getCategoriesFingerprintAction } from "@/app/(app)/stock/actions";
 import { computeLineCogs, computeRecipeUnitCost } from "@/lib/cogs";
 import { getEffectiveProductCost } from "@/lib/websiteProducts/purchaseCosts";
+import { getSessionUser } from "@/lib/supabase/auth-server";
+import { buildOrdersCsv, buildOrdersSheet, type BackupItem, type BackupOrder } from "@/lib/ordersCsv";
+import { buildXlsx } from "@/lib/xlsxWriter";
+import { ppToday } from "@/lib/phnomPenhTime";
 import type { FulfillmentStatus, OrderSource, PaymentMethod, ProductSiteLink } from "@/types/database";
 
 export type DueDelivery = {
@@ -27,6 +31,73 @@ export type DueDelivery = {
 // having to reload the page. Capped at the most recent 100 -- an older order
 // changing status while nobody's watching it live isn't worth the extra
 // payload on every poll.
+// A full backup of the orders: every order (all statuses) with its items, one row
+// per item -- see lib/ordersCsv.ts. Two formats:
+//   "xlsx" -- an Excel workbook laid out to be read (plain-English columns first,
+//             phones kept as text, dates as real dates, Khmer intact);
+//   "csv"  -- the flat technical file with every column on every row, for other
+//             tools or restoring.
+// The file holds customer names, phones and addresses, so it is limited to
+// Administration and Cooperate Admin. Read in pages of 1000 (the database caps a
+// single query), so a long history is complete rather than silently cut off.
+// Returned as base64 bytes so nothing -- notably the CSV's UTF-8 marker -- is
+// altered on the way to the browser.
+const BACKUP_ROLES = new Set(["admin", "accountance"]);
+
+export async function exportOrdersBackupAction(
+  format: "xlsx" | "csv"
+): Promise<{ filename: string; mime: string; base64: string; orderCount: number }> {
+  const user = await getSessionUser();
+  if (!user || !BACKUP_ROLES.has(user.role)) {
+    throw new Error("Only Administration and Cooperate Admin can back up orders");
+  }
+
+  const PAGE = 1000;
+  const orders: BackupOrder[] = [];
+  for (let from = 0; ; from += PAGE) {
+    const { data, error } = await supabaseAdmin
+      .from("orders")
+      .select("*, brands(name), customers(address)")
+      .order("created_at", { ascending: false })
+      .order("id")
+      .range(from, from + PAGE - 1);
+    if (error) throw new Error(error.message);
+    orders.push(...((data ?? []) as unknown as BackupOrder[]));
+    if (!data || data.length < PAGE) break;
+  }
+
+  const items: BackupItem[] = [];
+  for (let from = 0; ; from += PAGE) {
+    // "*" so a column a project hasn't migrated yet (e.g. size_label) just reads blank.
+    const { data, error } = await supabaseAdmin
+      .from("order_items")
+      .select("*, products(name)")
+      .order("order_id")
+      .order("id")
+      .range(from, from + PAGE - 1);
+    if (error) throw new Error(error.message);
+    items.push(...((data ?? []) as unknown as BackupItem[]));
+    if (!data || data.length < PAGE) break;
+  }
+
+  const stem = `nova-pos-orders-backup-${ppToday()}`;
+  if (format === "xlsx") {
+    const { columns, rows } = buildOrdersSheet(orders, items);
+    return {
+      filename: `${stem}.xlsx`,
+      mime: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      base64: buildXlsx("Orders", columns, rows).toString("base64"),
+      orderCount: orders.length,
+    };
+  }
+  return {
+    filename: `${stem}.csv`,
+    mime: "text/csv;charset=utf-8",
+    base64: Buffer.from(buildOrdersCsv(orders, items), "utf8").toString("base64"),
+    orderCount: orders.length,
+  };
+}
+
 export async function getRecentOrderActivityAction(): Promise<
   { id: string; fulfillmentStatus: FulfillmentStatus }[]
 > {

@@ -3,6 +3,9 @@ import { getBrands, getOrdersList, getOrdersSummary } from "@/lib/supabase/queri
 import { FULFILLMENT_STATUSES } from "@/lib/orderStatus";
 import OrderStatusFilter from "@/components/OrderStatusFilter";
 import OrdersTable from "@/components/OrdersTable";
+import OrdersBackupButton from "@/components/OrdersBackupButton";
+import { getSessionUser } from "@/lib/supabase/auth-server";
+import { ppToday } from "@/lib/phnomPenhTime";
 import type { FulfillmentStatus } from "@/types/database";
 
 export const dynamic = "force-dynamic";
@@ -18,10 +21,32 @@ export default async function OrdersPage({
     brand?: string;
     from?: string;
     to?: string;
+    range?: string;
   }>;
 }) {
-  const { status: statusParam, page: pageParam, limit: limitParam, q = "", brand = "", from = "", to = "" } =
-    await searchParams;
+  const {
+    status: statusParam,
+    page: pageParam,
+    limit: limitParam,
+    q = "",
+    brand = "",
+    from: fromParam = "",
+    to: toParam = "",
+    range = "",
+  } = await searchParams;
+  // With no date range and no search, show only the current Cambodia month;
+  // other months appear by picking a month/dates, or "All time" (?range=all).
+  // A search still looks across all months.
+  const allTime = range === "all";
+  const defaultRange = !fromParam && !toParam && !q.trim() && !allTime;
+  let from = fromParam;
+  let to = toParam;
+  if (defaultRange) {
+    const today = ppToday();
+    const [y, m] = today.split("-").map(Number);
+    from = `${today.slice(0, 8)}01`;
+    to = `${today.slice(0, 8)}${String(new Date(Date.UTC(y, m, 0)).getUTCDate()).padStart(2, "0")}`;
+  }
   const status = FULFILLMENT_STATUSES.includes(statusParam as FulfillmentStatus)
     ? (statusParam as FulfillmentStatus)
     : undefined;
@@ -30,11 +55,14 @@ export default async function OrdersPage({
 
   // One page of orders (filters applied in the database) -- the summary cards
   // and total badge come from separate count queries over every paid order.
-  const [{ rows: orders, total }, counts, brands] = await Promise.all([
+  const [{ rows: orders, total }, counts, brands, user] = await Promise.all([
     getOrdersList({ status, brandId: brand, q, from, to, page, limit }),
     getOrdersSummary(),
     getBrands(),
+    getSessionUser(),
   ]);
+  // The CSV backup holds customer details -- Administration and Cooperate Admin only.
+  const canBackup = user?.role === "admin" || user?.role === "accountance";
 
   const summary: { label: string; value: number; href: string }[] = [
     { label: "New today", value: counts.newToday, href: "/orders?status=new_order" },
@@ -52,6 +80,11 @@ export default async function OrdersPage({
         <span className="text-sm text-muted-foreground">
           Orders staff prepare for pickup/delivery
         </span>
+        {canBackup && (
+          <div className="ml-auto">
+            <OrdersBackupButton />
+          </div>
+        )}
       </header>
 
       <div className="grid grid-cols-3 gap-2 px-3 pt-4 sm:gap-3 sm:px-6">
@@ -77,6 +110,9 @@ export default async function OrdersPage({
         page={page}
         limit={limit}
         filters={{ q, brandId: brand, from, to }}
+        defaultRange={defaultRange}
+        allTime={allTime}
+        currentMonth={ppToday().slice(0, 7)}
         activeStatus={status ?? null}
         brands={brands.map((b) => ({ id: b.id, name: b.name }))}
       />
