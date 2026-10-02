@@ -20,7 +20,8 @@ function formatMoney(n: number) {
 
 // "Wed, Sep 11, 2:00 PM" from an ISO timestamp.
 function formatDeliveryAt(iso: string) {
-  return new Date(iso).toLocaleString(undefined, {
+  return new Date(iso).toLocaleString("en-US", {
+    timeZone: "Asia/Phnom_Penh",
     weekday: "short",
     month: "short",
     day: "numeric",
@@ -286,7 +287,7 @@ export default function OrdersTable({
                     />
                   </div>
                   <div className="text-right text-xs text-muted-foreground">
-                    <div>{o.paidAt ? new Date(o.paidAt).toLocaleDateString() : "—"}</div>
+                    <div>{o.paidAt ? new Date(o.paidAt).toLocaleDateString("en-US", { timeZone: "Asia/Phnom_Penh" }) : "—"}</div>
                     {o.deliveryAt && (
                       <div className="mt-0.5 flex items-center justify-end gap-1">
                         <Truck className="size-3" />
@@ -363,7 +364,7 @@ export default function OrdersTable({
                     />
                   </td>
                   <td className="py-2 pr-4 text-muted-foreground">
-                    <div>{o.paidAt ? new Date(o.paidAt).toLocaleDateString() : "—"}</div>
+                    <div>{o.paidAt ? new Date(o.paidAt).toLocaleDateString("en-US", { timeZone: "Asia/Phnom_Penh" }) : "—"}</div>
                     {o.deliveryAt &&
                       (() => {
                         const due = new Date(o.deliveryAt).getTime() <= Date.now();

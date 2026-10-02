@@ -38,6 +38,7 @@ import { PAYMENT_METHOD_LABELS, type PaymentMethod } from "@/lib/paymentMethods"
 import { computeGrossMargin } from "@/lib/cogs";
 import { addExpenseAction, saveReconciliationAction, updateExpenseAction } from "./actions";
 import { setProductCostAction, setProductPriceAction } from "../stock/actions";
+import { ppDay, ppHour, ppToday } from "@/lib/phnomPenhTime";
 import { exportAccountancePdf } from "@/lib/exportAccountancePdf";
 import DeleteExpenseDialog from "@/components/DeleteExpenseDialog";
 import BulkAddCostPriceModal from "@/components/BulkAddCostPriceModal";
@@ -91,7 +92,7 @@ function TrendBadge({ tone, children }: { tone: "positive" | "negative"; childre
 }
 
 function todayIso() {
-  return new Date().toISOString().slice(0, 10);
+  return ppToday();
 }
 
 // Ring chart built from plain stroked-circle segments (no charting lib) --
@@ -162,7 +163,7 @@ function buildHourlySeries(orders: Order[]): TimeSeriesPoint[] {
   }));
   for (const o of orders) {
     if (!o.paid_at) continue;
-    const hour = new Date(o.paid_at).getHours();
+    const hour = ppHour(o.paid_at);
     buckets[hour].revenue += o.total;
     buckets[hour].orders += 1;
   }
@@ -175,7 +176,7 @@ function buildDailySeries(orders: Order[], expenses: Expense[], fromDate: string
   const orderCountByDate = new Map<string, number>();
   for (const o of orders) {
     if (!o.paid_at) continue;
-    const d = o.paid_at.slice(0, 10);
+    const d = ppDay(o.paid_at);
     revenueByDate.set(d, (revenueByDate.get(d) ?? 0) + o.total);
     orderCountByDate.set(d, (orderCountByDate.get(d) ?? 0) + 1);
   }

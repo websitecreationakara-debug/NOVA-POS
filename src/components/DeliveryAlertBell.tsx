@@ -33,7 +33,8 @@ function relTime(iso: string): string {
 }
 
 function whenLabel(iso: string): string {
-  return new Date(iso).toLocaleString(undefined, {
+  return new Date(iso).toLocaleString("en-US", {
+    timeZone: "Asia/Phnom_Penh",
     weekday: "short",
     hour: "numeric",
     minute: "2-digit",

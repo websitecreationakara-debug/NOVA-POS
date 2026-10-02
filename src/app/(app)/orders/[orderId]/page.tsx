@@ -19,6 +19,8 @@ export default async function OrderDetailPage({
 
   const deliveryLabel = order.delivery_at
     ? new Date(order.delivery_at).toLocaleString("en-US", {
+        // Phnom Penh time, whatever time zone the server runs in (UTC when live).
+        timeZone: "Asia/Phnom_Penh",
         year: "numeric",
         month: "numeric",
         day: "numeric",
@@ -50,7 +52,7 @@ export default async function OrderDetailPage({
               {invoiceNumber}
             </h1>
             <p className="mt-1 text-sm text-muted-foreground">
-              {order.paid_at ? new Date(order.paid_at).toLocaleString() : "—"}
+              {order.paid_at ? new Date(order.paid_at).toLocaleString("en-US", { timeZone: "Asia/Phnom_Penh" }) : "—"}
             </p>
           </div>
           <OrderStatusControl orderId={order.id} status={order.fulfillment_status} />

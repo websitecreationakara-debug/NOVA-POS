@@ -24,6 +24,7 @@ import {
   getWebsiteProductTotal,
 } from "@/lib/supabase/queries";
 import { rangeLabel, resolveRange } from "@/lib/dateRange";
+import { ppDay } from "@/lib/phnomPenhTime";
 import DashboardRangeBar from "./DashboardRangeBar";
 import PeriodBarChart from "./PeriodBarChart";
 import RecentOrdersRows from "./RecentOrdersRows";
@@ -41,7 +42,7 @@ function formatMoney(n: number) {
 function weekTrend(daily: { date: string; total: number }[]): number | null {
   const day = 86_400_000;
   const now = Date.now();
-  const key = (t: number) => new Date(t).toISOString().slice(0, 10);
+  const key = (t: number) => ppDay(new Date(t).toISOString());
   const recent = new Set<string>();
   const prior = new Set<string>();
   for (let i = 0; i < 7; i++) recent.add(key(now - i * day));

@@ -4,6 +4,7 @@ import { getWebsiteProduct, listWebsiteAddons, listWebsiteProducts } from "@/lib
 import { countLowStock } from "@/lib/websiteProducts/stock";
 import type { WebsiteCatalogId } from "@/lib/websiteProducts/types";
 import { formatInvoiceNumber, invoiceMonthStamp, invoiceMonthStartIso } from "@/lib/invoiceNumber";
+import { ppDay, ppDayEnd, ppDayStart } from "@/lib/phnomPenhTime";
 import { COUNTED_FULFILLMENT_STATUSES } from "@/lib/orderStatus";
 import { ALL_PAYMENT_METHODS, type PaymentMethod } from "@/lib/paymentMethods";
 import { aggregateStrictCogs, computeGrossMargin } from "@/lib/cogs";
@@ -152,8 +153,8 @@ export async function getDailySales(
     .select("*")
     .eq("status", "paid")
     .in("fulfillment_status", COUNTED_FULFILLMENT_STATUSES)
-    .gte("paid_at", `${fromDate}T00:00:00.000Z`)
-    .lte("paid_at", `${toDate}T23:59:59.999Z`)
+    .gte("paid_at", ppDayStart(fromDate))
+    .lte("paid_at", ppDayEnd(toDate))
     .order("paid_at", { ascending: false });
   if (brandId !== ALL_BUSINESSES_ID) query = query.eq("brand_id", brandId);
   const { data, error } = await query;
@@ -390,12 +391,12 @@ export async function getDashboardStats(
   // instead of only ever growing.
   const inRange = (dateStr: string) => dateStr >= fromDate && dateStr <= toDate;
   const totalRevenue = orders
-    .filter((o) => inRange((o.paid_at ?? "").slice(0, 10)))
+    .filter((o) => inRange(ppDay(o.paid_at)))
     .reduce((sum, o) => sum + o.total, 0);
-  const orderCount = orders.filter((o) => inRange((o.paid_at ?? "").slice(0, 10))).length;
+  const orderCount = orders.filter((o) => inRange(ppDay(o.paid_at))).length;
   const deliveryFees = round2(
     orders
-      .filter((o) => inRange((o.paid_at ?? "").slice(0, 10)))
+      .filter((o) => inRange(ppDay(o.paid_at)))
       .reduce((sum, o) => sum + Number(o.delivery_fee ?? 0), 0)
   );
 
@@ -409,14 +410,14 @@ export async function getDashboardStats(
     orders: { status: string; paid_at: string | null } | null;
   };
   const itemsInRange = ((orderItemsData ?? []) as OrderItemCogsRow[]).filter((i) =>
-    inRange((i.orders?.paid_at ?? "").slice(0, 10))
+    inRange(ppDay(i.orders?.paid_at))
   );
 
   // Best sellers in the selected range: branches by revenue, products by units
   // sold (revenue shown alongside).
   const branchTotals = new Map<string, { name: string; revenue: number; orders: number }>();
   for (const o of orders) {
-    if (!o.brand_id || !inRange((o.paid_at ?? "").slice(0, 10))) continue;
+    if (!o.brand_id || !inRange(ppDay(o.paid_at))) continue;
     const e = branchTotals.get(o.brand_id) ?? { name: o.brands?.name ?? "—", revenue: 0, orders: 0 };
     e.revenue += o.total;
     e.orders += 1;
@@ -450,7 +451,7 @@ export async function getDashboardStats(
 
   type AdjustmentRow = { category: string; cost_impact: number | null; created_at: string };
   const adjustmentsInRange = ((adjustmentsData ?? []) as AdjustmentRow[]).filter((a) =>
-    inRange(a.created_at.slice(0, 10))
+    inRange(ppDay(a.created_at))
   );
   const wasteCost = round2(
     adjustmentsInRange.filter((a) => a.category === "waste").reduce((sum, a) => sum + (a.cost_impact ?? 0), 0)
@@ -464,7 +465,7 @@ export async function getDashboardStats(
   // than the server only ever computing "this week/month/year".
   const dailyTotals = new Map<string, number>();
   for (const o of orders) {
-    const d = (o.paid_at ?? "").slice(0, 10);
+    const d = ppDay(o.paid_at);
     if (!d) continue;
     dailyTotals.set(d, (dailyTotals.get(d) ?? 0) + o.total);
   }
@@ -475,7 +476,7 @@ export async function getDashboardStats(
   // Same idea, but counting orders instead of summing their totals.
   const dailyOrderCounts = new Map<string, number>();
   for (const o of orders) {
-    const d = (o.paid_at ?? "").slice(0, 10);
+    const d = ppDay(o.paid_at);
     if (!d) continue;
     dailyOrderCounts.set(d, (dailyOrderCounts.get(d) ?? 0) + 1);
   }
@@ -490,7 +491,7 @@ export async function getDashboardStats(
   const brandRevenue = new Map<string, { name: string; daily: Map<string, number> }>();
   const brandOrderCounts = new Map<string, { name: string; daily: Map<string, number> }>();
   for (const o of orders) {
-    const d = (o.paid_at ?? "").slice(0, 10);
+    const d = ppDay(o.paid_at);
     if (!d || !o.brand_id) continue;
     const name = o.brands?.name ?? "—";
 
@@ -940,15 +941,15 @@ export async function getCogsSummary(
     .select("product_id, quantity, cogs, orders!inner(status, paid_at, brand_id)")
     .eq("orders.status", "paid")
     .in("orders.fulfillment_status", COUNTED_FULFILLMENT_STATUSES)
-    .gte("orders.paid_at", `${fromDate}T00:00:00.000Z`)
-    .lte("orders.paid_at", `${toDate}T23:59:59.999Z`);
+    .gte("orders.paid_at", ppDayStart(fromDate))
+    .lte("orders.paid_at", ppDayEnd(toDate));
   if (brandId !== ALL_BUSINESSES_ID) itemsQuery = itemsQuery.eq("orders.brand_id", brandId);
 
   let adjustmentsQuery = supabaseAdmin
     .from("stock_adjustments")
     .select("category, cost_impact, delta, created_at, products!inner(brand_id, price)")
-    .gte("created_at", `${fromDate}T00:00:00.000Z`)
-    .lte("created_at", `${toDate}T23:59:59.999Z`);
+    .gte("created_at", ppDayStart(fromDate))
+    .lte("created_at", ppDayEnd(toDate));
   if (brandId !== ALL_BUSINESSES_ID) adjustmentsQuery = adjustmentsQuery.eq("products.brand_id", brandId);
 
   const [{ data: items, error: itemsError }, { data: adjustments, error: adjError }] = await Promise.all([
@@ -1013,8 +1014,8 @@ export async function getWasteLog(
     .from("stock_adjustments")
     .select("id, delta, reason, cost_impact, created_at, products!inner(name, brand_id, price)")
     .eq("category", "waste")
-    .gte("created_at", `${fromDate}T00:00:00.000Z`)
-    .lte("created_at", `${toDate}T23:59:59.999Z`)
+    .gte("created_at", ppDayStart(fromDate))
+    .lte("created_at", ppDayEnd(toDate))
     .order("created_at", { ascending: false });
   if (brandId !== ALL_BUSINESSES_ID) query = query.eq("products.brand_id", brandId);
 
@@ -1269,8 +1270,8 @@ export async function getMarginReport(
     .select("product_id, quantity, line_total, cogs, orders!inner(status, paid_at, brand_id)")
     .eq("orders.status", "paid")
     .in("orders.fulfillment_status", COUNTED_FULFILLMENT_STATUSES)
-    .gte("orders.paid_at", `${fromDate}T00:00:00.000Z`)
-    .lte("orders.paid_at", `${toDate}T23:59:59.999Z`);
+    .gte("orders.paid_at", ppDayStart(fromDate))
+    .lte("orders.paid_at", ppDayEnd(toDate));
   if (brandId !== ALL_BUSINESSES_ID) query = query.eq("orders.brand_id", brandId);
 
   const { data: items, error } = await query;
