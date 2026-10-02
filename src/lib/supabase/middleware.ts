@@ -12,11 +12,14 @@ const ROLE_HOME: Record<StaffRole, string> = {
 
 const ROLE_ALLOWED_PREFIXES: Record<StaffRole, string[]> = {
   admin: ["/", "/sales", "/stock", "/accountance", "/marketing", "/invoice", "/users", "/orders"],
-  sales: ["/", "/sales", "/invoice", "/orders"],
+  // "Sale Customer Support": Sales + Orders, and Stock.
+  sales: ["/", "/sales", "/stock", "/invoice", "/orders"],
   stock: ["/", "/stock", "/orders", "/invoice"],
   // "Cooperate Admin": everything except Staff Accounts (/users).
   accountance: ["/", "/sales", "/stock", "/accountance", "/marketing", "/invoice", "/orders"],
-  marketing: ["/", "/marketing", "/orders"],
+  // "Marketing Promotion": Marketing + Orders, and Sales and Stock (/invoice
+  // comes with Sales -- the receipt after a sale links to it).
+  marketing: ["/", "/marketing", "/sales", "/stock", "/invoice", "/orders"],
 };
 
 function isAllowed(role: StaffRole, pathname: string) {
