@@ -3,10 +3,14 @@
 // here as its own module so the Dashboard can use an identical picker
 // without duplicating logic into (or risking a regression in) that page.
 
+import { ppToday } from "./phnomPenhTime";
+
 export type RangeMode = "day" | "week" | "month" | "quarter" | "year";
 
+// Today in Phnom Penh -- not the UTC date (7 hours behind), which is still
+// "yesterday" until 7 AM Cambodia time.
 export function todayIso(): string {
-  return new Date().toISOString().slice(0, 10);
+  return ppToday();
 }
 
 export function addDaysIso(dateStr: string, delta: number): string {

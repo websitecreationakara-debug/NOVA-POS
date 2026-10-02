@@ -12,10 +12,11 @@ import {
   type WasteLogEntry,
 } from "@/lib/supabase/queries";
 import type { Brand } from "@/types/database";
+import { ppToday } from "@/lib/phnomPenhTime";
 import AccountanceClient from "./AccountanceClient";
 
 function todayIso() {
-  return new Date().toISOString().slice(0, 10);
+  return ppToday();
 }
 
 function addDaysIso(dateStr: string, delta: number): string {

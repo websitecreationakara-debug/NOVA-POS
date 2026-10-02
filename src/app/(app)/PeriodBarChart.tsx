@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { ChevronLeft, ChevronRight } from "lucide-react";
+import { ppToday } from "@/lib/phnomPenhTime";
 import {
   Area,
   AreaChart,
@@ -87,9 +88,6 @@ const METRIC = {
   },
 };
 
-function utcMidnight(d: Date): Date {
-  return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
-}
 function mondayOf(d: Date): Date {
   const dow = d.getUTCDay(); // 0 = Sun .. 6 = Sat
   const offset = dow === 0 ? 6 : dow - 1;
@@ -257,7 +255,9 @@ export default function PeriodBarChart({
 }) {
   const { barColor, allowDecimalTicks, formatValue, formatTick } = METRIC[metric];
   const [range, setRange] = useState<Range>(initialRange ?? "day");
-  const today = useMemo(() => utcMidnight(new Date()), []);
+  // "Today" is the Phnom Penh date (the chart's days are Cambodia days, see
+  // ppDay) -- the UTC date is still yesterday until 7 AM there.
+  const today = useMemo(() => new Date(`${ppToday()}T00:00:00Z`), []);
   const [anchor, setAnchor] = useState<Date>(initialAnchor ?? today);
   // Extra years to total up next to the anchor year -- year range only. e.g.
   // anchor 2026 + compareYears [2027, 2028] shows one bar per year, each

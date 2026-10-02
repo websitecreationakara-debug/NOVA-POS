@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { X } from "lucide-react";
 import { updateWasteLogAction } from "@/app/(app)/accountance/actions";
 import type { WasteLogEntry } from "@/lib/supabase/queries";
+import { ppDay } from "@/lib/phnomPenhTime";
 
 // Editing a waste entry can't change which product it's for (see
 // updateWasteLogAction -- it reverses the old quantity and logs a fresh
@@ -23,7 +24,7 @@ export default function EditWasteLogModal({
   const [error, setError] = useState<string | null>(null);
   const [qty, setQty] = useState(String(entry.quantity));
   const [note, setNote] = useState(entry.reason);
-  const [date, setDate] = useState(entry.createdAt.slice(0, 10));
+  const [date, setDate] = useState(ppDay(entry.createdAt));
   const qtyRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {

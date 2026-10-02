@@ -4,6 +4,7 @@ import type { InvoiceBrandConfig } from "@/lib/invoiceBrands";
 import { SITE_LABEL } from "@/lib/site-sync";
 import { ORDER_SOURCE_LABELS } from "@/lib/orderSource";
 import { khmerNameWeight } from "@/lib/weight";
+import { formatDateTime } from "@/lib/invoiceFormat";
 import type { OrderSource, ProductSiteLink } from "@/types/database";
 
 // Khmer + Latin webfont for the printed document so the bilingual labels
@@ -18,19 +19,6 @@ export const hanuman = Hanuman({
 
 export function formatMoney(n: number) {
   return `$${n.toFixed(2)}`;
-}
-
-export function formatDateTime(iso: string | null) {
-  if (!iso) return "...";
-  return new Date(iso).toLocaleString("en-US", {
-    year: "numeric",
-    month: "numeric",
-    day: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-    second: "2-digit",
-    hour12: true,
-  });
 }
 
 const PAYMENT_LABELS: Record<string, string> = {
