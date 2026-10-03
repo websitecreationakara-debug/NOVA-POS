@@ -1,3 +1,4 @@
+import { cache } from "react";
 import { supabaseAdmin } from "@/lib/supabase/server";
 import { catalogForBrandSlug, configuredCatalogs } from "@/lib/websiteProducts/catalogs";
 import { getWebsiteProduct, listWebsiteAddons, listWebsiteProducts } from "@/lib/websiteProducts/client";
@@ -51,6 +52,26 @@ async function selectAll<T>(query: RowPage<T>): Promise<{ data: T[]; error: { me
     if (error) return { data: out, error };
     out.push(...(data ?? []));
     if (!data || data.length < 1000) return { data: out, error: null };
+  }
+}
+
+// selectAll's faster sibling for the big dashboard scans: requests several 1000-row
+// pages at once instead of one after another. Each page gets its own freshly built
+// query (range() mutates the builder's URL, so a shared one can't run in parallel).
+async function selectAllParallel<T>(
+  makeQuery: () => RowPage<T>
+): Promise<{ data: T[]; error: { message: string } | null }> {
+  const BATCH = 4;
+  const out: T[] = [];
+  for (let from = 0; ; from += 1000 * BATCH) {
+    const pages = await Promise.all(
+      Array.from({ length: BATCH }, (_, i) => makeQuery().range(from + i * 1000, from + i * 1000 + 999))
+    );
+    for (const { data, error } of pages) {
+      if (error) return { data: out, error };
+      out.push(...(data ?? []));
+      if (!data || data.length < 1000) return { data: out, error: null };
+    }
   }
 }
 
@@ -230,7 +251,6 @@ export type DashboardStats = {
   totalRevenue: number;
   orderCount: number;
   totalProducts: number;
-  lowStockCount: number;
   dailyRevenue: { date: string; total: number }[];
   dailyOrders: { date: string; total: number }[];
   // Same two series, split out per brand -- lets the dashboard charts switch
@@ -290,7 +310,11 @@ export async function getWebsiteProductTotal(): Promise<number | null> {
 // disagrees with what the Stock page itself shows for the same brands. Only
 // a brand with no storefront configured falls back to the internal
 // per-product threshold.
-async function getLowStockCount(): Promise<number> {
+//
+// Hits the storefront APIs, so the dashboard streams it in its own Suspense
+// boundaries (card + banner) instead of blocking the stats on it; `cache`
+// shares the one lookup between them within a request.
+export const getLowStockCount = cache(async (): Promise<number> => {
   const catalogs = configuredCatalogs();
 
   const [websiteResults, brands] = await Promise.all([
@@ -326,6 +350,73 @@ async function getLowStockCount(): Promise<number> {
   ).length;
 
   return websiteLowStock + internalLowStock;
+});
+
+// One paid-order total per business per Phnom Penh day (all history) -- the only
+// shape the dashboard's cards, Top Branch list and daily charts need.
+type OrderDayRow = {
+  brand_id: string;
+  brand_name: string;
+  day: string;
+  revenue: number;
+  orders: number;
+  delivery_fees: number;
+};
+
+// Summed in the database (migration 0053's dashboard_order_days). If that
+// function isn't there yet, fall back to reading every order and summing here --
+// same numbers, just slower.
+async function loadOrderDays(brandId: string): Promise<{ data: OrderDayRow[]; error: { message: string } | null }> {
+  const { data, error } = await supabaseAdmin.rpc("dashboard_order_days", {
+    p_statuses: COUNTED_FULFILLMENT_STATUSES,
+    p_brand_id: brandId === ALL_BUSINESSES_ID ? null : brandId,
+  });
+  if (!error) {
+    return {
+      data: ((data ?? []) as OrderDayRow[]).map((r) => ({
+        ...r,
+        revenue: Number(r.revenue),
+        orders: Number(r.orders),
+        delivery_fees: Number(r.delivery_fees),
+      })),
+      error: null,
+    };
+  }
+
+  const { data: rows, error: scanError } = await selectAllParallel<{
+    total: number;
+    delivery_fee: number | null;
+    paid_at: string | null;
+    brand_id: string;
+    brands: { name: string } | null;
+  }>(() => {
+    let q = supabaseAdmin
+      .from("orders")
+      .select("total, delivery_fee, paid_at, brand_id, brands(name)")
+      .eq("status", "paid")
+      .in("fulfillment_status", COUNTED_FULFILLMENT_STATUSES);
+    if (brandId !== ALL_BUSINESSES_ID) q = q.eq("brand_id", brandId);
+    return q.order("id");
+  });
+  const byKey = new Map<string, OrderDayRow>();
+  for (const o of rows) {
+    const day = ppDay(o.paid_at);
+    if (!day) continue;
+    const key = `${o.brand_id}|${day}`;
+    const e = byKey.get(key) ?? {
+      brand_id: o.brand_id,
+      brand_name: o.brands?.name ?? "—",
+      day,
+      revenue: 0,
+      orders: 0,
+      delivery_fees: 0,
+    };
+    e.revenue += o.total;
+    e.orders += 1;
+    e.delivery_fees += Number(o.delivery_fee ?? 0);
+    byKey.set(key, e);
+  }
+  return { data: Array.from(byKey.values()), error: scanError };
 }
 
 export async function getDashboardStats(
@@ -333,13 +424,6 @@ export async function getDashboardStats(
   fromDate: string,
   toDate: string
 ): Promise<DashboardStats> {
-  let ordersQuery = supabaseAdmin
-    .from("orders")
-    .select("total, delivery_fee, paid_at, brand_id, brands(name)")
-    .eq("status", "paid")
-    .in("fulfillment_status", COUNTED_FULFILLMENT_STATUSES);
-  if (brandId !== ALL_BUSINESSES_ID) ordersQuery = ordersQuery.eq("brand_id", brandId);
-
   let productsQuery = supabaseAdmin
     .from("products")
     .select("id", { count: "exact", head: true })
@@ -357,12 +441,19 @@ export async function getDashboardStats(
   // COGS -- joined to paid orders; filtered down to the selected range below
   // with the same inRange() check as the revenue query above, so both mean
   // the same period (and the same business, via orders.brand_id here).
-  let orderItemsQuery = supabaseAdmin
-    .from("order_items")
-    .select("product_id, quantity, unit_price, cogs, line_total, products(name), orders!inner(status, paid_at, brand_id)")
-    .eq("orders.status", "paid")
-    .in("orders.fulfillment_status", COUNTED_FULFILLMENT_STATUSES);
-  if (brandId !== ALL_BUSINESSES_ID) orderItemsQuery = orderItemsQuery.eq("orders.brand_id", brandId);
+  // Only the selected range is read (same bounds getCogsSummary uses) -- the
+  // inRange() check below stays as the exact day-level filter.
+  const makeOrderItemsQuery = () => {
+    let q = supabaseAdmin
+      .from("order_items")
+      .select("product_id, quantity, unit_price, cogs, line_total, products(name), orders!inner(status, paid_at, brand_id)")
+      .eq("orders.status", "paid")
+      .in("orders.fulfillment_status", COUNTED_FULFILLMENT_STATUSES)
+      .gte("orders.paid_at", ppDayStart(fromDate))
+      .lte("orders.paid_at", ppDayEnd(toDate));
+    if (brandId !== ALL_BUSINESSES_ID) q = q.eq("orders.brand_id", brandId);
+    return q.order("id");
+  };
 
   // Waste/promotions -- joined to the product they were logged against so
   // this can be scoped to one business the same way getCogsSummary's
@@ -370,22 +461,22 @@ export async function getDashboardStats(
   let adjustmentsQuery = supabaseAdmin
     .from("stock_adjustments")
     .select("category, cost_impact, created_at, products!inner(brand_id)")
-    .not("cost_impact", "is", null);
+    .not("cost_impact", "is", null)
+    .gte("created_at", ppDayStart(fromDate))
+    .lte("created_at", ppDayEnd(toDate));
   if (brandId !== ALL_BUSINESSES_ID) adjustmentsQuery = adjustmentsQuery.eq("products.brand_id", brandId);
 
   const [
-    { data: paidOrders, error: ordersError },
+    { data: orderDays, error: ordersError },
     { count: totalProducts, error: prodError },
-    lowStockCount,
     { data: recentOrdersData, error: recentError },
     { data: orderItemsData, error: itemsError },
     { data: adjustmentsData, error: adjError },
   ] = await Promise.all([
-    selectAll(ordersQuery.order("id")),
+    loadOrderDays(brandId),
     productsQuery,
-    getLowStockCount(),
     recentOrdersQuery,
-    selectAll(orderItemsQuery.order("id")),
+    selectAllParallel(makeOrderItemsQuery),
     selectAll(adjustmentsQuery.order("id")),
   ]);
 
@@ -395,28 +486,15 @@ export async function getDashboardStats(
   if (itemsError) throw itemsError;
   if (adjError) throw adjError;
 
-  type PaidOrderRow = {
-    total: number;
-    delivery_fee: number | null;
-    paid_at: string | null;
-    brand_id: string | null;
-    brands: { name: string } | null;
-  };
-  const orders = (paidOrders ?? []) as PaidOrderRow[];
   // Scoped to the selected [fromDate, toDate] range (the Dashboard's own
   // Day/Week/Month/Quarter/Year picker, same semantics as Accountance's) --
   // not all-time, so these headline numbers match whatever period is picked
   // instead of only ever growing.
   const inRange = (dateStr: string) => dateStr >= fromDate && dateStr <= toDate;
-  const totalRevenue = orders
-    .filter((o) => inRange(ppDay(o.paid_at)))
-    .reduce((sum, o) => sum + o.total, 0);
-  const orderCount = orders.filter((o) => inRange(ppDay(o.paid_at))).length;
-  const deliveryFees = round2(
-    orders
-      .filter((o) => inRange(ppDay(o.paid_at)))
-      .reduce((sum, o) => sum + Number(o.delivery_fee ?? 0), 0)
-  );
+  const daysInRange = orderDays.filter((d) => inRange(d.day));
+  const totalRevenue = daysInRange.reduce((sum, d) => sum + d.revenue, 0);
+  const orderCount = daysInRange.reduce((sum, d) => sum + d.orders, 0);
+  const deliveryFees = round2(daysInRange.reduce((sum, d) => sum + d.delivery_fees, 0));
 
   type OrderItemCogsRow = {
     product_id: string;
@@ -434,12 +512,11 @@ export async function getDashboardStats(
   // Best sellers in the selected range: branches by revenue, products by units
   // sold (revenue shown alongside).
   const branchTotals = new Map<string, { name: string; revenue: number; orders: number }>();
-  for (const o of orders) {
-    if (!o.brand_id || !inRange(ppDay(o.paid_at))) continue;
-    const e = branchTotals.get(o.brand_id) ?? { name: o.brands?.name ?? "—", revenue: 0, orders: 0 };
-    e.revenue += o.total;
-    e.orders += 1;
-    branchTotals.set(o.brand_id, e);
+  for (const d of daysInRange) {
+    const e = branchTotals.get(d.brand_id) ?? { name: d.brand_name, revenue: 0, orders: 0 };
+    e.revenue += d.revenue;
+    e.orders += d.orders;
+    branchTotals.set(d.brand_id, e);
   }
   const topBranches = Array.from(branchTotals.values())
     .map((b) => ({ ...b, revenue: round2(b.revenue) }))
@@ -482,10 +559,8 @@ export async function getDashboardStats(
   // into weeks/months/years and lets staff page back through history, rather
   // than the server only ever computing "this week/month/year".
   const dailyTotals = new Map<string, number>();
-  for (const o of orders) {
-    const d = ppDay(o.paid_at);
-    if (!d) continue;
-    dailyTotals.set(d, (dailyTotals.get(d) ?? 0) + o.total);
+  for (const o of orderDays) {
+    dailyTotals.set(o.day, (dailyTotals.get(o.day) ?? 0) + o.revenue);
   }
   const dailyRevenue = Array.from(dailyTotals.entries())
     .map(([date, total]) => ({ date, total }))
@@ -493,10 +568,8 @@ export async function getDashboardStats(
 
   // Same idea, but counting orders instead of summing their totals.
   const dailyOrderCounts = new Map<string, number>();
-  for (const o of orders) {
-    const d = ppDay(o.paid_at);
-    if (!d) continue;
-    dailyOrderCounts.set(d, (dailyOrderCounts.get(d) ?? 0) + 1);
+  for (const o of orderDays) {
+    dailyOrderCounts.set(o.day, (dailyOrderCounts.get(o.day) ?? 0) + o.orders);
   }
   const dailyOrders = Array.from(dailyOrderCounts.entries())
     .map(([date, total]) => ({ date, total }))
@@ -508,17 +581,15 @@ export async function getDashboardStats(
   // number.
   const brandRevenue = new Map<string, { name: string; daily: Map<string, number> }>();
   const brandOrderCounts = new Map<string, { name: string; daily: Map<string, number> }>();
-  for (const o of orders) {
-    const d = ppDay(o.paid_at);
-    if (!d || !o.brand_id) continue;
-    const name = o.brands?.name ?? "—";
+  for (const o of orderDays) {
+    const name = o.brand_name;
 
     const revEntry = brandRevenue.get(o.brand_id) ?? { name, daily: new Map<string, number>() };
-    revEntry.daily.set(d, (revEntry.daily.get(d) ?? 0) + o.total);
+    revEntry.daily.set(o.day, (revEntry.daily.get(o.day) ?? 0) + o.revenue);
     brandRevenue.set(o.brand_id, revEntry);
 
     const countEntry = brandOrderCounts.get(o.brand_id) ?? { name, daily: new Map<string, number>() };
-    countEntry.daily.set(d, (countEntry.daily.get(d) ?? 0) + 1);
+    countEntry.daily.set(o.day, (countEntry.daily.get(o.day) ?? 0) + o.orders);
     brandOrderCounts.set(o.brand_id, countEntry);
   }
   const byBrand = Array.from(brandRevenue.keys()).map((brandId) => {
@@ -555,7 +626,6 @@ export async function getDashboardStats(
     totalRevenue,
     orderCount,
     totalProducts: totalProducts ?? 0,
-    lowStockCount,
     dailyRevenue,
     dailyOrders,
     byBrand,
