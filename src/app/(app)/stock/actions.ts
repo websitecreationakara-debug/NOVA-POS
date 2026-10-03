@@ -69,15 +69,24 @@ async function backfillOrderItemCogs(productId: string): Promise<void> {
 }
 
 // The Margin Report's Unit Cost is the cost recorded on each sold line, so a
-// cost typed there has to overwrite the lines the report is showing -- the
+// cost typed there overwrites only the lines the report is showing -- the
 // backfill above only touches lines with no cost at all, which left an edited
-// cost invisible for any already-priced product. Scoped to the report's
-// brand/date range; sales outside it keep their recorded cost.
-async function overrideOrderItemCogsInRange(
-  productId: string,
-  unitCost: number,
-  range: { brandId: string; fromDate: string; toDate: string }
-): Promise<void> {
+// cost invisible for any already-priced product. Report-only: it never touches
+// the product's cost_price or Stock's Total, and sales outside the brand/date
+// range keep their recorded cost.
+export async function setMarginUnitCostAction(input: {
+  productId: string;
+  unitCost: number;
+  brandId: string;
+  fromDate: string;
+  toDate: string;
+}): Promise<void> {
+  await requireStockAccess();
+  const { productId, unitCost, ...range } = input;
+  if (Number.isNaN(unitCost) || unitCost < 0) {
+    throw new Error("Unit cost cannot be negative");
+  }
+
   let query = supabaseAdmin
     .from("order_items")
     .select("id, quantity, orders!inner(status, paid_at, brand_id)")
@@ -102,6 +111,8 @@ async function overrideOrderItemCogsInRange(
   );
   const failed = results.find((r) => r.error);
   if (failed?.error) throw failed.error;
+
+  revalidatePath("/accountance");
 }
 
 export async function adjustStockAction(input: {
@@ -265,11 +276,9 @@ export async function setProductPriceAction(input: {
 export async function setProductCostAction(input: {
   productId: string;
   costPrice: number | null;
-  // Set by the Margin Report: also re-prices that report's sold lines.
-  applyToRange?: { brandId: string; fromDate: string; toDate: string };
 }): Promise<void> {
   await requireStockAccess();
-  const { productId, costPrice, applyToRange } = input;
+  const { productId, costPrice } = input;
   if (costPrice !== null && (Number.isNaN(costPrice) || costPrice < 0)) {
     throw new Error("Cost price cannot be negative");
   }
@@ -281,10 +290,7 @@ export async function setProductCostAction(input: {
 
   if (error) throw error;
 
-  if (costPrice !== null) {
-    if (applyToRange) await overrideOrderItemCogsInRange(productId, costPrice, applyToRange);
-    else await backfillOrderItemCogs(productId);
-  }
+  if (costPrice !== null) await backfillOrderItemCogs(productId);
 
   // Keep Stock's Website tab in step: its Total column is a separate store
   // (website_product_purchase_costs), so a cost set here -- e.g. from the

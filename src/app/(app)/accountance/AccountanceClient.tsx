@@ -37,7 +37,7 @@ import {
 import { PAYMENT_METHOD_LABELS, type PaymentMethod } from "@/lib/paymentMethods";
 import { computeGrossMargin } from "@/lib/cogs";
 import { addExpenseAction, saveReconciliationAction, updateExpenseAction } from "./actions";
-import { setProductCostAction, setProductPriceAction } from "../stock/actions";
+import { setMarginUnitCostAction, setProductPriceAction } from "../stock/actions";
 import { ppDay, ppHour, ppToday } from "@/lib/phnomPenhTime";
 import { exportAccountancePdf } from "@/lib/exportAccountancePdf";
 import DeleteExpenseDialog from "@/components/DeleteExpenseDialog";
@@ -893,10 +893,8 @@ export default function AccountanceClient({
   }
 
   // Saves whichever of Unit Cost / Selling Price the row's drafts actually
-  // changed. Setting a unit cost also backfills COGS for that product's
-  // already-sold lines that never had a cost recorded (see
-  // setProductCostAction) -- so a product added before cost tracking existed
-  // stops showing "No cost price" once its cost is filled in. A selling-price
+  // changed. A unit cost re-prices only this report's sold lines for the
+  // product (see setMarginUnitCostAction) -- Stock's cost is left alone. A selling-price
   // change only applies going forward -- past lines' revenue was already
   // recorded at sale time and isn't rewritten.
   function saveMarginRow(r: MarginReportRow) {
@@ -916,7 +914,8 @@ export default function AccountanceClient({
     }
     setError(null);
 
-    const costChanged = costPrice !== undefined && costPrice !== r.unitCost;
+    // A blank cost is ignored: a report-only override has no "clear" meaning.
+    const costChanged = costPrice !== undefined && costPrice !== null && costPrice !== r.unitCost;
     const priceChanged = price !== undefined && price !== r.sellingPrice;
     if (!costChanged && !priceChanged) {
       cancelMarginEdit(r.productId);
@@ -926,10 +925,12 @@ export default function AccountanceClient({
     startTransition(async () => {
       try {
         if (costChanged)
-          await setProductCostAction({
+          await setMarginUnitCostAction({
             productId: r.productId,
-            costPrice: costPrice ?? null,
-            applyToRange: { brandId: currentBrand.id, fromDate, toDate },
+            unitCost: costPrice as number,
+            brandId: currentBrand.id,
+            fromDate,
+            toDate,
           });
         if (priceChanged) await setProductPriceAction({ productId: r.productId, price: price as number });
         router.refresh();
