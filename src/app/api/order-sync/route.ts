@@ -75,6 +75,7 @@ export async function POST(request: NextRequest) {
     customerName?: string | null;
     customerPhone?: string | null;
     customerEmail?: string | null;
+    customerAddress?: string | null;
     subtotal?: number | null;
     discount?: number;
     deliveryFee?: number;
@@ -206,6 +207,7 @@ export async function POST(request: NextRequest) {
     p_customer_name: name || (phone ? null : "Website customer"),
     p_customer_phone: phone,
     p_customer_email: customerEmail ?? null,
+    p_customer_address: typeof body.customerAddress === "string" ? body.customerAddress.trim() || null : null,
     p_subtotal: body.subtotal ?? null,
     p_discount: body.discount ?? 0,
     p_delivery_fee: body.deliveryFee ?? 0,
