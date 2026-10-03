@@ -7,7 +7,8 @@ import { getCategoriesFingerprintAction } from "@/app/(app)/stock/actions";
 import { computeLineCogs, computeRecipeUnitCost } from "@/lib/cogs";
 import { getEffectiveProductCost } from "@/lib/websiteProducts/purchaseCosts";
 import { getSessionUser } from "@/lib/supabase/auth-server";
-import { buildOrdersCsv, buildOrdersSheet, type BackupItem, type BackupOrder } from "@/lib/ordersCsv";
+import { buildOrdersCsv, buildOrdersSheet } from "@/lib/ordersCsv";
+import { fetchOrdersBackupData } from "@/lib/ordersBackupData";
 import { buildXlsx } from "@/lib/xlsxWriter";
 import { ppToday } from "@/lib/phnomPenhTime";
 import type { FulfillmentStatus, OrderSource, PaymentMethod, ProductSiteLink } from "@/types/database";
@@ -52,33 +53,7 @@ export async function exportOrdersBackupAction(
     throw new Error("Only Administration and Cooperate Admin can back up orders");
   }
 
-  const PAGE = 1000;
-  const orders: BackupOrder[] = [];
-  for (let from = 0; ; from += PAGE) {
-    const { data, error } = await supabaseAdmin
-      .from("orders")
-      .select("*, brands(name), customers(address)")
-      .order("created_at", { ascending: false })
-      .order("id")
-      .range(from, from + PAGE - 1);
-    if (error) throw new Error(error.message);
-    orders.push(...((data ?? []) as unknown as BackupOrder[]));
-    if (!data || data.length < PAGE) break;
-  }
-
-  const items: BackupItem[] = [];
-  for (let from = 0; ; from += PAGE) {
-    // "*" so a column a project hasn't migrated yet (e.g. size_label) just reads blank.
-    const { data, error } = await supabaseAdmin
-      .from("order_items")
-      .select("*, products(name)")
-      .order("order_id")
-      .order("id")
-      .range(from, from + PAGE - 1);
-    if (error) throw new Error(error.message);
-    items.push(...((data ?? []) as unknown as BackupItem[]));
-    if (!data || data.length < PAGE) break;
-  }
+  const { orders, items } = await fetchOrdersBackupData();
 
   const stem = `nova-pos-orders-backup-${ppToday()}`;
   if (format === "xlsx") {

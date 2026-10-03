@@ -5,6 +5,9 @@ import { supabaseAdmin } from "@/lib/supabase/server";
 import { pushStockToSites, searchSiteProducts, linkProductToSite, type SiteProductCandidate } from "@/lib/site-sync";
 import { requireStockAccess } from "@/lib/stockAccess";
 import { computeLineCogs, computeRecipeUnitCost } from "@/lib/cogs";
+import { ALL_BUSINESSES_ID } from "@/lib/supabase/queries";
+import { COUNTED_FULFILLMENT_STATUSES } from "@/lib/orderStatus";
+import { ppDayEnd, ppDayStart } from "@/lib/phnomPenhTime";
 import {
   getEffectiveProductCost,
   syncSetItemCostsForProduct,
@@ -63,6 +66,42 @@ async function backfillOrderItemCogs(productId: string): Promise<void> {
         .eq("id", item.id)
     )
   );
+}
+
+// The Margin Report's Unit Cost is the cost recorded on each sold line, so a
+// cost typed there has to overwrite the lines the report is showing -- the
+// backfill above only touches lines with no cost at all, which left an edited
+// cost invisible for any already-priced product. Scoped to the report's
+// brand/date range; sales outside it keep their recorded cost.
+async function overrideOrderItemCogsInRange(
+  productId: string,
+  unitCost: number,
+  range: { brandId: string; fromDate: string; toDate: string }
+): Promise<void> {
+  let query = supabaseAdmin
+    .from("order_items")
+    .select("id, quantity, orders!inner(status, paid_at, brand_id)")
+    .eq("product_id", productId)
+    .eq("orders.status", "paid")
+    .in("orders.fulfillment_status", COUNTED_FULFILLMENT_STATUSES)
+    .gte("orders.paid_at", ppDayStart(range.fromDate))
+    .lte("orders.paid_at", ppDayEnd(range.toDate));
+  if (range.brandId !== ALL_BUSINESSES_ID) query = query.eq("orders.brand_id", range.brandId);
+
+  const { data: items, error } = await query;
+  if (error) throw error;
+  if (!items || items.length === 0) return;
+
+  const results = await Promise.all(
+    items.map((item) =>
+      supabaseAdmin
+        .from("order_items")
+        .update({ unit_cost: unitCost, cogs: computeLineCogs(unitCost, item.quantity), cost_source: "direct" })
+        .eq("id", item.id)
+    )
+  );
+  const failed = results.find((r) => r.error);
+  if (failed?.error) throw failed.error;
 }
 
 export async function adjustStockAction(input: {
@@ -226,9 +265,11 @@ export async function setProductPriceAction(input: {
 export async function setProductCostAction(input: {
   productId: string;
   costPrice: number | null;
+  // Set by the Margin Report: also re-prices that report's sold lines.
+  applyToRange?: { brandId: string; fromDate: string; toDate: string };
 }): Promise<void> {
   await requireStockAccess();
-  const { productId, costPrice } = input;
+  const { productId, costPrice, applyToRange } = input;
   if (costPrice !== null && (Number.isNaN(costPrice) || costPrice < 0)) {
     throw new Error("Cost price cannot be negative");
   }
@@ -240,7 +281,10 @@ export async function setProductCostAction(input: {
 
   if (error) throw error;
 
-  if (costPrice !== null) await backfillOrderItemCogs(productId);
+  if (costPrice !== null) {
+    if (applyToRange) await overrideOrderItemCogsInRange(productId, costPrice, applyToRange);
+    else await backfillOrderItemCogs(productId);
+  }
 
   // Keep Stock's Website tab in step: its Total column is a separate store
   // (website_product_purchase_costs), so a cost set here -- e.g. from the

@@ -35,14 +35,15 @@ function crc32(buf: Uint8Array): number {
   return (c ^ 0xffffffff) >>> 0;
 }
 
-// A zip archive with deflate-compressed entries.
-function zip(files: { name: string; data: string }[]): Buffer {
+// A zip archive with deflate-compressed entries. Exported so the Drive backup
+// can bundle the finished .xlsx (binary) and .csv into one .zip.
+export function zip(files: { name: string; data: string | Buffer }[]): Buffer {
   const parts: Buffer[] = [];
   const central: Buffer[] = [];
   let offset = 0;
   for (const f of files) {
     const name = Buffer.from(f.name, "utf8");
-    const raw = Buffer.from(f.data, "utf8");
+    const raw = typeof f.data === "string" ? Buffer.from(f.data, "utf8") : f.data;
     const packed = deflateRawSync(raw);
     const crc = crc32(raw);
 

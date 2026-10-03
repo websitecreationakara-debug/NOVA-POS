@@ -15,7 +15,9 @@ export const config = {
   // not a logged-in user, so the session-cookie check here would always
   // incorrectly 307 them. New /api/*-sync route? Add it here too, or it'll
   // 307 to /login exactly like this one did before this line existed.
+  // /api/backup-to-drive is the same kind of caller (a scheduler) with its own
+  // bearer secret.
   matcher: [
-    "/((?!_next/static|_next/image|favicon.ico|api/stock-sync|api/product-sync|api/order-sync|api/order-status-sync|.*\\.(?:png|jpg|jpeg|gif|webp|svg|ico)$).*)",
+    "/((?!_next/static|_next/image|favicon.ico|api/stock-sync|api/product-sync|api/order-sync|api/order-status-sync|api/backup-to-drive|.*\\.(?:png|jpg|jpeg|gif|webp|svg|ico)$).*)",
   ],
 };

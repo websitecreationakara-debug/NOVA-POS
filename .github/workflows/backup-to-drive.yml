@@ -1,0 +1,23 @@
+name: Backup orders to Google Drive
+
+# Every day at 03:00 Phnom Penh time (20:00 UTC). Asks the app to zip all orders
+# and order items and save the zip to the shared Google Drive folder -- see
+# src/app/api/backup-to-drive/route.ts and scripts/google-drive-backup.gs.
+# Needs the repo secret BACKUP_CRON_SECRET (same value as the app's env var).
+# "Run workflow" in the Actions tab triggers one by hand.
+on:
+  schedule:
+    - cron: "0 20 * * *"
+  workflow_dispatch:
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Run the backup
+        env:
+          BACKUP_CRON_SECRET: ${{ secrets.BACKUP_CRON_SECRET }}
+        run: |
+          curl --fail-with-body -sS -X POST --max-time 180 \
+            -H "Authorization: Bearer $BACKUP_CRON_SECRET" \
+            https://app.novamarketing.digital/api/backup-to-drive
