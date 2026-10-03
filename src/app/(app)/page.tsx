@@ -414,7 +414,7 @@ export default async function Home({
         <section className="rounded-2xl border border-border bg-card p-6">
           <h2 className="font-display font-bold">Top Products ({topPeriod})</h2>
           <p className="mt-1 text-xs text-muted-foreground">
-            Ranked by units sold · items priced above {formatMoney(TOP_PRODUCT_MIN_PRICE)}
+            Ranked by sales amount · items priced above {formatMoney(TOP_PRODUCT_MIN_PRICE)}
           </p>
           {topStats.topProducts.length === 0 ? (
             <p className="mt-4 text-sm text-muted-foreground">No sales in this period.</p>

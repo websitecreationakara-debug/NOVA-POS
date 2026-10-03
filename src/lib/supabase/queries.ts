@@ -509,8 +509,8 @@ export async function getDashboardStats(
     inRange(ppDay(i.orders?.paid_at))
   );
 
-  // Best sellers in the selected range: branches by revenue, products by units
-  // sold (revenue shown alongside).
+  // Best sellers in the selected range, both ranked by revenue (units sold
+  // shown alongside for products).
   const branchTotals = new Map<string, { name: string; revenue: number; orders: number }>();
   for (const d of daysInRange) {
     const e = branchTotals.get(d.brand_id) ?? { name: d.brand_name, revenue: 0, orders: 0 };
@@ -535,7 +535,7 @@ export async function getDashboardStats(
   }
   const topProducts = Array.from(productTotals.values())
     .map((p) => ({ ...p, revenue: round2(p.revenue) }))
-    .sort((a, b) => b.quantity - a.quantity || b.revenue - a.revenue)
+    .sort((a, b) => b.revenue - a.revenue || b.quantity - a.quantity)
     .slice(0, 10);
   const { totalCogs, hasUnknownCost } = await sumCogsWithFallback(itemsInRange);
   // Delivery fees are in each order's total but aren't earnings on the goods
