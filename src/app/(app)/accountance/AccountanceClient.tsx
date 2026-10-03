@@ -925,7 +925,12 @@ export default function AccountanceClient({
 
     startTransition(async () => {
       try {
-        if (costChanged) await setProductCostAction({ productId: r.productId, costPrice: costPrice ?? null });
+        if (costChanged)
+          await setProductCostAction({
+            productId: r.productId,
+            costPrice: costPrice ?? null,
+            applyToRange: { brandId: currentBrand.id, fromDate, toDate },
+          });
         if (priceChanged) await setProductPriceAction({ productId: r.productId, price: price as number });
         router.refresh();
       } finally {
