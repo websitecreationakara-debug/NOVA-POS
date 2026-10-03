@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { ChevronLeft, ChevronRight, UtensilsCrossed } from "lucide-react";
 import type {
   WebsiteCatalogId,
@@ -98,7 +99,10 @@ export default function SalesWebsiteGrid({
   const [loadError, setLoadError] = useState<string | null>(initialError);
   const [search, setSearch] = useState("");
   const [activeCategoryId, setActiveCategoryId] = useState<string | "all">("all");
-  const [page, setPage] = useState(1);
+  // The page lives in the URL (?page=&limit=) so a reload or shared link lands on
+  // the same view -- read once at mount, mirrored back below. limit is fixed.
+  const searchParams = useSearchParams();
+  const [page, setPage] = useState(() => Math.max(parseInt(searchParams.get("page") ?? "", 10) || 1, 1));
 
   const signatureRef = useRef<string>(initialProducts ? catalogSignature(initialProducts) : "");
   const busyRef = useRef(false);
@@ -236,6 +240,15 @@ export default function SalesWebsiteGrid({
   }
   const currentPage = Math.min(page, pageCount);
   const paged = entries.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
+
+  // Mirror the effective page into the URL (no refetch, no history entry).
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("page") === String(currentPage) && params.get("limit") === String(PAGE_SIZE)) return;
+    params.set("page", String(currentPage));
+    params.set("limit", String(PAGE_SIZE));
+    window.history.replaceState(null, "", `/sales?${params.toString()}`);
+  }, [currentPage]);
 
   // After the paged grid re-renders, restore the pager to the same on-screen
   // spot it was at when clicked, so the view doesn't jump up or down.

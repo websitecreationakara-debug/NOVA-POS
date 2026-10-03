@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { ChevronLeft, ChevronRight, FileDown, Search, Truck, X } from "lucide-react";
 import type { OrderListRow } from "@/lib/supabase/queries";
 import type { FulfillmentStatus } from "@/types/database";
@@ -94,6 +94,18 @@ export default function OrdersTable({
     const qs = params.toString();
     router.push(qs ? `/orders?${qs}` : "/orders", { scroll: false });
   }
+
+  // Always show the effective page and page size in the URL (e.g. on first
+  // open, or after a filter drops back to page 1). replaceState keeps the
+  // current list on screen -- no extra fetch or history entry.
+  const urlParams = useSearchParams();
+  useEffect(() => {
+    if (urlParams.has("page") && urlParams.has("limit")) return;
+    const params = new URLSearchParams(window.location.search);
+    params.set("page", String(page));
+    params.set("limit", String(limit));
+    window.history.replaceState(null, "", `/orders?${params.toString()}`);
+  }, [urlParams, page, limit]);
 
   // Type-as-you-go search: applied to the URL once typing pauses.
   useEffect(() => {
