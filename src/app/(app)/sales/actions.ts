@@ -50,6 +50,14 @@ export interface CustomerSuggestion {
 // returning one (customers.phone has a unique index, see migration 0011).
 // Staff type a few digits and pick from matches, AppSheet-style, instead of
 // needing the full number before anything happens.
+// Imported (CSV/PDF) customers keep their leading "+" ("+85586655569") while
+// Sales types and saves "85586655569", so a lookup has to try both spellings
+// or those customers never show up.
+function phoneVariants(phone: string): string[] {
+  const digits = phone.replace(/^\+/, "");
+  return [digits, `+${digits}`];
+}
+
 export async function searchCustomersByPhone(prefix: string): Promise<CustomerSuggestion[]> {
   const trimmed = prefix.trim();
   if (trimmed.length < 1) return [];
@@ -57,18 +65,24 @@ export async function searchCustomersByPhone(prefix: string): Promise<CustomerSu
   // A customer can have a second phone (customers.second_phone): match either
   // number, and hand back the one that matched so picking the suggestion fills
   // in the number the cashier was actually typing.
-  const pattern = `"${trimmed.replace(/[\\"]/g, "\\$&")}%"`;
+  const variants = phoneVariants(trimmed);
+  const filters = variants.flatMap((v) => {
+    const pattern = `"${v.replace(/[\\"]/g, "\\$&")}%"`;
+    return [`phone.ilike.${pattern}`, `second_phone.ilike.${pattern}`];
+  });
   const { data, error } = await supabaseAdmin
     .from("customers")
     .select("id, name, phone, second_phone, photo_url, address")
-    .or(`phone.ilike.${pattern},second_phone.ilike.${pattern}`)
+    .or(filters.join(","))
     .order("name")
     .limit(8);
   if (error) throw error;
 
-  const lower = trimmed.toLowerCase();
+  const lowerVariants = variants.map((v) => v.toLowerCase());
   return (data ?? []).flatMap((c) => {
-    const matched = c.phone?.toLowerCase().startsWith(lower) ? c.phone : (c.second_phone ?? c.phone);
+    const phoneLower = c.phone?.toLowerCase();
+    const matched =
+      phoneLower && lowerVariants.some((v) => phoneLower.startsWith(v)) ? c.phone : (c.second_phone ?? c.phone);
     return matched
       ? [{ id: c.id, name: c.name, phone: matched, photoUrl: c.photo_url, address: c.address }]
       : [];
@@ -102,11 +116,14 @@ export async function searchCustomersByName(prefix: string): Promise<CustomerSug
 async function getOrCreateCustomerId(phone: string, name: string, address?: string): Promise<string> {
   // Either of the customer's numbers finds them -- otherwise ordering with
   // someone's second phone would add a duplicate customer.
-  const quoted = `"${phone.replace(/[\\"]/g, "\\$&")}"`;
+  const filters = phoneVariants(phone).flatMap((v) => {
+    const quoted = `"${v.replace(/[\\"]/g, "\\$&")}"`;
+    return [`phone.eq.${quoted}`, `second_phone.eq.${quoted}`];
+  });
   const { data: matches, error: findError } = await supabaseAdmin
     .from("customers")
     .select("id, address")
-    .or(`phone.eq.${quoted},second_phone.eq.${quoted}`)
+    .or(filters.join(","))
     .order("created_at")
     .limit(1);
   if (findError) throw findError;
