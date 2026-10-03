@@ -201,8 +201,13 @@ export default function WebsiteProductsPanel({
   // (/stock?filter=low) -- read once at mount; later manual toggling doesn't
   // touch the URL.
   const [lowStockOnly, setLowStockOnly] = useState(() => searchParams.get("filter") === "low");
-  const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState(25);
+  // Page and page size live in the URL (?page=&limit=) so a reload or shared
+  // link lands on the same view -- read once at mount, mirrored back below.
+  const [page, setPage] = useState(() => Math.max(parseInt(searchParams.get("page") ?? "", 10) || 1, 1));
+  const [pageSize, setPageSize] = useState(() => {
+    const n = parseInt(searchParams.get("limit") ?? "", 10);
+    return PAGE_SIZE_OPTIONS.includes(n) ? n : 25;
+  });
   // Product ids ticked for a bulk action.
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [bulkBusy, setBulkBusy] = useState(false);
@@ -993,6 +998,15 @@ export default function WebsiteProductsPanel({
   }
   const currentPage = Math.min(page, pageCount);
   const paged = filtered.slice((currentPage - 1) * pageSize, currentPage * pageSize);
+
+  // Mirror the effective page/page size into the URL (no refetch, no history entry).
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("page") === String(currentPage) && params.get("limit") === String(pageSize)) return;
+    params.set("page", String(currentPage));
+    params.set("limit", String(pageSize));
+    window.history.replaceState(null, "", `/stock?${params.toString()}`);
+  }, [currentPage, pageSize]);
 
   // --- Bulk selection --------------------------------------------------------
   const pageProductIds = useMemo(
