@@ -662,6 +662,7 @@ export type Database = {
           p_total?: number | null;
           p_payment_method?: PaymentMethod | null;
           p_delivery_at?: string | null;
+          p_customer_address?: string | null;
         };
         Returns: string;
       };
