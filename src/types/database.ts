@@ -594,6 +594,17 @@ export type Database = {
     };
     Views: Record<string, never>;
     Functions: {
+      dashboard_order_days: {
+        Args: { p_statuses: string[]; p_brand_id: string | null };
+        Returns: {
+          brand_id: string;
+          brand_name: string;
+          day: string;
+          revenue: number;
+          orders: number;
+          delivery_fees: number;
+        }[];
+      };
       live_change_stamp: {
         Args: Record<string, never>;
         Returns: string;

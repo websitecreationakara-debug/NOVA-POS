@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useId, useMemo, useRef, useState, useTransition, type ReactNode } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import {
   Banknote,
   BarChart3,
@@ -206,7 +206,8 @@ function buildDailySeries(orders: Order[], expenses: Expense[], fromDate: string
   return days;
 }
 
-const MONTH_LABELS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+const MARGIN_PAGE_SIZE_OPTIONS = [10, 25, 50];
+const MONTH_LABELS =["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
 // Year mode covers 366 days -- a daily series there is hundreds of thin
 // spikes, so it's bucketed by calendar month instead (Jan..Dec).
@@ -628,6 +629,14 @@ export default function AccountanceClient({
   const [expenseCategoryFilter, setExpenseCategoryFilter] = useState("");
   const [marginSearch, setMarginSearch] = useState("");
   const [marginCategoryFilter, setMarginCategoryFilter] = useState("");
+  // Margin Report paging lives in the URL (?page=&limit=) -- read once at
+  // mount, mirrored back by the effect below.
+  const urlParams = useSearchParams();
+  const [marginPage, setMarginPage] = useState(() => Math.max(parseInt(urlParams.get("page") ?? "", 10) || 1, 1));
+  const [marginPageSize, setMarginPageSize] = useState(() => {
+    const n = parseInt(urlParams.get("limit") ?? "", 10);
+    return MARGIN_PAGE_SIZE_OPTIONS.includes(n) ? n : 25;
+  });
   // Draft text for the Margin Report's inline Unit Cost / Selling Price
   // edits, keyed by product id -- same pattern as Stock's per-row editing.
   const [marginCostDrafts, setMarginCostDrafts] = useState<Record<string, string>>({});
@@ -797,6 +806,30 @@ export default function AccountanceClient({
       Array.from(new Set(marginReport.map((r) => r.categoryName).filter((c): c is string => Boolean(c)))).sort(),
     [marginReport]
   );
+  const marginPageCount = Math.max(1, Math.ceil(filteredMarginReport.length / marginPageSize));
+  // Snap back to page 1 whenever the result set changes under the current page.
+  const marginFilterKey = `${marginSearch}|${marginCategoryFilter}|${marginPageSize}|${marginReport.length}|${marginPageCount}`;
+  const [prevMarginFilterKey, setPrevMarginFilterKey] = useState(marginFilterKey);
+  if (marginFilterKey !== prevMarginFilterKey) {
+    setPrevMarginFilterKey(marginFilterKey);
+    setMarginPage(1);
+  }
+  const marginCurrentPage = Math.min(marginPage, marginPageCount);
+  const pagedMarginReport = filteredMarginReport.slice(
+    (marginCurrentPage - 1) * marginPageSize,
+    marginCurrentPage * marginPageSize
+  );
+  // Mirror the effective page/page size into the URL while the COGS tab is open
+  // (no refetch, no history entry). urlParams re-runs it after a tab/date push
+  // rebuilds the URL without them.
+  useEffect(() => {
+    if (tab !== "cogs") return;
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("page") === String(marginCurrentPage) && params.get("limit") === String(marginPageSize)) return;
+    params.set("page", String(marginCurrentPage));
+    params.set("limit", String(marginPageSize));
+    window.history.replaceState(null, "", `/accountance?${params.toString()}`);
+  }, [urlParams, tab, marginCurrentPage, marginPageSize]);
   // Feeds both the top-of-report "N products are missing a cost price" bar
   // and the bulk-fill modal -- unaffected by the search/category filter, so
   // the count and the modal's list always match the whole range.
@@ -1976,7 +2009,7 @@ export default function AccountanceClient({
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-black/[.06] dark:divide-white/[.08]">
-                    {filteredMarginReport.map((r) => {
+                    {pagedMarginReport.map((r) => {
                       const editing = editingMarginId === r.productId;
                       const costValue =
                         marginCostDrafts[r.productId] ??
@@ -2161,6 +2194,48 @@ export default function AccountanceClient({
                   </tbody>
                 </table>
               </div>
+
+              {filteredMarginReport.length > 0 && (
+                <div className="mt-3 flex flex-wrap items-center justify-between gap-3 border-t border-black/[.08] pt-3 text-sm dark:border-white/[.145]">
+                  <label className="flex items-center gap-2 text-xs text-zinc-500">
+                    Items per page
+                    <select
+                      value={marginPageSize}
+                      onChange={(e) => setMarginPageSize(Number(e.target.value))}
+                      className="rounded border border-black/[.15] bg-card px-2 py-1 text-xs text-foreground dark:border-white/[.2]"
+                    >
+                      {MARGIN_PAGE_SIZE_OPTIONS.map((n) => (
+                        <option key={n} value={n}>
+                          {n}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setMarginPage(marginCurrentPage - 1)}
+                      disabled={marginCurrentPage <= 1}
+                      className="flex items-center gap-1 rounded border border-black/[.15] px-2.5 py-1 text-xs disabled:opacity-30 dark:border-white/[.2]"
+                    >
+                      <ChevronLeft className="size-3.5" />
+                      Prev
+                    </button>
+                    <span className="tabular-nums text-zinc-500">
+                      Page {marginCurrentPage} of {marginPageCount}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setMarginPage(marginCurrentPage + 1)}
+                      disabled={marginCurrentPage >= marginPageCount}
+                      className="flex items-center gap-1 rounded border border-black/[.15] px-2.5 py-1 text-xs disabled:opacity-30 dark:border-white/[.2]"
+                    >
+                      Next
+                      <ChevronRight className="size-3.5" />
+                    </button>
+                  </div>
+                </div>
+              )}
             </section>
           </div>
         )}

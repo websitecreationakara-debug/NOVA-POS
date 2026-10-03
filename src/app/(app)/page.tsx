@@ -20,6 +20,7 @@ import {
   ALL_BUSINESSES_ID,
   getBrands,
   getDashboardStats,
+  getLowStockCount,
   TOP_PRODUCT_MIN_PRICE,
   getWebsiteProductTotal,
 } from "@/lib/supabase/queries";
@@ -81,6 +82,32 @@ async function WebsiteProductCount() {
   return <>{total ?? "—"}</>;
 }
 
+// Low-stock reads the storefront APIs too -- streamed like the product count so
+// the stats don't wait on it. getLowStockCount is cached, so the card and the
+// banner below share one lookup.
+async function LowStockCount() {
+  return <>{await getLowStockCount()}</>;
+}
+
+async function LowStockBanner() {
+  const count = await getLowStockCount();
+  if (count <= 0) return null;
+  return (
+    <Link
+      href="/stock"
+      className="flex items-center gap-3 rounded-2xl border border-amber-300 bg-amber-50 px-5 py-4 text-sm text-amber-800 transition-colors hover:bg-amber-100 dark:border-amber-900 dark:bg-amber-950/60 dark:text-amber-300 dark:hover:bg-amber-950"
+    >
+      <AlertTriangle className="size-5 shrink-0" />
+      <span className="font-medium">
+        {count} item{count === 1 ? "" : "s"} at or below the low-stock level
+      </span>
+      <span className="ml-auto flex items-center gap-1 font-semibold">
+        Restock <ArrowRight className="size-4" />
+      </span>
+    </Link>
+  );
+}
+
 export default async function Home({
   searchParams,
 }: {
@@ -107,15 +134,6 @@ export default async function Home({
   const params = await searchParams;
   const { mode, week, month, quarter, year, fromDate, toDate } = resolveRange(params);
   const brandParam = params.brand;
-  const brands = await getBrands();
-  // Same fixed display order as the chips themselves (see brandsOrdered
-  // below) -- an unrecognized/stale ?brand= falls back to "All Business"
-  // rather than erroring.
-  const currentBrandId =
-    brandParam === ALL_BUSINESSES_ID || brands.some((b) => b.id === brandParam)
-      ? (brandParam ?? ALL_BUSINESSES_ID)
-      : ALL_BUSINESSES_ID;
-  const stats = await getDashboardStats(currentBrandId, fromDate, toDate);
 
   const period = rangeLabel(fromDate, toDate);
 
@@ -133,10 +151,27 @@ export default async function Home({
         year: params.top_year,
       })
     : { mode, week, month, quarter, year, fromDate, toDate };
-  const topStats =
-    topRange.fromDate === fromDate && topRange.toDate === toDate
-      ? stats
-      : await getDashboardStats(currentBrandId, topRange.fromDate, topRange.toDate);
+  const topSameRange = topRange.fromDate === fromDate && topRange.toDate === toDate;
+  const loadStats = async (brandId: string) => {
+    const [main, top] = await Promise.all([
+      getDashboardStats(brandId, fromDate, toDate),
+      topSameRange ? null : getDashboardStats(brandId, topRange.fromDate, topRange.toDate),
+    ]);
+    return { stats: main, topStats: top ?? main };
+  };
+
+  // The brand list and the stats don't depend on each other, so start them
+  // together (optimistically trusting ?brand=) instead of one after the other.
+  const [brands, first] = await Promise.all([getBrands(), loadStats(brandParam ?? ALL_BUSINESSES_ID)]);
+  // Same fixed display order as the chips themselves (see brandsOrdered
+  // below) -- an unrecognized/stale ?brand= falls back to "All Business"
+  // rather than erroring.
+  const currentBrandId =
+    brandParam === ALL_BUSINESSES_ID || brands.some((b) => b.id === brandParam)
+      ? (brandParam ?? ALL_BUSINESSES_ID)
+      : ALL_BUSINESSES_ID;
+  const { stats, topStats } =
+    currentBrandId === (brandParam ?? ALL_BUSINESSES_ID) ? first : await loadStats(currentBrandId);
   const topPeriod = rangeLabel(topRange.fromDate, topRange.toDate);
 
   // Same brand order as the header chips, not whatever order orders happened
@@ -210,7 +245,11 @@ export default async function Home({
     },
     {
       label: "Low Stock Items",
-      value: stats.lowStockCount,
+      value: (
+        <Suspense fallback={<span className="text-muted-foreground">…</span>}>
+          <LowStockCount />
+        </Suspense>
+      ),
       icon: AlertTriangle,
       tint: "bg-rose-500/15 text-rose-600 dark:text-rose-400",
       trend: null,
@@ -326,21 +365,9 @@ export default async function Home({
         </Link>
       </div>
 
-      {stats.lowStockCount > 0 && (
-        <Link
-          href="/stock"
-          className="flex items-center gap-3 rounded-2xl border border-amber-300 bg-amber-50 px-5 py-4 text-sm text-amber-800 transition-colors hover:bg-amber-100 dark:border-amber-900 dark:bg-amber-950/60 dark:text-amber-300 dark:hover:bg-amber-950"
-        >
-          <AlertTriangle className="size-5 shrink-0" />
-          <span className="font-medium">
-            {stats.lowStockCount} item{stats.lowStockCount === 1 ? "" : "s"} at or below the
-            low-stock level
-          </span>
-          <span className="ml-auto flex items-center gap-1 font-semibold">
-            Restock <ArrowRight className="size-4" />
-          </span>
-        </Link>
-      )}
+      <Suspense fallback={null}>
+        <LowStockBanner />
+      </Suspense>
 
       <DashboardRangeBar
         brands={brandsOrdered}
