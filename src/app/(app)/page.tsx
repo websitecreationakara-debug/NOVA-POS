@@ -214,6 +214,16 @@ export default async function Home({
     dailyData: b.data?.dailyOrders ?? [],
   }));
 
+  // Cards that drill down carry the selected business and date range along, so the
+  // page they open shows the same slice of data the card was summing.
+  const accountanceHref = (tab: string) =>
+    `/accountance?${new URLSearchParams({ brand: currentBrandId, mode: "day", from: fromDate, to: toDate, tab })}`;
+  const ordersHref = `/orders?${new URLSearchParams({
+    ...(currentBrandId === ALL_BUSINESSES_ID ? {} : { brand: currentBrandId }),
+    from: fromDate,
+    to: toDate,
+  })}`;
+
   const statCards = [
     {
       label: `Total Revenue (${period})`,
@@ -221,7 +231,7 @@ export default async function Home({
       icon: DollarSign,
       tint: "bg-amber-400/15 text-amber-600 dark:text-amber-400",
       trend: weekTrend(stats.dailyRevenue),
-      href: "/accountance?tab=reports",
+      href: accountanceHref("reports"),
     },
     {
       label: `Orders (${period})`,
@@ -229,7 +239,7 @@ export default async function Home({
       icon: ShoppingCart,
       tint: "bg-blue-500/15 text-blue-600 dark:text-blue-400",
       trend: weekTrend(stats.dailyOrders),
-      href: "/orders",
+      href: ordersHref,
     },
     {
       label: "Total Products",
@@ -261,7 +271,7 @@ export default async function Home({
       icon: Layers,
       tint: "bg-orange-500/15 text-orange-600 dark:text-orange-400",
       trend: null,
-      href: "/accountance?tab=cogs",
+      href: accountanceHref("cogs"),
     },
     {
       label: `Gross Profit (${period})`,
@@ -269,7 +279,7 @@ export default async function Home({
       icon: PiggyBank,
       tint: "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400",
       trend: null,
-      href: "/accountance?tab=cogs",
+      href: accountanceHref("cogs"),
     },
     {
       label: `Gross Margin % (${period})`,
@@ -277,7 +287,7 @@ export default async function Home({
       icon: Percent,
       tint: "bg-teal-500/15 text-teal-600 dark:text-teal-400",
       trend: null,
-      href: "/accountance?tab=cogs",
+      href: accountanceHref("cogs"),
     },
     {
       label: `Waste (${period})`,
@@ -285,7 +295,7 @@ export default async function Home({
       icon: Trash2,
       tint: "bg-red-500/15 text-red-600 dark:text-red-400",
       trend: null,
-      href: "/accountance?tab=cogs",
+      href: accountanceHref("cogs"),
     },
     {
       label: `Promotions (${period})`,
@@ -301,7 +311,7 @@ export default async function Home({
       icon: Truck,
       tint: "bg-sky-500/15 text-sky-600 dark:text-sky-400",
       trend: null,
-      href: "/orders",
+      href: ordersHref,
     },
   ];
 
