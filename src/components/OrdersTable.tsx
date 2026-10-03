@@ -122,6 +122,14 @@ export default function OrdersTable({
   const selectedMonth = wholeMonth(from, to);
   // Month the arrows step from: the chosen month, else the month of "From", else this month.
   const baseMonth = selectedMonth || (MONTH_RE.test(from.slice(0, 7)) ? from.slice(0, 7) : currentMonth);
+  // Picking a day shows just that day: To follows From, unless a custom range is
+  // already set (not the whole month / all time / a single day) -- then only From
+  // moves, and To is pulled along only if it would end up before From.
+  function selectFrom(day: string) {
+    if (!day) return navigate({ from: "", range: "" });
+    const customRange = to !== "" && !allTime && !selectedMonth && to !== from;
+    navigate({ from: day, to: customRange && day <= to ? to : day, range: "" });
+  }
   function selectMonth(ym: string) {
     if (!MONTH_RE.test(ym)) return;
     navigate({ from: `${ym}-01`, to: monthEnd(ym), range: "" });
@@ -255,7 +263,7 @@ export default function OrdersTable({
             type="date"
             value={from}
             max={to || undefined}
-            onChange={(e) => navigate({ from: e.target.value, range: "" })}
+            onChange={(e) => selectFrom(e.target.value)}
             className={dateInputClass}
           />
         </label>

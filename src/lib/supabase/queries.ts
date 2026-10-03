@@ -807,23 +807,23 @@ export async function getOrdersList(
 export async function getOrdersSummary(): Promise<{
   total: number;
   newToday: number;
+  preOrders: number;
   inProgress: number;
-  delivered: number;
 }> {
   const today = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Phnom_Penh" });
   const paid = () =>
     supabaseAdmin.from("orders").select("id", { count: "exact", head: true }).eq("status", "paid");
-  const [total, newToday, inProgress, delivered] = await Promise.all([
+  const [total, newToday, preOrders, inProgress] = await Promise.all([
     paid(),
     paid().eq("fulfillment_status", "new_order").gte("paid_at", `${today}T00:00:00+07:00`),
+    paid().eq("fulfillment_status", "pre_order"),
     paid().in("fulfillment_status", ["new_order", "processing"]),
-    paid().in("fulfillment_status", ["delivered", "complete"]),
   ]);
   return {
     total: total.count ?? 0,
     newToday: newToday.count ?? 0,
+    preOrders: preOrders.count ?? 0,
     inProgress: inProgress.count ?? 0,
-    delivered: delivered.count ?? 0,
   };
 }
 

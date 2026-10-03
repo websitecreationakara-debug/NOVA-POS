@@ -55,8 +55,11 @@ export default async function OrdersPage({
 
   // One page of orders (filters applied in the database) -- the summary cards
   // and total badge come from separate count queries over every paid order.
-  const [{ rows: orders, total }, counts, brands, user] = await Promise.all([
+  const [{ rows: orders, total }, { total: completeCount }, counts, brands, user] = await Promise.all([
     getOrdersList({ status, brandId: brand, q, from, to, page, limit }),
+    // The Complete card follows the same business / date / search filters as the
+    // list (but not the status tab), so it shows how many were completed in view.
+    getOrdersList({ status: "complete", brandId: brand, q, from, to, page: 1, limit: 1 }),
     getOrdersSummary(),
     getBrands(),
     getSessionUser(),
@@ -66,8 +69,9 @@ export default async function OrdersPage({
 
   const summary: { label: string; value: number; href: string }[] = [
     { label: "New today", value: counts.newToday, href: "/orders?status=new_order" },
+    { label: "Pre-Order", value: counts.preOrders, href: "/orders?status=pre_order" },
     { label: "Awaiting delivery", value: counts.inProgress, href: "/orders?status=processing" },
-    { label: "Delivered", value: counts.delivered, href: "/orders?status=delivered" },
+    { label: "Complete", value: completeCount, href: "/orders?status=complete" },
   ];
 
   return (
@@ -87,7 +91,7 @@ export default async function OrdersPage({
         )}
       </header>
 
-      <div className="grid grid-cols-3 gap-2 px-3 pt-4 sm:gap-3 sm:px-6">
+      <div className="grid grid-cols-2 gap-2 px-3 pt-4 sm:gap-3 sm:px-6 lg:grid-cols-4">
         {summary.map((s) => (
           <Link
             key={s.label}
