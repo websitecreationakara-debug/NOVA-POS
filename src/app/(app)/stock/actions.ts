@@ -68,12 +68,12 @@ async function backfillOrderItemCogs(productId: string): Promise<void> {
   );
 }
 
-// The Margin Report's Unit Cost is the cost recorded on each sold line, so a
-// cost typed there overwrites only the lines the report is showing -- the
-// backfill above only touches lines with no cost at all, which left an edited
-// cost invisible for any already-priced product. Report-only: it never touches
-// the product's cost_price or Stock's Total, and sales outside the brand/date
-// range keep their recorded cost.
+// The Margin Report's Unit Cost is the product's current cost (see
+// getMarginReport), so a cost typed there is saved as the product's cost in
+// Stock too (setProductCostAction) -- otherwise the report would show the old
+// cost again on refresh. It also overwrites the recorded cost on the lines the
+// report is showing (the backfill above only touches lines with no cost at
+// all); sales outside the brand/date range keep their recorded cost.
 export async function setMarginUnitCostAction(input: {
   productId: string;
   unitCost: number;
@@ -86,6 +86,11 @@ export async function setMarginUnitCostAction(input: {
   if (Number.isNaN(unitCost) || unitCost < 0) {
     throw new Error("Unit cost cannot be negative");
   }
+
+  // A Cost Control Set's cost always comes from its own ingredients (see
+  // getEffectiveProductCost), so a cost typed here could never stick.
+  const { data: set } = await supabaseAdmin.from("sets").select("id").eq("linked_product_id", productId).maybeSingle();
+  if (set) throw new Error("This product is a Cost Control Set -- change its cost in Marketing > Cost Control.");
 
   let query = supabaseAdmin
     .from("order_items")
@@ -111,6 +116,8 @@ export async function setMarginUnitCostAction(input: {
   );
   const failed = results.find((r) => r.error);
   if (failed?.error) throw failed.error;
+
+  await setProductCostAction({ productId, costPrice: unitCost });
 
   revalidatePath("/accountance");
 }

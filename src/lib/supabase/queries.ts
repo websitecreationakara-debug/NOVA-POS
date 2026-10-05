@@ -8,7 +8,7 @@ import { formatInvoiceNumber, invoiceMonthStamp, invoiceMonthStartIso } from "@/
 import { ppDay, ppDayEnd, ppDayStart } from "@/lib/phnomPenhTime";
 import { COUNTED_FULFILLMENT_STATUSES } from "@/lib/orderStatus";
 import { ALL_PAYMENT_METHODS, type PaymentMethod } from "@/lib/paymentMethods";
-import { summarizeMarginLines, type MarginLine } from "@/lib/cogs";
+import { summarizeMarginLines, unitsSoldByCost, type MarginLine } from "@/lib/cogs";
 import { productWeightGrams } from "@/lib/costControl";
 import { getEffectiveProductCost } from "@/lib/websiteProducts/purchaseCosts";
 import type {
@@ -285,6 +285,9 @@ export type DashboardStats = {
   // Delivery fees charged on the paid orders in the selected range (a part of
   // each order's total, so it's already inside totalRevenue).
   deliveryFees: number;
+  // Expenses logged (Accountance > Expenses) with an expense date in the same
+  // [fromDate, toDate] range and business.
+  expenseTotal: number;
 };
 
 // Total products across the three storefront catalogs (what the Sales/Stock
@@ -482,18 +485,29 @@ export async function getDashboardStats(
     .lte("created_at", ppDayEnd(toDate));
   if (brandId !== ALL_BUSINESSES_ID) adjustmentsQuery = adjustmentsQuery.eq("products.brand_id", brandId);
 
+  // Expenses -- by their own expense_date (a plain YYYY-MM-DD), same business
+  // scoping as getExpensesForDateRange.
+  let expensesQuery = supabaseAdmin
+    .from("expenses")
+    .select("amount")
+    .gte("expense_date", fromDate)
+    .lte("expense_date", toDate);
+  if (brandId !== ALL_BUSINESSES_ID) expensesQuery = expensesQuery.eq("brand_id", brandId);
+
   const [
     { data: orderDays, error: ordersError },
     { count: totalProducts, error: prodError },
     { data: recentOrdersData, error: recentError },
     { data: orderItemsData, error: itemsError },
     { data: adjustmentsData, error: adjError },
+    { data: expensesData, error: expensesError },
   ] = await Promise.all([
     loadOrderDays(brandId),
     productsQuery,
     recentOrdersQuery,
     selectAllParallel(makeOrderItemsQuery),
     selectAll(adjustmentsQuery.order("id")),
+    selectAll(expensesQuery.order("id")),
   ]);
 
   if (ordersError) throw ordersError;
@@ -501,6 +515,8 @@ export async function getDashboardStats(
   if (recentError) throw recentError;
   if (itemsError) throw itemsError;
   if (adjError) throw adjError;
+  if (expensesError) throw expensesError;
+  const expenseTotal = round2((expensesData ?? []).reduce((sum, e) => sum + Number(e.amount), 0));
 
   // Scoped to the selected [fromDate, toDate] range (the Dashboard's own
   // Day/Week/Month/Quarter/Year picker, same semantics as Accountance's) --
@@ -655,6 +671,7 @@ export async function getDashboardStats(
     wasteCost,
     promotionCost,
     deliveryFees,
+    expenseTotal,
   };
 }
 
@@ -1346,12 +1363,16 @@ export type MarginReportRow = {
   categoryName: string | null;
   unitsSold: number;
   revenue: number;
-  // null (not 0/undefined) whenever any sold line in range had no cost
-  // price -- see hasUnknownCost. Never a silently-wrong number.
+  // The product's current cost (Stock's), the same for every date range; only
+  // a product with no current cost falls back to the latest cost recorded in
+  // range. null (not 0/undefined) when there's no cost at all -- never a
+  // silently-wrong number.
   unitCost: number | null;
-  // Different, older per-unit costs that other sales in this range were made
-  // with (the cost changed during the period); empty when it never did.
-  earlierUnitCosts: number[];
+  // Units sold at each recorded per-sale cost in this range, when any differs
+  // from unitCost (the cost changed over time). Total COGS is built from these
+  // real costs, so unitCost x unitsSold won't always equal it; empty when they
+  // all match.
+  soldAt: { unitCost: number; units: number }[];
   // Prefill for the "Add cost price" input when unitCost is null -- the
   // product's current effective cost (Stock's Purchase Cost Total when
   // linked to a website listing, else its own cost_price). Same source
@@ -1400,6 +1421,18 @@ export async function getMarginReport(
     for (const p of (products ?? []) as unknown as { id: string; name: string; price: number; categories: { name: string } | null }[]) productById.set(p.id, p);
   }
 
+  // Unit Cost is each product's current cost (see getEffectiveProductCost), so
+  // it reads the same whichever date range is viewed. Looked up a few products
+  // at a time -- every lookup is several queries.
+  const currentCostByProduct = new Map<string, number | null>();
+  for (let i = 0; i < productIds.length; i += 25) {
+    await Promise.all(
+      productIds.slice(i, i + 25).map(async (id) => {
+        currentCostByProduct.set(id, await getEffectiveProductCost(id).catch(() => null));
+      })
+    );
+  }
+
   const byProduct = new Map<string, MarginLine[]>();
   for (const item of items) {
     const lines = byProduct.get(item.product_id) ?? [];
@@ -1415,7 +1448,7 @@ export async function getMarginReport(
 
   const rows = Array.from(byProduct.entries()).map(([productId, lines]) => {
     const product = productById.get(productId);
-    const summary = summarizeMarginLines(lines);
+    const summary = summarizeMarginLines(lines, currentCostByProduct.get(productId) ?? null);
     return {
       productId,
       name: product?.name ?? "—",
@@ -1437,6 +1470,82 @@ export async function getMarginReport(
   );
 
   return rows.sort((a, b) => b.revenue - a.revenue);
+}
+
+export type ProductMarginDetail = {
+  name: string;
+  summary: ReturnType<typeof summarizeMarginLines>;
+  // Every cost the product was sold at in range, with its units -- the full
+  // list behind the Margin Report row's short "N sold at $x" preview.
+  costBreakdown: { unitCost: number; units: number; cogs: number; share: number }[];
+  sales: {
+    orderId: string;
+    paidAt: string | null;
+    quantity: number;
+    unitPrice: number;
+    unitCost: number | null;
+    lineTotal: number;
+    cogs: number | null;
+  }[];
+};
+
+// One product's Margin Report row opened up: same brand/date-range scoping and
+// numbers as getMarginReport, plus the full cost breakdown and each sale.
+export async function getProductMarginDetail(
+  productId: string,
+  brandId: string,
+  fromDate: string,
+  toDate: string
+): Promise<ProductMarginDetail | null> {
+  const { data: product, error: productError } = await supabaseAdmin
+    .from("products")
+    .select("name")
+    .eq("id", productId)
+    .maybeSingle();
+  if (productError) throw productError;
+  if (!product) return null;
+
+  let query = supabaseAdmin
+    .from("order_items")
+    .select("order_id, quantity, unit_price, line_total, cogs, unit_cost, orders!inner(status, paid_at, brand_id)")
+    .eq("product_id", productId)
+    .eq("orders.status", "paid")
+    .in("orders.fulfillment_status", COUNTED_FULFILLMENT_STATUSES)
+    .gte("orders.paid_at", ppDayStart(fromDate))
+    .lte("orders.paid_at", ppDayEnd(toDate));
+  if (brandId !== ALL_BUSINESSES_ID) query = query.eq("orders.brand_id", brandId);
+  const { data: items, error } = await selectAll(query.order("id"));
+  if (error) throw error;
+
+  const sales = items
+    .map((i) => ({
+      orderId: i.order_id,
+      paidAt: (i.orders as unknown as { paid_at: string | null } | null)?.paid_at ?? null,
+      quantity: Number(i.quantity),
+      unitPrice: Number(i.unit_price),
+      unitCost: i.unit_cost === null ? (i.cogs === null ? null : round2(Number(i.cogs) / Number(i.quantity))) : Number(i.unit_cost),
+      lineTotal: Number(i.line_total),
+      cogs: i.cogs === null ? null : Number(i.cogs),
+    }))
+    .sort((a, b) => (b.paidAt ?? "").localeCompare(a.paidAt ?? ""));
+
+  const lines: MarginLine[] = sales.map((s) => ({
+    quantity: s.quantity,
+    lineTotal: s.lineTotal,
+    cogs: s.cogs,
+    unitCost: s.unitCost,
+    paidAt: s.paidAt,
+  }));
+  const currentCost = await getEffectiveProductCost(productId).catch(() => null);
+  const summary = summarizeMarginLines(lines, currentCost);
+  const totalUnits = lines.reduce((s, l) => s + l.quantity, 0);
+  const costBreakdown = unitsSoldByCost(lines).map((c) => ({
+    ...c,
+    cogs: round2(c.unitCost * c.units),
+    share: totalUnits === 0 ? 0 : round2((c.units / totalUnits) * 100),
+  }));
+
+  return { name: product.name, summary, costBreakdown, sales };
 }
 
 export async function getExpensesForDateRange(

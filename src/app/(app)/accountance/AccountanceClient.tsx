@@ -49,6 +49,10 @@ import type { AccountanceTab } from "./page";
 
 type RangeMode = "day" | "week" | "month" | "quarter" | "year";
 
+// How many "N sold at $x" lines a Margin Report row shows; the rest are on the
+// product's own page, opened by clicking the row.
+const MARGIN_SOLD_AT_PREVIEW = 2;
+
 const TAB_LABELS: Record<AccountanceTab, string> = {
   reconciliation: "Cash Reconciliation",
   expenses: "Expense & Accounts Payable",
@@ -533,6 +537,7 @@ function TrendChip({ pct, higherIsBetter = true }: { pct: number | null; higherI
 export default function AccountanceClient({
   brands,
   currentBrand,
+  selectedBrandId,
   mode,
   week,
   month,
@@ -553,6 +558,10 @@ export default function AccountanceClient({
 }: {
   brands: Brand[];
   currentBrand: Brand;
+  // The business picked for the other tabs (?brand=). The Expense tab always
+  // shows All Businesses (currentBrand), but keeps this in the URL so the other
+  // tabs return to it.
+  selectedBrandId: string;
   mode: RangeMode;
   week: string;
   month: string;
@@ -597,9 +606,7 @@ export default function AccountanceClient({
   // at "All Businesses", a whole month, or a whole year, not just a single
   // business on a single day. Seeded from the current view as a starting
   // point, not a constraint.
-  const [expenseBrandId, setExpenseBrandId] = useState(
-    currentBrand.id === ALL_BUSINESSES_ID ? brands[0].id : currentBrand.id
-  );
+  const [expenseBrandId, setExpenseBrandId] = useState(ALL_BUSINESSES_ID);
   const [expenseDate, setExpenseDate] = useState(fromDate);
   // Keeps following the date filter above as the user changes it (switching
   // Day/Week/Month or stepping the date) -- without this, `expenseDate` only
@@ -679,7 +686,7 @@ export default function AccountanceClient({
   }) {
     const targetMode = overrides.mode ?? mode;
     const params = new URLSearchParams();
-    params.set("brand", overrides.brand ?? currentBrand.id);
+    params.set("brand", overrides.brand ?? selectedBrandId);
     params.set("mode", targetMode);
     if (targetMode === "week") params.set("week", overrides.week ?? week);
     else if (targetMode === "month") params.set("month", overrides.month ?? month);
@@ -894,7 +901,7 @@ export default function AccountanceClient({
 
   // Saves whichever of Unit Cost / Selling Price the row's drafts actually
   // changed. A unit cost re-prices only this report's sold lines for the
-  // product (see setMarginUnitCostAction) -- Stock's cost is left alone. A selling-price
+  // product and updates the product's cost in Stock (see setMarginUnitCostAction). A selling-price
   // change only applies going forward -- past lines' revenue was already
   // recorded at sale time and isn't rewritten.
   function saveMarginRow(r: MarginReportRow) {
@@ -934,6 +941,8 @@ export default function AccountanceClient({
           });
         if (priceChanged) await setProductPriceAction({ productId: r.productId, price: price as number });
         router.refresh();
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Failed to save");
       } finally {
         cancelMarginEdit(r.productId);
       }
@@ -973,7 +982,7 @@ export default function AccountanceClient({
 
   function startEditExpense(expense: Expense) {
     setEditingExpenseId(expense.id);
-    setExpenseBrandId(expense.brand_id);
+    setExpenseBrandId(expense.brand_id ?? ALL_BUSINESSES_ID);
     setExpenseDate(expense.expense_date);
     setExpenseDesc(expense.description);
     setExpenseAmount(String(expense.amount));
@@ -1076,7 +1085,8 @@ export default function AccountanceClient({
   // Both actions are disabled (not hidden -- the combined stats/expense log
   // still read fine) until a single business and a single day are picked.
   const isAllBusinesses = currentBrand.id === ALL_BUSINESSES_ID;
-  function brandNameFor(brandId: string) {
+  function brandNameFor(brandId: string | null) {
+    if (brandId === null || brandId === ALL_BUSINESSES_ID) return "All Businesses";
     return brands.find((b) => b.id === brandId)?.name ?? "—";
   }
 
@@ -1088,18 +1098,26 @@ export default function AccountanceClient({
           being split across a header row and a separate filter row. */}
       <div className="mb-4 flex flex-wrap items-center gap-3 rounded-lg border border-black/[.08] p-3 dark:border-white/[.145]">
         <h1 className="mr-1 text-lg font-medium">Accounting</h1>
-        <select
-          className="rounded border border-black/[.15] bg-card px-3 py-1.5 text-sm text-foreground dark:border-white/[.2]"
-          value={currentBrand.id}
-          onChange={(e) => switchBrand(e.target.value)}
-        >
-          <option value={ALL_BUSINESSES_ID}>All Businesses</option>
-          {brands.map((b) => (
-            <option key={b.id} value={b.id}>
-              {b.name}
-            </option>
-          ))}
-        </select>
+        {tab === "expenses" ? (
+          // The Expense tab is always every business -- nothing to pick, so a
+          // plain box with no dropdown arrow.
+          <span className="rounded border border-black/[.15] bg-card px-3 py-1.5 text-sm text-foreground dark:border-white/[.2]">
+            All Businesses
+          </span>
+        ) : (
+          <select
+            className="rounded border border-black/[.15] bg-card px-3 py-1.5 text-sm text-foreground dark:border-white/[.2]"
+            value={currentBrand.id}
+            onChange={(e) => switchBrand(e.target.value)}
+          >
+            <option value={ALL_BUSINESSES_ID}>All Businesses</option>
+            {brands.map((b) => (
+              <option key={b.id} value={b.id}>
+                {b.name}
+              </option>
+            ))}
+          </select>
+        )}
 
         {/* Day/Week/Month/Quarter/Year -- Day keeps the free-form From/To
             range below (also covers "Custom Date Range"); the rest swap in
@@ -1456,9 +1474,8 @@ export default function AccountanceClient({
         <section className="rounded-lg border border-black/[.08] p-4 dark:border-white/[.145]">
           <h2 className="font-medium">Expense log</h2>
           <p className="mt-1 text-xs text-zinc-500">
-            {isAllBusinesses || !isSingleDay
-              ? "Showing expenses for the filter above -- logging a new one below works for any business and day, regardless of that filter."
-              : "Log an expense for any business and day below -- not just the one currently filtered above."}
+            Showing expenses for all businesses for the date filter above -- a new expense is logged for All
+            Businesses on any day, regardless of that filter.
           </p>
           <div className="mt-2 flex items-start gap-2 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-900 dark:bg-amber-950/60 dark:text-amber-300">
             <Info className="mt-0.5 size-3.5 shrink-0" />
@@ -1476,17 +1493,23 @@ export default function AccountanceClient({
               onChange={(e) => setExpenseDate(e.target.value)}
               className="rounded border border-black/[.15] bg-transparent px-3 py-1.5 text-sm dark:border-white/[.2]"
             />
-            <select
-              value={expenseBrandId}
-              onChange={(e) => setExpenseBrandId(e.target.value)}
-              className="rounded border border-black/[.15] bg-transparent px-3 py-1.5 text-sm dark:border-white/[.2]"
-            >
-              {brands.map((b) => (
-                <option key={b.id} value={b.id}>
-                  {b.name}
-                </option>
-              ))}
-            </select>
+            {expenseBrandId === ALL_BUSINESSES_ID ? (
+              // Only one choice, so a plain box with no dropdown arrow.
+              <span className="rounded border border-black/[.15] bg-transparent px-3 py-1.5 text-sm dark:border-white/[.2]">
+                All Businesses
+              </span>
+            ) : (
+              // Editing an older expense that was logged against one business:
+              // it can keep that business or move to All Businesses.
+              <select
+                value={expenseBrandId}
+                onChange={(e) => setExpenseBrandId(e.target.value)}
+                className="rounded border border-black/[.15] bg-transparent px-3 py-1.5 text-sm dark:border-white/[.2]"
+              >
+                <option value={ALL_BUSINESSES_ID}>All Businesses</option>
+                <option value={expenseBrandId}>{brandNameFor(expenseBrandId)}</option>
+              </select>
+            )}
             <input
               ref={expenseDescRef}
               type="text"
@@ -2035,7 +2058,25 @@ export default function AccountanceClient({
                       const effectiveGrossProfit = r.grossProfit ?? effectiveMargin.grossProfit;
                       const effectiveGrossMarginPct = r.grossMarginPct ?? effectiveMargin.grossMarginPct;
                       return (
-                      <tr key={r.productId} className={editing ? "bg-blue-50 dark:bg-blue-950/30" : undefined}>
+                      <tr
+                        key={r.productId}
+                        // Clicking the row (not a button/input inside it) opens that
+                        // product's own page: every cost it sold at and each sale.
+                        onClick={(e) => {
+                          if ((e.target as HTMLElement).closest("button, input")) return;
+                          router.push(
+                            `/accountance/margin/${r.productId}?${new URLSearchParams({
+                              brand: currentBrand.id,
+                              from: fromDate,
+                              to: toDate,
+                              back: urlFor({}),
+                            })}`
+                          );
+                        }}
+                        className={`cursor-pointer hover:bg-black/[.03] dark:hover:bg-white/[.04] ${
+                          editing ? "bg-blue-50 dark:bg-blue-950/30" : ""
+                        }`}
+                      >
                         <td className="py-2 pr-3">{r.name}</td>
                         <td className="py-2 pr-3 text-right">{r.unitsSold}</td>
                         <td className="py-2 pr-3 text-right">{formatMoney(r.revenue)}</td>
@@ -2119,12 +2160,21 @@ export default function AccountanceClient({
                                   {formatMoney(effectiveUnitCost)}
                                 </button>
                               )}
-                              {r.earlierUnitCosts.length > 0 && (
+                              {r.soldAt.length > 0 && (
                                 <div
                                   className="text-xs text-zinc-500"
-                                  title="Earlier sales in this period were made at these older costs; each sale keeps its own cost in Total COGS"
+                                  title="Units sold at each cost in this period; each sale keeps its own cost in Total COGS"
                                 >
-                                  was {r.earlierUnitCosts.map(formatMoney).join(", ")}
+                                  {r.soldAt.slice(0, MARGIN_SOLD_AT_PREVIEW).map((s) => (
+                                    <div key={s.unitCost}>
+                                      {s.units} sold at {formatMoney(s.unitCost)}
+                                    </div>
+                                  ))}
+                                  {r.soldAt.length > MARGIN_SOLD_AT_PREVIEW && (
+                                    <div className="font-medium text-brand">
+                                      +{r.soldAt.length - MARGIN_SOLD_AT_PREVIEW} more -- click the row to see all
+                                    </div>
+                                  )}
                                 </div>
                               )}
                             </td>

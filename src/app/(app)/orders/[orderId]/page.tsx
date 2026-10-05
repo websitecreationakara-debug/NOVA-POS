@@ -7,10 +7,16 @@ import DeleteOrderButton from "@/components/DeleteOrderButton";
 
 export default async function OrderDetailPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ orderId: string }>;
+  searchParams: Promise<{ back?: string }>;
 }) {
   const { orderId } = await params;
+  const { back } = await searchParams;
+  // Opened from a Margin Report product page? Then "back" goes there instead of
+  // the Orders list. Only Accounting pages are accepted (it's a query string).
+  const backToMargin = back?.startsWith("/accountance") && !back.startsWith("//") ? back : null;
   const [invoice, brands] = await Promise.all([getInvoice(orderId), getBrands()]);
 
   if (!invoice) notFound();
@@ -34,8 +40,8 @@ export default async function OrderDetailPage({
   return (
     <main className="mx-auto max-w-3xl p-6">
       <div className="mb-4 flex items-center justify-between">
-        <Link href="/orders" className="text-sm text-muted-foreground hover:underline">
-          ← Back to Orders
+        <Link href={backToMargin ?? "/orders"} className="text-sm text-muted-foreground hover:underline">
+          {backToMargin ? "← Back to Margin Report" : "← Back to Orders"}
         </Link>
         <div className="flex items-center gap-4">
           <Link href={`/invoice/${order.id}`} className="text-sm text-brand hover:underline">

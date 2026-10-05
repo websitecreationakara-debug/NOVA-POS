@@ -55,11 +55,26 @@ export default async function OrdersPage({
 
   // One page of orders (filters applied in the database) -- the summary cards
   // and total badge come from separate count queries over every paid order.
-  const [{ rows: orders, total }, { total: completeCount }, counts, brands, user] = await Promise.all([
+  // The Complete / New Order / Delivered / Cancel cards follow the same
+  // business / date / search filters as the list (but not the status tab), so
+  // each shows how many orders in that status are in view.
+  const countFor = (s: FulfillmentStatus) =>
+    getOrdersList({ status: s, brandId: brand, q, from, to, page: 1, limit: 1 });
+  const [
+    { rows: orders, total },
+    { total: completeCount },
+    { total: newOrderCount },
+    { total: deliveredCount },
+    { total: cancelCount },
+    counts,
+    brands,
+    user,
+  ] = await Promise.all([
     getOrdersList({ status, brandId: brand, q, from, to, page, limit }),
-    // The Complete card follows the same business / date / search filters as the
-    // list (but not the status tab), so it shows how many were completed in view.
-    getOrdersList({ status: "complete", brandId: brand, q, from, to, page: 1, limit: 1 }),
+    countFor("complete"),
+    countFor("new_order"),
+    countFor("delivered"),
+    countFor("cancelled"),
     getOrdersSummary(),
     getBrands(),
     getSessionUser(),
@@ -70,7 +85,10 @@ export default async function OrdersPage({
   const summary: { label: string; value: number; href: string }[] = [
     { label: "New today", value: counts.newToday, href: "/orders?status=new_order" },
     { label: "Pre-Order", value: counts.preOrders, href: "/orders?status=pre_order" },
+    { label: "New Order", value: newOrderCount, href: "/orders?status=new_order" },
     { label: "Awaiting delivery", value: counts.inProgress, href: "/orders?status=processing" },
+    { label: "Delivered", value: deliveredCount, href: "/orders?status=delivered" },
+    { label: "Cancel", value: cancelCount, href: "/orders?status=cancelled" },
     { label: "Complete", value: completeCount, href: "/orders?status=complete" },
   ];
 

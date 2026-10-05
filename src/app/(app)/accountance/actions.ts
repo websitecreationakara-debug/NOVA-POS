@@ -5,6 +5,7 @@ import { supabaseAdmin } from "@/lib/supabase/server";
 import { getSessionUser } from "@/lib/supabase/auth-server";
 import { requireFullStockAccess } from "@/lib/stockAccess";
 import { adjustStockAction } from "@/app/(app)/stock/actions";
+import { ALL_BUSINESSES_ID } from "@/lib/supabase/queries";
 
 export async function saveReconciliationAction(input: {
   brandId: string;
@@ -49,7 +50,8 @@ export async function addExpenseAction(input: {
   const user = await getSessionUser();
 
   const { error } = await supabaseAdmin.from("expenses").insert({
-    brand_id: brandId,
+    // The "All Businesses" pseudo-id is stored as no business (migration 0057).
+    brand_id: brandId === ALL_BUSINESSES_ID ? null : brandId,
     description: description.trim(),
     amount,
     category: category?.trim() || null,
@@ -78,7 +80,7 @@ export async function updateExpenseAction(
   const { error } = await supabaseAdmin
     .from("expenses")
     .update({
-      brand_id: brandId,
+      brand_id: brandId === ALL_BUSINESSES_ID ? null : brandId,
       description: description.trim(),
       amount,
       category: category?.trim() || null,

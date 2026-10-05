@@ -171,14 +171,20 @@ export default async function AccountancePage({
   // so start these brand-scoped queries immediately instead of waiting
   // for getBrands() to resolve first. Falls back to a second fetch below
   // if the id turns out to be missing/stale.
+  //
+  // The Expense & Accounts Payable tab is always about every business at once
+  // (an expense is logged against any business from its own form), so it
+  // ignores the picked business and loads "All Businesses". ?brand= is still
+  // kept in the URL so the other tabs go back to the business that was picked.
+  const dataBrandParam = tab === "expenses" ? ALL_BUSINESSES_ID : brandIdParam;
   const brandsPromise = getBrands();
-  const optimisticDataPromise = brandIdParam
+  const optimisticDataPromise = dataBrandParam
     ? Promise.all([
-        getDailySales(brandIdParam, fromDate, toDate),
-        reconciliationFor(brandIdParam, fromDate, toDate),
-        getExpensesForDateRange(brandIdParam, fromDate, toDate),
-        getCogsSummary(brandIdParam, fromDate, toDate),
-        getMarginReport(brandIdParam, fromDate, toDate),
+        getDailySales(dataBrandParam, fromDate, toDate),
+        reconciliationFor(dataBrandParam, fromDate, toDate),
+        getExpensesForDateRange(dataBrandParam, fromDate, toDate),
+        getCogsSummary(dataBrandParam, fromDate, toDate),
+        getMarginReport(dataBrandParam, fromDate, toDate),
       ])
     : null;
 
@@ -193,13 +199,14 @@ export default async function AccountancePage({
     );
   }
 
-  const currentBrand =
+  const selectedBrand =
     brandIdParam === ALL_BUSINESSES_ID
       ? ALL_BUSINESSES_BRAND
       : (brands.find((b) => b.id === brandIdParam) ?? brands[0]);
+  const currentBrand = tab === "expenses" ? ALL_BUSINESSES_BRAND : selectedBrand;
 
   const [{ summary, orders }, reconciliation, expenses, cogsSummary, marginReport] =
-    optimisticDataPromise && currentBrand.id === brandIdParam
+    optimisticDataPromise && currentBrand.id === dataBrandParam
       ? await optimisticDataPromise
       : await Promise.all([
           getDailySales(currentBrand.id, fromDate, toDate),
@@ -248,6 +255,7 @@ export default async function AccountancePage({
     <AccountanceClient
       brands={brands}
       currentBrand={currentBrand}
+      selectedBrandId={selectedBrand.id}
       mode={mode}
       week={week}
       month={month}

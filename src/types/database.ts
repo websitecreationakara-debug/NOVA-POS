@@ -312,7 +312,8 @@ export type OrderItem = {
 
 export type Expense = {
   id: string;
-  brand_id: string;
+  // null = All Businesses (migration 0057).
+  brand_id: string | null;
   description: string;
   amount: number;
   category: string | null;
