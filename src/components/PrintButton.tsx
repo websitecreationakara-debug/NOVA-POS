@@ -43,10 +43,10 @@ export default function PrintButton({ filename }: { filename?: string }) {
   }
 
   return (
-    <div className="print:hidden flex items-center gap-2">
+    <div className="print:hidden flex flex-wrap items-center justify-center gap-2">
       <button
         onClick={() => window.print()}
-        className="inline-flex items-center gap-1.5 rounded-full border border-border px-4 py-2 text-sm font-medium hover:bg-black/[.04] dark:hover:bg-white/[.06]"
+        className="inline-flex items-center gap-1.5 rounded-full border border-border px-4 py-2 text-sm font-medium whitespace-nowrap hover:bg-black/[.04] dark:hover:bg-white/[.06]"
       >
         <Printer className="size-4" />
         Print
@@ -54,7 +54,7 @@ export default function PrintButton({ filename }: { filename?: string }) {
       <button
         onClick={handleSaveAsPdf}
         disabled={exporting}
-        className="inline-flex items-center gap-1.5 rounded-full bg-brand px-4 py-2 text-sm font-medium text-white disabled:opacity-60"
+        className="inline-flex items-center gap-1.5 rounded-full bg-brand px-4 py-2 text-sm font-medium whitespace-nowrap text-white disabled:opacity-60"
       >
         {exporting ? <Loader2 className="size-4 animate-spin" /> : <Download className="size-4" />}
         {exporting ? "Generating…" : "Save as PDF"}
@@ -62,7 +62,7 @@ export default function PrintButton({ filename }: { filename?: string }) {
       <button
         onClick={handleSaveAsImage}
         disabled={exporting}
-        className="inline-flex items-center gap-1.5 rounded-full border border-border px-4 py-2 text-sm font-medium hover:bg-black/[.04] disabled:opacity-60 dark:hover:bg-white/[.06]"
+        className="inline-flex items-center gap-1.5 rounded-full border border-border px-4 py-2 text-sm font-medium whitespace-nowrap hover:bg-black/[.04] disabled:opacity-60 dark:hover:bg-white/[.06]"
       >
         {exporting && imageProgress ? <Loader2 className="size-4 animate-spin" /> : <ImageIcon className="size-4" />}
         {exporting && imageProgress ? imageProgress : "Save as PNG"}

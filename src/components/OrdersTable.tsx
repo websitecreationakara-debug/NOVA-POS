@@ -453,7 +453,7 @@ export default function OrdersTable({
           <table className="hidden w-full text-sm md:table">
             <thead>
               <tr className="border-b border-border text-left text-xs font-semibold text-muted-foreground">
-                <th className="w-8 py-2">
+                <th className="w-8 py-2 pr-2">
                   <input
                     type="checkbox"
                     aria-label="Select all"
@@ -465,7 +465,7 @@ export default function OrdersTable({
                 <th className="py-2 pr-4">Invoice</th>
                 <th className="py-2 pr-4">Business</th>
                 <th className="py-2 pr-4">Customer</th>
-                <th className="py-2 pr-4">Phone</th>
+                <th className="hidden py-2 pr-4 lg:table-cell">Phone</th>
                 <th className="py-2 pr-4 text-right">Total</th>
                 <th className="py-2 pr-4">Status</th>
                 <th className="py-2 pr-4">Date</th>
@@ -488,7 +488,7 @@ export default function OrdersTable({
                     selected.has(o.id) ? "bg-brand/5" : ""
                   }`}
                 >
-                  <td className="py-2" onClick={(e) => e.stopPropagation()}>
+                  <td className="py-2 pr-2" onClick={(e) => e.stopPropagation()}>
                     <input
                       type="checkbox"
                       aria-label={`Select ${o.invoiceNumber ?? o.id}`}
@@ -497,7 +497,7 @@ export default function OrdersTable({
                       className="align-middle accent-[var(--brand)]"
                     />
                   </td>
-                  <td className="py-2 pr-4">
+                  <td className="py-2 pr-4 whitespace-nowrap">
                     <Link
                       href={`/orders/${o.id}`}
                       onClick={(e) => e.stopPropagation()}
@@ -507,10 +507,15 @@ export default function OrdersTable({
                     </Link>
                   </td>
                   <td className="py-2 pr-4">{o.brandName}</td>
-                  <td className="py-2 pr-4">{o.customerName || "—"}</td>
-                  <td className="py-2 pr-4 text-muted-foreground">{o.customerPhone || "—"}</td>
-                  <td className="py-2 pr-4 text-right tabular-nums">{formatMoney(o.total)}</td>
-                  <td className="py-2 pr-4" onClick={(e) => e.stopPropagation()}>
+                  <td className="py-2 pr-4">
+                    {o.customerName || "—"}
+                    {/* The Phone column is hidden on tablets to give the rest room,
+                        so the number sits under the name there instead. */}
+                    <div className="text-xs text-muted-foreground lg:hidden">{o.customerPhone || "—"}</div>
+                  </td>
+                  <td className="hidden py-2 pr-4 text-muted-foreground lg:table-cell">{o.customerPhone || "—"}</td>
+                  <td className="py-2 pr-4 text-right whitespace-nowrap tabular-nums">{formatMoney(o.total)}</td>
+                  <td className="py-2 pr-4 whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
                     {/* key includes the status so a bulk change (which updates
                         the server prop after router.refresh) remounts this with
                         the fresh value rather than keeping stale local state. */}
@@ -521,7 +526,7 @@ export default function OrdersTable({
                       variant="compact"
                     />
                   </td>
-                  <td className="py-2 pr-4 text-muted-foreground">
+                  <td className="py-2 pr-4 whitespace-nowrap text-muted-foreground">
                     <div>{dayLabel(o.paidAt)}</div>
                     {settledDayLabel(o.settledAt, o.paidAt) && (
                       <div className="mt-0.5 text-xs font-medium">

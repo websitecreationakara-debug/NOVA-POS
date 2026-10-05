@@ -164,7 +164,7 @@ function StatusBadgeMenu({
         onClick={() => setOpen((v) => !v)}
         aria-haspopup="listbox"
         aria-expanded={open}
-        className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold disabled:opacity-50 ${STATUS_STYLES[current]}`}
+        className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold whitespace-nowrap disabled:opacity-50 ${STATUS_STYLES[current]}`}
       >
         <CurrentIcon className="size-3.5 shrink-0" />
         {STATUS_LABELS[current]}

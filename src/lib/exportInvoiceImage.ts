@@ -5,9 +5,17 @@
 // garbles text spacing) -- only the output differs: an image download per
 // invoice instead of pages in a PDF. A bulk page produces one file per
 // invoice, named after its invoice number.
-import { captureInvoiceSheet } from "./invoiceCapture";
+import { captureInvoiceSheet, withInvoicesAtFullSize } from "./invoiceCapture";
 
-export async function exportInvoiceImage(
+// The sheets may be shown shrunk-to-fit on a phone; capture them at full size.
+export function exportInvoiceImage(
+  filename: string,
+  onProgress?: (done: number, total: number) => void
+): Promise<void> {
+  return withInvoicesAtFullSize(() => saveInvoiceImages(filename, onProgress));
+}
+
+async function saveInvoiceImages(
   filename: string,
   onProgress?: (done: number, total: number) => void
 ): Promise<void> {

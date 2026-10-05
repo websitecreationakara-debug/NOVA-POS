@@ -20,7 +20,7 @@ export default function RecentOrdersRows({
   if (orders.length === 0) {
     return (
       <tr>
-        <td colSpan={4} className="px-6 py-8 text-center text-muted-foreground">
+        <td colSpan={4} className="px-4 py-8 text-center text-muted-foreground sm:px-6">
           No orders yet.
         </td>
       </tr>
@@ -35,16 +35,16 @@ export default function RecentOrdersRows({
           onClick={() => router.push(`/invoice/${o.id}`)}
           className="cursor-pointer border-t border-border transition-colors hover:bg-muted/60"
         >
-          <td className="px-6 py-3 font-mono text-xs font-semibold text-foreground">
+          <td className="py-3 pr-2 pl-4 font-mono text-xs font-semibold text-foreground sm:px-6">
             {o.id.slice(0, 8)}
           </td>
-          <td className="px-3 py-3 text-muted-foreground">{o.brandName}</td>
-          <td className="px-3 py-3">
+          <td className="px-2 py-3 text-muted-foreground sm:px-3">{o.brandName}</td>
+          <td className="px-2 py-3 sm:px-3">
             <span className="rounded-full bg-emerald-500/10 px-2 py-0.5 text-xs font-semibold text-emerald-600 uppercase dark:text-emerald-400">
               {o.status}
             </span>
           </td>
-          <td className="px-6 py-3 text-right font-bold tabular-nums">{formatMoney(o.total)}</td>
+          <td className="py-3 pr-4 pl-2 text-right font-bold tabular-nums sm:px-6">{formatMoney(o.total)}</td>
         </tr>
       ))}
     </>

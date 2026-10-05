@@ -1,6 +1,7 @@
 import { getInvoice, type InvoiceData } from "@/lib/supabase/queries";
 import { invoiceBrandConfig, brandLogoPath, brandLogoHeightClass } from "@/lib/invoiceBrands";
 import PrintButton from "@/components/PrintButton";
+import FitInvoices from "@/components/FitInvoices";
 import { InvoiceDoc, hanuman } from "@/components/InvoiceDoc";
 
 // Bulk "Save as PDF" for the Orders list's multi-select bar: one combined
@@ -31,15 +32,16 @@ export default async function BulkInvoicePage({
 
   return (
     <div
-      className={`${hanuman.className} mx-auto w-fit max-w-full p-6 print:w-full print:max-w-none print:p-0`}
+      className={`${hanuman.className} mx-auto w-fit max-w-full p-3 sm:p-6 print:w-full print:max-w-none print:p-0`}
     >
-      <div className="mb-4 flex items-center justify-end gap-3 print:hidden">
+      <div className="mb-4 flex flex-wrap items-center justify-center gap-3 sm:justify-end print:hidden">
         <PrintButton filename={filename} />
       </div>
 
       {invoices.length === 0 ? (
         <p className="text-sm text-muted-foreground print:hidden">No orders selected.</p>
       ) : (
+        <FitInvoices>
         <div className="space-y-8 print:space-y-0">
           {invoices.map((invoice, orderIndex) => {
             const brand = invoiceBrandConfig(invoice.brandSlug);
@@ -51,7 +53,7 @@ export default async function BulkInvoicePage({
                 key={`${invoice.order.id}-${copyIndex}`}
                 data-copy={copyIndex === 1 ? "2" : "1"}
                 data-invoice={invoice.invoiceNumber.replace(/^#/, "")}
-                className={`invoice-sheet w-[210mm] max-w-full overflow-hidden rounded-xl border border-zinc-200 bg-white text-black shadow-sm print:w-full print:max-w-none print:overflow-visible print:rounded-none print:border-0 print:shadow-none ${
+                className={`invoice-sheet w-[210mm] max-w-none overflow-hidden rounded-xl border border-zinc-200 bg-white text-black shadow-sm print:w-full print:max-w-none print:overflow-visible print:rounded-none print:border-0 print:shadow-none ${
                   orderIndex > 0 || copyIndex > 0 ? "break-before-page" : ""
                 }`}
               >
@@ -65,6 +67,7 @@ export default async function BulkInvoicePage({
             ));
           })}
         </div>
+        </FitInvoices>
       )}
     </div>
   );
