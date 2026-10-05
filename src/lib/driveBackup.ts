@@ -1,17 +1,42 @@
 import { fetchOrdersBackupData } from "@/lib/ordersBackupData";
-import { buildOrdersCsv, buildOrdersSheet } from "@/lib/ordersCsv";
+import { buildOrdersCsv, buildOrdersSheet, csvCell } from "@/lib/ordersCsv";
+import { supabaseAdmin } from "@/lib/supabase/server";
 import { ppToday } from "@/lib/phnomPenhTime";
 import { buildXlsx, zip } from "@/lib/xlsxWriter";
 
+// Every customer, all columns, read in pages of 1000 (the database caps a single
+// query). Only used when BACKUP_INCLUDE_CUSTOMER=true.
+async function fetchCustomersCsv(): Promise<{ csv: string; count: number }> {
+  const PAGE = 1000;
+  const rows: Record<string, unknown>[] = [];
+  for (let from = 0; ; from += PAGE) {
+    const { data, error } = await supabaseAdmin
+      .from("customers")
+      .select("*")
+      .order("id")
+      .range(from, from + PAGE - 1);
+    if (error) throw new Error(error.message);
+    rows.push(...((data ?? []) as Record<string, unknown>[]));
+    if (!data || data.length < PAGE) break;
+  }
+  const cols = rows.length ? Object.keys(rows[0]) : [];
+  const lines = [cols.join(","), ...rows.map((r) => cols.map((c) => csvCell(r[c])).join(","))];
+  // UTF-8 marker so Excel shows Khmer names correctly.
+  return { csv: "\uFEFF" + lines.join("\r\n") + "\r\n", count: rows.length };
+}
+
 // The automatic Google Drive backup: one .zip holding the Orders workbook (.xlsx)
-// and the flat .csv -- the same two files as the in-app Backup buttons -- with
-// customer names, phones, emails and addresses left out unless
-// BACKUP_INCLUDE_CUSTOMER=true (the Drive folder is shared with other people).
+// and the flat .csv (orders with every order line) -- the same two files as the
+// in-app Backup buttons -- plus, only when BACKUP_INCLUDE_CUSTOMER=true, the full
+// customers table as its own .csv. Without that switch customer names, phones,
+// emails and addresses are left out everywhere (the Drive folder is shared with
+// other people).
 export async function buildBackupZip(): Promise<{
   filename: string;
   zip: Buffer;
   orderCount: number;
   itemCount: number;
+  customerCount: number;
   includesCustomers: boolean;
 }> {
   const includesCustomers = process.env.BACKUP_INCLUDE_CUSTOMER === "true";
@@ -27,15 +52,23 @@ export async function buildBackupZip(): Promise<{
 
   const stem = `nova-pos-orders-backup-${ppToday()}${includesCustomers ? "" : "-no-customer"}`;
   const { columns, rows } = buildOrdersSheet(orders, items);
-  const archive = zip([
+  const files = [
     { name: `${stem}.xlsx`, data: buildXlsx("Orders", columns, rows) },
     { name: `${stem}.csv`, data: buildOrdersCsv(orders, items) },
-  ]);
+  ];
+  let customerCount = 0;
+  if (includesCustomers) {
+    const customers = await fetchCustomersCsv();
+    customerCount = customers.count;
+    files.push({ name: `nova-pos-customers-backup-${ppToday()}.csv`, data: customers.csv });
+  }
+  const archive = zip(files);
   return {
     filename: `${stem}.zip`,
     zip: archive,
     orderCount: orders.length,
     itemCount: items.length,
+    customerCount,
     includesCustomers,
   };
 }
