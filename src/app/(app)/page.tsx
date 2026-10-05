@@ -325,7 +325,7 @@ export default async function Home({
   ];
 
   return (
-    <main className="mx-auto w-full max-w-7xl space-y-8 p-8">
+    <main className="mx-auto w-full max-w-7xl space-y-6 p-4 sm:space-y-8 sm:p-8">
       <header>
         <h1 className="font-display text-3xl font-bold">NOVA POS</h1>
         <DashboardRangeBar
@@ -473,22 +473,26 @@ export default async function Home({
       />
 
       <section className="overflow-hidden rounded-2xl border border-border bg-card">
-        <div className="border-b border-border px-6 py-4">
+        <div className="border-b border-border px-4 py-4 sm:px-6">
           <h2 className="font-display font-bold">Recent Orders</h2>
         </div>
+        {/* overflow-x-auto: if a phone is narrower than the columns, the table
+            scrolls inside the card instead of being cut off at its edge. */}
+        <div className="overflow-x-auto">
         <table className="w-full text-sm">
-          <thead className="bg-muted text-xs font-bold tracking-widest text-muted-foreground uppercase">
+          <thead className="bg-muted text-[11px] font-bold tracking-wider text-muted-foreground uppercase sm:text-xs sm:tracking-widest">
             <tr>
-              <th className="px-6 py-3 text-left">Order</th>
-              <th className="px-3 py-3 text-left">Brand</th>
-              <th className="px-3 py-3 text-left">Payment</th>
-              <th className="px-6 py-3 text-right">Total</th>
+              <th className="py-3 pr-2 pl-4 text-left sm:px-6">Order</th>
+              <th className="px-2 py-3 text-left sm:px-3">Brand</th>
+              <th className="px-2 py-3 text-left sm:px-3">Payment</th>
+              <th className="py-3 pr-4 pl-2 text-right sm:px-6">Total</th>
             </tr>
           </thead>
           <tbody>
             <RecentOrdersRows orders={stats.recentOrders} />
           </tbody>
         </table>
+        </div>
       </section>
     </main>
   );

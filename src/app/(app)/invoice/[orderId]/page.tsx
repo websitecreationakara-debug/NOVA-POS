@@ -2,6 +2,7 @@ import { notFound } from "next/navigation";
 import { getInvoice } from "@/lib/supabase/queries";
 import { invoiceBrandConfig, brandLogoPath, brandLogoHeightClass } from "@/lib/invoiceBrands";
 import PrintButton from "@/components/PrintButton";
+import FitInvoices from "@/components/FitInvoices";
 import OrderStatusControl from "@/components/OrderStatusControl";
 import { InvoiceDoc, hanuman } from "@/components/InvoiceDoc";
 
@@ -23,22 +24,25 @@ export default async function InvoicePage({
 
   return (
     <div
-      className={`${hanuman.className} mx-auto w-fit max-w-full p-6 print:w-full print:max-w-none print:p-0`}
+      className={`${hanuman.className} mx-auto w-fit max-w-full p-3 sm:p-6 print:w-full print:max-w-none print:p-0`}
     >
-      <div className="mb-4 flex items-center justify-end gap-3 print:hidden">
+      {/* Wraps onto more lines on a narrow screen instead of running off the edge. */}
+      <div className="mb-4 flex flex-wrap items-center justify-center gap-3 sm:justify-end print:hidden">
         <OrderStatusControl orderId={invoice.order.id} status={invoice.order.fulfillment_status} />
         <PrintButton filename={`${invoice.brandName} ${invoice.invoiceNumber.replace(/^#/, "")}`} />
       </div>
-
       {/* Two identical copies -- a "duplicate voucher" (customer + shop), each
           its own page. The print job is 2 A4 pages, so Chrome's
-          "Pages per sheet: 2" tiles both onto one sheet. */}
+          "Pages per sheet: 2" tiles both onto one sheet.
+          FitInvoices shrinks the sheets to fit a phone screen (they keep their
+          real A4 layout; print and the PDF/PNG export use the full size). */}
+      <FitInvoices>
       <div className="space-y-8 print:space-y-0">
         {[0, 1].map((n) => (
           <div
             key={n}
             data-copy={n === 1 ? "2" : "1"}
-            className={`invoice-sheet w-[210mm] max-w-full overflow-hidden rounded-xl border border-zinc-200 bg-white text-black shadow-sm print:w-full print:max-w-none print:overflow-visible print:rounded-none print:border-0 print:shadow-none ${
+            className={`invoice-sheet w-[210mm] max-w-none overflow-hidden rounded-xl border border-zinc-200 bg-white text-black shadow-sm print:w-full print:max-w-none print:overflow-visible print:rounded-none print:border-0 print:shadow-none ${
               n === 1 ? "break-before-page" : ""
             }`}
           >
@@ -46,6 +50,7 @@ export default async function InvoicePage({
           </div>
         ))}
       </div>
+      </FitInvoices>
     </div>
   );
 }

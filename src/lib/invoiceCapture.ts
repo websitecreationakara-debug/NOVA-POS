@@ -75,6 +75,37 @@ export function prepareInvoiceClone(
   };
 }
 
+// On a narrow screen the invoice sheets are shown shrunk to fit (FitInvoices).
+// html2canvas and the page-size maths read the sheet's on-screen size, so every
+// capture has to run with that shrink switched off -- this puts the sheets back
+// to their real size for the duration of `capture` and restores the preview after.
+export async function withInvoicesAtFullSize<T>(capture: () => Promise<T>): Promise<T> {
+  const wrappers = Array.from(document.querySelectorAll<HTMLElement>("[data-fit-wrapper]"));
+  const saved = wrappers.map((w) => ({
+    w,
+    fit: w.style.getPropertyValue("--fit"),
+    height: w.style.getPropertyValue("--fit-h"),
+    overflow: w.style.overflow,
+  }));
+  for (const w of wrappers) {
+    w.style.setProperty("--fit", "1");
+    w.style.setProperty("--fit-h", "auto");
+    w.style.overflow = "visible";
+    void w.offsetHeight; // apply the layout now, before anything measures
+  }
+  try {
+    return await capture();
+  } finally {
+    for (const s of saved) {
+      if (s.fit) s.w.style.setProperty("--fit", s.fit);
+      else s.w.style.removeProperty("--fit");
+      if (s.height) s.w.style.setProperty("--fit-h", s.height);
+      else s.w.style.removeProperty("--fit-h");
+      s.w.style.overflow = s.overflow;
+    }
+  }
+}
+
 // Draws one invoice sheet to a canvas and makes sure it came out right. A sheet
 // drawn without its styles is the wrong width (as wide as the browser window
 // instead of the A4 sheet), which is cheap to detect -- so a bad capture is

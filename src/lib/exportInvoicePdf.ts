@@ -6,9 +6,14 @@
 // that downloads immediately. html2canvas-pro (not the unmaintained
 // html2canvas) is required: Tailwind v4's default palette uses oklch()
 // colors, which plain html2canvas can't parse and throws on.
-import { captureInvoiceSheet } from "./invoiceCapture";
+import { captureInvoiceSheet, withInvoicesAtFullSize } from "./invoiceCapture";
 
-export async function exportInvoicePdf(filename: string): Promise<void> {
+// The sheets may be shown shrunk-to-fit on a phone; capture them at full size.
+export function exportInvoicePdf(filename: string): Promise<void> {
+  return withInvoicesAtFullSize(() => buildInvoicePdf(filename));
+}
+
+async function buildInvoicePdf(filename: string): Promise<void> {
   const [{ default: html2canvas }, { jsPDF }] = await Promise.all([
     import("html2canvas-pro"),
     import("jspdf"),

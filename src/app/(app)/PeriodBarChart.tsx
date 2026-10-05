@@ -517,7 +517,7 @@ export default function PeriodBarChart({
   }
 
   return (
-    <section className="rounded-2xl border border-border bg-card p-6">
+    <section className="rounded-2xl border border-border bg-card p-4 sm:p-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h2 className="font-display text-lg font-bold">{title}</h2>
         {/* Segmented control -- one bordered pill track, active segment filled. */}
@@ -576,7 +576,7 @@ export default function PeriodBarChart({
         </div>
       )}
 
-      <div className="mt-3 flex items-center gap-1.5">
+      <div className="mt-3 flex flex-wrap items-center gap-1.5">
         <button
           type="button"
           onClick={() => step(-1)}
@@ -585,7 +585,7 @@ export default function PeriodBarChart({
         >
           <ChevronLeft className="size-4" />
         </button>
-        <span className="min-w-44 text-center text-sm font-medium">{periodLabel}</span>
+        <span className="text-center text-sm font-medium sm:min-w-44">{periodLabel}</span>
         <button
           type="button"
           onClick={() => step(1)}
@@ -609,7 +609,7 @@ export default function PeriodBarChart({
             type="button"
             onClick={() => setCompareOn((v) => !v)}
             aria-pressed={compareOn}
-            className={`ml-3 rounded-full border px-3 py-1 text-xs font-medium transition-colors ${
+            className={`ml-1 rounded-full border px-3 py-1 text-xs font-medium transition-colors sm:ml-3 ${
               compareOn
                 ? "border-brand bg-brand text-white"
                 : "border-border text-muted-foreground hover:text-foreground"

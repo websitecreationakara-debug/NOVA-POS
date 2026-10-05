@@ -117,7 +117,7 @@ export default function UsersClient({
   }
 
   return (
-    <div className="mx-auto max-w-5xl space-y-6 p-8">
+    <div className="mx-auto max-w-5xl space-y-6 p-4 sm:p-8">
       <header>
         <h1 className="font-display text-2xl font-bold">Staff Accounts</h1>
         <p className="mt-1 text-muted-foreground">
@@ -125,10 +125,10 @@ export default function UsersClient({
         </p>
       </header>
 
-      <section className="rounded-2xl border border-border bg-card p-6">
+      <section className="rounded-2xl border border-border bg-card p-4 sm:p-6">
         <h2 className="font-display font-bold">Add staff account</h2>
         <div className="mt-4 flex flex-wrap items-end gap-3">
-          <div className="flex flex-col gap-1">
+          <div className="flex w-full flex-col gap-1 sm:w-auto">
             <label className="text-xs font-bold tracking-widest text-muted-foreground uppercase">
               Full name
             </label>
@@ -136,10 +136,10 @@ export default function UsersClient({
               type="text"
               value={fullName}
               onChange={(e) => setFullName(e.target.value)}
-              className="rounded-lg border border-border bg-transparent px-3 py-2 text-sm outline-none focus:border-brand"
+              className="w-full rounded-lg border border-border bg-transparent px-3 py-2 text-sm outline-none focus:border-brand sm:w-auto"
             />
           </div>
-          <div className="flex flex-col gap-1">
+          <div className="flex w-full flex-col gap-1 sm:w-auto">
             <label className="text-xs font-bold tracking-widest text-muted-foreground uppercase">
               Email
             </label>
@@ -147,10 +147,10 @@ export default function UsersClient({
               type="email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              className="rounded-lg border border-border bg-transparent px-3 py-2 text-sm outline-none focus:border-brand"
+              className="w-full rounded-lg border border-border bg-transparent px-3 py-2 text-sm outline-none focus:border-brand sm:w-auto"
             />
           </div>
-          <div className="flex flex-col gap-1">
+          <div className="flex w-full flex-col gap-1 sm:w-auto">
             <label className="text-xs font-bold tracking-widest text-muted-foreground uppercase">
               Password
             </label>
@@ -159,17 +159,17 @@ export default function UsersClient({
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               placeholder="8+ characters"
-              className="rounded-lg border border-border bg-transparent px-3 py-2 text-sm outline-none focus:border-brand"
+              className="w-full rounded-lg border border-border bg-transparent px-3 py-2 text-sm outline-none focus:border-brand sm:w-auto"
             />
           </div>
-          <div className="flex flex-col gap-1">
+          <div className="flex w-full flex-col gap-1 sm:w-auto">
             <label className="text-xs font-bold tracking-widest text-muted-foreground uppercase">
               Role
             </label>
             <select
               value={role}
               onChange={(e) => setRole(e.target.value as StaffRole)}
-              className="rounded-lg border border-border bg-card px-3 py-2 text-sm text-foreground outline-none focus:border-brand"
+              className="w-full rounded-lg border border-border bg-card px-3 py-2 text-sm text-foreground outline-none focus:border-brand sm:w-auto"
             >
               {ROLES.map((r) => (
                 <option key={r} value={r}>
@@ -181,7 +181,7 @@ export default function UsersClient({
           <button
             disabled={isPending}
             onClick={createAccount}
-            className="rounded-full bg-brand px-5 py-2 text-sm font-medium text-white disabled:opacity-40"
+            className="w-full rounded-full bg-brand px-5 py-2 text-sm font-medium text-white disabled:opacity-40 sm:w-auto"
           >
             {isPending ? "Creating…" : "Create account"}
           </button>
@@ -213,14 +213,16 @@ export default function UsersClient({
       </section>
 
       <section className="overflow-hidden rounded-2xl border border-border bg-card">
-        <div className="border-b border-border px-6 py-4">
+        <div className="border-b border-border px-4 py-4 sm:px-6">
           <h2 className="font-display font-bold">All staff</h2>
         </div>
-        {deleteError && <p className="px-6 pt-4 text-sm text-red-500">{deleteError}</p>}
-        {roleError && <p className="px-6 pt-4 text-sm text-red-500">{roleError}</p>}
+        {deleteError && <p className="px-4 pt-4 text-sm text-red-500 sm:px-6">{deleteError}</p>}
+        {roleError && <p className="px-4 pt-4 text-sm text-red-500 sm:px-6">{roleError}</p>}
         <div className="overflow-x-auto">
-        <table className="w-full text-sm">
-          <thead className="bg-muted text-xs font-bold tracking-widest text-muted-foreground uppercase">
+        {/* On a phone each person is a small card (name, full email, role + date);
+            from md up it's the normal table. */}
+        <table className="block w-full text-sm md:table">
+          <thead className="hidden bg-muted text-xs font-bold tracking-widest text-muted-foreground uppercase md:table-header-group">
             <tr>
               <th className="px-6 py-3 text-left">Name</th>
               <th className="px-3 py-3 text-left">Email</th>
@@ -229,12 +231,17 @@ export default function UsersClient({
               <th className="px-6 py-3 text-right">&nbsp;</th>
             </tr>
           </thead>
-          <tbody>
+          <tbody className="block md:table-row-group">
             {staff.map((s) => (
-              <tr key={s.id} className="border-t border-border">
-                <td className="px-6 py-3">{s.fullName}</td>
-                <td className="px-3 py-3 text-muted-foreground">{s.email ?? "—"}</td>
-                <td className="px-3 py-3">
+              <tr
+                key={s.id}
+                className="relative grid grid-cols-2 items-center gap-x-3 gap-y-1 border-t border-border px-4 py-3 md:table-row md:px-0 md:py-0"
+              >
+                <td className="col-span-2 p-0 pr-10 font-medium md:px-6 md:py-3 md:pr-6 md:font-normal">{s.fullName}</td>
+                <td className="col-span-2 p-0 text-xs break-all text-muted-foreground md:px-3 md:py-3 md:text-sm md:break-normal">
+                  {s.email ?? "—"}
+                </td>
+                <td className="mt-1 p-0 md:mt-0 md:px-3 md:py-3">
                   {s.id === currentUserId ? (
                     staffRoleLabel(s.role)
                   ) : (
@@ -255,10 +262,10 @@ export default function UsersClient({
                     </select>
                   )}
                 </td>
-                <td className="px-3 py-3 text-right text-muted-foreground">
+                <td className="mt-1 p-0 text-right text-xs text-muted-foreground md:mt-0 md:px-3 md:py-3 md:text-sm">
                   {new Date(s.createdAt).toLocaleDateString()}
                 </td>
-                <td className="px-6 py-3 text-right">
+                <td className="absolute top-3 right-3 p-0 md:static md:px-6 md:py-3 md:text-right">
                   {s.id !== currentUserId && (
                     <button
                       type="button"
@@ -281,8 +288,8 @@ export default function UsersClient({
               </tr>
             ))}
             {staff.length === 0 && (
-              <tr>
-                <td colSpan={5} className="px-6 py-8 text-center text-muted-foreground">
+              <tr className="block md:table-row">
+                <td colSpan={5} className="block px-4 py-8 text-center text-muted-foreground md:table-cell md:px-6">
                   No staff accounts yet.
                 </td>
               </tr>

@@ -29,6 +29,10 @@ import {
   type SetSummary,
 } from "./costControlActions";
 
+// Small caption above each field of an item card on a phone (the table header is hidden there).
+const MOBILE_LABEL =
+  "before:mb-1 before:block before:text-xs before:text-zinc-500 before:content-[attr(data-label)] md:before:hidden";
+
 function formatMoney(n: number | null): string {
   return n === null ? "—" : `$${n.toFixed(2)}`;
 }
@@ -1250,8 +1254,10 @@ function SetEditor({
         {error && <p className="mt-3 text-sm text-red-500">{error}</p>}
 
         <div className="mt-4 overflow-x-auto">
-          <table className="w-full text-left text-sm">
-            <thead>
+          {/* On a phone each item is a small card (the columns don't fit side by side);
+              from md up it's the normal table. */}
+          <table className="block w-full text-left text-sm md:table">
+            <thead className="hidden md:table-header-group">
               <tr className="border-b border-black/[.08] text-xs text-zinc-500 dark:border-white/[.145]">
                 <th className="py-2 pr-3 font-medium">Product</th>
                 <th className="py-2 pr-3 text-right font-medium">Amount</th>
@@ -1261,7 +1267,7 @@ function SetEditor({
                 <th className="w-16 py-2 text-right font-medium">Actions</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-black/[.06] dark:divide-white/[.08]">
+            <tbody className="block divide-y divide-black/[.06] md:table-row-group dark:divide-white/[.08]">
               {set.items.map((item) => {
                 const draft = itemDrafts[item.id] ?? {};
                 const amountValue = draft.amount ?? String(item.amount);
@@ -1278,8 +1284,8 @@ function SetEditor({
                     ? computeLineTotal({ amount: liveAmount, unitCost: liveUnitCost })
                     : item.lineTotal;
                 return (
-                  <tr key={item.id}>
-                    <td className="py-2 pr-3">
+                  <tr key={item.id} className="relative grid grid-cols-2 gap-x-3 gap-y-2 py-3 md:table-row md:py-0">
+                    <td className="col-span-2 py-0 pr-10 md:py-2 md:pr-3">
                       <div className="flex items-center gap-2">
                         <div className="h-14 w-14 shrink-0 overflow-hidden rounded border border-black/[.1] bg-zinc-100 dark:border-white/[.15] dark:bg-zinc-800">
                           {lineImageUrl(item) ? (
@@ -1295,8 +1301,8 @@ function SetEditor({
                       </div>
                     </td>
                     {confirming ? (
-                      <td colSpan={5} className="py-2">
-                        <div className="flex items-center justify-end gap-2">
+                      <td colSpan={5} className="col-span-2 py-0 md:py-2">
+                        <div className="flex flex-wrap items-center justify-end gap-2">
                           <span className="text-xs text-zinc-500">Remove &quot;{item.productName}&quot;?</span>
                           <button
                             type="button"
@@ -1316,7 +1322,7 @@ function SetEditor({
                       </td>
                     ) : (
                       <>
-                        <td className="py-2 pr-3 text-right">
+                        <td data-label="Amount" className={`${MOBILE_LABEL} py-0 md:py-2 md:pr-3 md:text-right`}>
                           <input
                             type="number"
                             min={0}
@@ -1330,14 +1336,14 @@ function SetEditor({
                             }
                             onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
                             onBlur={() => normalizeAmount(item.id, itemDrafts[item.id]?.amount, item.amount)}
-                            className="w-20 rounded border border-black/[.15] bg-transparent px-2 py-1 text-right text-sm dark:border-white/[.2]"
+                            className="w-full rounded border border-black/[.15] bg-transparent px-2 py-1 text-right text-sm md:w-20 dark:border-white/[.2]"
                           />
                         </td>
-                        <td className="py-2 pr-3">
+                        <td data-label="Scale" className={`${MOBILE_LABEL} py-0 md:py-2 md:pr-3`}>
                           <select
                             value={unitValue}
                             onChange={(e) => changeScale(item, e.target.value)}
-                            className="w-20 rounded border border-black/[.15] bg-transparent px-2 py-1 text-sm dark:border-white/[.2]"
+                            className="w-full rounded border border-black/[.15] bg-transparent px-2 py-1 text-sm md:w-20 dark:border-white/[.2]"
                           >
                             {(SCALE_OPTIONS.includes(unitValue) ? SCALE_OPTIONS : [unitValue, ...SCALE_OPTIONS]).map(
                               (opt) => (
@@ -1348,7 +1354,7 @@ function SetEditor({
                             )}
                           </select>
                         </td>
-                        <td className="py-2 pr-3 text-right tabular-nums">
+                        <td data-label="Unit Cost" className={`${MOBILE_LABEL} py-0 tabular-nums md:py-2 md:pr-3 md:text-right`}>
                           {weightGramsForRow !== null && item.baseCostPerUnit !== null ? (
                             <span className="text-zinc-500" title="Purchase Cost in Stock, per pack weight">
                               {formatMoney(item.baseCostPerUnit)} / {weightGramsForRow}g
@@ -1358,7 +1364,7 @@ function SetEditor({
                               {formatMoney(item.baseCostPerUnit)}
                             </span>
                           ) : (
-                            <label className="inline-flex w-20 items-center gap-1 rounded border border-black/[.15] px-2 py-1 text-sm dark:border-white/[.2]">
+                            <label className="inline-flex w-full items-center gap-1 rounded border border-black/[.15] px-2 py-1 text-sm md:w-20 dark:border-white/[.2]">
                               <span className="select-none text-zinc-400">$</span>
                               <input
                                 type="number"
@@ -1378,8 +1384,10 @@ function SetEditor({
                             </label>
                           )}
                         </td>
-                        <td className="py-2 pr-3 text-right tabular-nums">{formatMoney(liveLineTotal)}</td>
-                        <td className="py-2 text-right">
+                        <td data-label="Line Total" className={`${MOBILE_LABEL} py-0 font-medium tabular-nums md:py-2 md:pr-3 md:text-right md:font-normal`}>
+                          {formatMoney(liveLineTotal)}
+                        </td>
+                        <td className="absolute top-3 right-0 py-0 md:static md:py-2 md:text-right">
                           <button
                             type="button"
                             title="Remove"
@@ -1395,8 +1403,8 @@ function SetEditor({
                 );
               })}
               {set.items.length === 0 && (
-                <tr>
-                  <td colSpan={6} className="py-8 text-center text-sm text-zinc-500">
+                <tr className="block md:table-row">
+                  <td colSpan={6} className="block py-8 text-center text-sm text-zinc-500 md:table-cell">
                     No products in this set yet -- search above to add one.
                   </td>
                 </tr>

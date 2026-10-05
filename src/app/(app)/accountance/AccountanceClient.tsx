@@ -1091,7 +1091,7 @@ export default function AccountanceClient({
   }
 
   return (
-    <div className="p-6">
+    <div className="p-3 sm:p-6">
       {/* Top Bar -- title, business + Day/Month/Year + the date control that
           mode needs, and the export actions, all in one row so "what am I
           looking at" and "what can I do with it" live together instead of
@@ -1281,16 +1281,17 @@ export default function AccountanceClient({
           </div>
         )}
 
-        <div className="ml-auto flex items-center gap-2">
+        {/* Full width with two equal buttons on a phone; tucked to the right from sm up. */}
+        <div className="flex w-full items-center gap-2 sm:ml-auto sm:w-auto">
           <button
             onClick={exportPdf}
-            className="rounded-full bg-brand px-4 py-1.5 text-sm font-semibold text-white hover:brightness-95"
+            className="flex-1 rounded-full bg-brand px-4 py-1.5 text-sm font-semibold whitespace-nowrap text-white hover:brightness-95 sm:flex-none"
           >
             Save as PDF
           </button>
           <button
             onClick={exportCsv}
-            className="rounded-full border border-black/[.15] px-4 py-1.5 text-sm dark:border-white/[.2]"
+            className="flex-1 rounded-full border border-black/[.15] px-4 py-1.5 text-sm whitespace-nowrap sm:flex-none dark:border-white/[.2]"
           >
             Export CSV
           </button>
@@ -1300,14 +1301,16 @@ export default function AccountanceClient({
       {/* Secondary Bar: sub-navigation for the 4 Accountance views -- mirrors
           the sidebar's Accountance sub-links, so a tab can be reached either
           way and both stay in sync via the same `tab` searchParam. */}
-      <div className="mb-6 inline-flex flex-wrap gap-1 rounded-full border border-black/[.08] bg-black/[.02] p-1 dark:border-white/[.145] dark:bg-white/[.03]">
+      {/* On a phone the four tabs sit in a tidy 2x2 grid (they used to wrap into a
+          stretched oval); from sm up it's the one-row pill as before. */}
+      <div className="mb-6 grid grid-cols-2 gap-1 rounded-2xl border border-black/[.08] bg-black/[.02] p-1 sm:inline-flex sm:flex-wrap sm:rounded-full dark:border-white/[.145] dark:bg-white/[.03]">
         {(Object.keys(TAB_LABELS) as AccountanceTab[]).map((t) => (
           <button
             key={t}
             type="button"
             onClick={() => switchTab(t)}
             aria-pressed={tab === t}
-            className={`rounded-full px-3.5 py-1.5 text-xs font-medium transition-colors ${
+            className={`rounded-xl px-2 py-2 text-center text-xs leading-tight font-medium transition-colors sm:rounded-full sm:px-3.5 sm:py-1.5 ${
               tab === t ? "bg-brand text-white shadow-sm" : "text-zinc-500 hover:text-foreground"
             }`}
           >
