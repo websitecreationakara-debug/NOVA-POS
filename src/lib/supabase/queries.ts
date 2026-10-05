@@ -367,13 +367,29 @@ type OrderDayRow = {
 // function isn't there yet, fall back to reading every order and summing here --
 // same numbers, just slower.
 async function loadOrderDays(brandId: string): Promise<{ data: OrderDayRow[]; error: { message: string } | null }> {
-  const { data, error } = await supabaseAdmin.rpc("dashboard_order_days", {
-    p_statuses: COUNTED_FULFILLMENT_STATUSES,
-    p_brand_id: brandId === ALL_BUSINESSES_ID ? null : brandId,
-  });
+  // One row per business per day, so a few years of history is well over the
+  // database's 1000-rows-per-response cap -- read it a page at a time, or the
+  // days past the first 1000 silently vanish from every dashboard figure.
+  const PAGE = 1000;
+  const days: OrderDayRow[] = [];
+  let error: { message: string } | null = null;
+  for (let from = 0; ; from += PAGE) {
+    const { data, error: pageError } = await supabaseAdmin
+      .rpc("dashboard_order_days", {
+        p_statuses: COUNTED_FULFILLMENT_STATUSES,
+        p_brand_id: brandId === ALL_BUSINESSES_ID ? null : brandId,
+      })
+      .range(from, from + PAGE - 1);
+    if (pageError) {
+      error = pageError;
+      break;
+    }
+    days.push(...((data ?? []) as OrderDayRow[]));
+    if ((data ?? []).length < PAGE) break;
+  }
   if (!error) {
     return {
-      data: ((data ?? []) as OrderDayRow[]).map((r) => ({
+      data: days.map((r) => ({
         ...r,
         revenue: Number(r.revenue),
         orders: Number(r.orders),

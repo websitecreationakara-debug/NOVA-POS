@@ -1,14 +1,14 @@
-﻿"use client";
+"use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { ChevronLeft, ChevronRight, FileDown, Search, Truck, X } from "lucide-react";
+import { CalendarDays, ChevronLeft, ChevronRight, FileDown, Search, Truck, X } from "lucide-react";
 import type { OrderListRow } from "@/lib/supabase/queries";
 import type { FulfillmentStatus } from "@/types/database";
 import { updateFulfillmentStatusAction } from "@/app/(app)/orders/actions";
 import { notifyOrdersChanged } from "@/lib/ordersChanged";
-import { FULFILLMENT_STATUSES, STATUS_LABELS, settledDayLabel } from "@/lib/orderStatus";
+import { COUNTED_FULFILLMENT_STATUSES, FULFILLMENT_STATUSES, STATUS_LABELS, settledDayLabel } from "@/lib/orderStatus";
 import OrderStatusControl from "@/components/OrderStatusControl";
 import OrderRowMenu from "@/components/OrderRowMenu";
 
@@ -16,6 +16,35 @@ const PAGE_SIZE_OPTIONS = [10, 25, 50];
 
 function formatMoney(n: number) {
   return `$${n.toFixed(2)}`;
+}
+
+// "10/4/2026" -- the Phnom Penh day an order was placed.
+function dayLabel(iso: string | null) {
+  return iso ? new Date(iso).toLocaleDateString("en-US", { timeZone: "Asia/Phnom_Penh" }) : "—";
+}
+
+// The header above each day's orders: the date, that day's revenue and how
+// many orders it covers.
+function DayHeader({ day, revenue, orders }: { day: string; revenue: number; orders: number }) {
+  return (
+    <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1">
+      <CalendarDays className="size-4 text-brand" />
+      <span className="text-sm font-bold tracking-tight">{day}</span>
+      <span className="rounded-full bg-green-100 px-2.5 py-0.5 text-xs font-semibold tabular-nums text-green-700 dark:bg-green-950 dark:text-green-300">
+        Revenue {formatMoney(revenue)}
+      </span>
+      <span className="text-xs text-muted-foreground">
+        {orders} {orders === 1 ? "order" : "orders"}
+      </span>
+    </div>
+  );
+}
+
+// What the order counts for in revenue: its total once it has moved past
+// Pre-Order / New Order, and nothing while it's still one of those or cancelled
+// (same rule as the reports -- see COUNTED_FULFILLMENT_STATUSES).
+function orderRevenue(o: OrderListRow) {
+  return COUNTED_FULFILLMENT_STATUSES.includes(o.fulfillmentStatus) ? o.total : 0;
 }
 
 // "Wed, Sep 11, 2:00 PM" from an ISO timestamp.
@@ -138,6 +167,17 @@ export default function OrdersTable({
   const pageCount = Math.max(1, Math.ceil(total / limit));
   const paged = orders;
 
+  // Orders are listed newest first, so each day's orders sit together under one
+  // header showing that day's revenue (of the orders on this page).
+  const dayStats = new Map<string, { revenue: number; orders: number }>();
+  for (const o of paged) {
+    const day = dayLabel(o.paidAt);
+    const s = dayStats.get(day) ?? { revenue: 0, orders: 0 };
+    s.revenue += orderRevenue(o);
+    s.orders += 1;
+    dayStats.set(day, s);
+  }
+
   // Filename for the bulk PDF export -- business + the active date range, so
   // staff can tell one saved report from another without opening it. Falls
   // back to a generic name when nothing's filtered (e.g. mixed businesses).
@@ -195,7 +235,7 @@ export default function OrdersTable({
             type="text"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search customer, phone, or invoiceâ€¦"
+            placeholder="Search customer, phone, or invoice…"
             className="w-full rounded-lg border border-border bg-transparent py-1.5 pr-3 pl-8 text-sm"
           />
         </div>
@@ -311,7 +351,7 @@ export default function OrdersTable({
               {STATUS_LABELS[s]}
             </button>
           ))}
-          {bulkBusy && <span className="text-xs text-muted-foreground">Updatingâ€¦</span>}
+          {bulkBusy && <span className="text-xs text-muted-foreground">Updating…</span>}
           <a
             href={bulkPdfUrl}
             target="_blank"
@@ -340,9 +380,14 @@ export default function OrdersTable({
           <>
           {/* Phones: one card per order -- a wide table is unreadable there. */}
           <ul className="space-y-2 md:hidden">
-            {paged.map((o) => (
+            {paged.map((o, i) => (
+              <Fragment key={o.id}>
+              {(i === 0 || dayLabel(paged[i - 1].paidAt) !== dayLabel(o.paidAt)) && (
+                <li className="px-1 pt-3">
+                  <DayHeader day={dayLabel(o.paidAt)} {...(dayStats.get(dayLabel(o.paidAt)) ?? { revenue: 0, orders: 0 })} />
+                </li>
+              )}
               <li
-                key={o.id}
                 onClick={() => router.push(`/orders/${o.id}`)}
                 className={`cursor-pointer rounded-xl border border-border bg-card p-3 ${
                   selected.has(o.id) ? "border-brand/50 bg-brand/5" : ""
@@ -368,9 +413,9 @@ export default function OrdersTable({
                       </Link>
                       <span className="font-semibold tabular-nums">{formatMoney(o.total)}</span>
                     </div>
-                    <p className="mt-0.5 truncate text-sm">{o.customerName || "â€”"}</p>
+                    <p className="mt-0.5 truncate text-sm">{o.customerName || "—"}</p>
                     <p className="truncate text-xs text-muted-foreground">
-                      {o.customerPhone || "â€”"} Â· {o.brandName}
+                      {o.customerPhone || "—"} · {o.brandName}
                     </p>
                   </div>
                   <div onClick={(e) => e.stopPropagation()}>
@@ -387,7 +432,7 @@ export default function OrdersTable({
                     />
                   </div>
                   <div className="text-right text-xs text-muted-foreground">
-                    <div>{o.paidAt ? new Date(o.paidAt).toLocaleDateString("en-US", { timeZone: "Asia/Phnom_Penh" }) : "â€”"}</div>
+                    <div>{dayLabel(o.paidAt)}</div>
                     {settledDayLabel(o.settledAt, o.paidAt) && (
                       <div className="mt-0.5">
                         {STATUS_LABELS[o.fulfillmentStatus]}: {settledDayLabel(o.settledAt, o.paidAt)}
@@ -402,6 +447,7 @@ export default function OrdersTable({
                   </div>
                 </div>
               </li>
+              </Fragment>
             ))}
           </ul>
           <table className="hidden w-full text-sm md:table">
@@ -427,9 +473,16 @@ export default function OrdersTable({
               </tr>
             </thead>
             <tbody>
-              {paged.map((o) => (
+              {paged.map((o, i) => (
+                <Fragment key={o.id}>
+                {(i === 0 || dayLabel(paged[i - 1].paidAt) !== dayLabel(o.paidAt)) && (
+                  <tr className="border-b border-border bg-muted/50">
+                    <td colSpan={9} className="border-l-[3px] border-l-brand py-3 pl-3">
+                      <DayHeader day={dayLabel(o.paidAt)} {...(dayStats.get(dayLabel(o.paidAt)) ?? { revenue: 0, orders: 0 })} />
+                    </td>
+                  </tr>
+                )}
                 <tr
-                  key={o.id}
                   onClick={() => router.push(`/orders/${o.id}`)}
                   className={`cursor-pointer border-b border-border hover:bg-muted ${
                     selected.has(o.id) ? "bg-brand/5" : ""
@@ -454,8 +507,8 @@ export default function OrdersTable({
                     </Link>
                   </td>
                   <td className="py-2 pr-4">{o.brandName}</td>
-                  <td className="py-2 pr-4">{o.customerName || "â€”"}</td>
-                  <td className="py-2 pr-4 text-muted-foreground">{o.customerPhone || "â€”"}</td>
+                  <td className="py-2 pr-4">{o.customerName || "—"}</td>
+                  <td className="py-2 pr-4 text-muted-foreground">{o.customerPhone || "—"}</td>
                   <td className="py-2 pr-4 text-right tabular-nums">{formatMoney(o.total)}</td>
                   <td className="py-2 pr-4" onClick={(e) => e.stopPropagation()}>
                     {/* key includes the status so a bulk change (which updates
@@ -469,7 +522,7 @@ export default function OrdersTable({
                     />
                   </td>
                   <td className="py-2 pr-4 text-muted-foreground">
-                    <div>{o.paidAt ? new Date(o.paidAt).toLocaleDateString("en-US", { timeZone: "Asia/Phnom_Penh" }) : "â€”"}</div>
+                    <div>{dayLabel(o.paidAt)}</div>
                     {settledDayLabel(o.settledAt, o.paidAt) && (
                       <div className="mt-0.5 text-xs font-medium">
                         {STATUS_LABELS[o.fulfillmentStatus]}: {settledDayLabel(o.settledAt, o.paidAt)}
@@ -500,6 +553,7 @@ export default function OrdersTable({
                     <OrderRowMenu orderId={o.id} />
                   </td>
                 </tr>
+                </Fragment>
               ))}
             </tbody>
           </table>
