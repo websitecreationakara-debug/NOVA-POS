@@ -4,7 +4,8 @@ import { buildBackupZip, uploadBackupToDrive } from "@/lib/driveBackup";
 export const dynamic = "force-dynamic";
 
 // Called on a schedule (see .github/workflows/backup-to-drive.yml): zips every
-// order + order line and saves it to the shared Google Drive folder. Like the
+// order + order line (and, if BACKUP_INCLUDE_CUSTOMER=true, every customer) and
+// saves it to the shared Google Drive folder. Like the
 // other /api routes it authenticates itself with a bearer secret rather than a
 // login session -- see the matcher in src/proxy.ts.
 export async function POST(request: NextRequest) {
@@ -24,6 +25,7 @@ export async function POST(request: NextRequest) {
       bytes: file.size,
       orders: backup.orderCount,
       items: backup.itemCount,
+      customers: backup.customerCount,
       includesCustomers: backup.includesCustomers,
     });
   } catch (err) {
