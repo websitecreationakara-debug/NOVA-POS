@@ -60,6 +60,49 @@ export function aggregatePartialCogs(cogsValues: (number | null)[]): {
   return { totalCogs: round2(totalCogs), hasUnknownCost };
 }
 
+// One product's Margin Report figures from the order lines sold in range.
+// Every line keeps the cost it was sold with, so Total COGS and profit never
+// move when a cost later changes. Unit Cost is the LATEST cost in range (by
+// sale time), not an average; earlierUnitCosts lists any different older costs
+// used in the same range, newest first. A line with no cost makes the whole
+// product's cost unknown (see aggregateStrictCogs).
+export type MarginLine = {
+  quantity: number;
+  lineTotal: number;
+  cogs: number | null;
+  unitCost: number | null;
+  paidAt: string | null;
+};
+
+export function summarizeMarginLines(lines: MarginLine[]) {
+  const unitsSold = lines.reduce((s, l) => s + l.quantity, 0);
+  const revenue = lines.reduce((s, l) => s + l.lineTotal, 0);
+  const { totalCogs, hasUnknownCost } = aggregateStrictCogs(lines.map((l) => l.cogs));
+  const { grossProfit, grossMarginPct } = computeGrossMargin(revenue, totalCogs);
+
+  const costs = lines
+    .map((l) => ({
+      paidAt: l.paidAt,
+      unitCost: l.unitCost ?? (l.cogs !== null && l.quantity ? l.cogs / l.quantity : null),
+    }))
+    .filter((c): c is { paidAt: string; unitCost: number } => c.paidAt !== null && c.unitCost !== null)
+    .map((c) => ({ paidAt: c.paidAt, unitCost: round2(Number(c.unitCost)) }))
+    .sort((a, b) => b.paidAt.localeCompare(a.paidAt));
+  const latestCost = costs[0]?.unitCost ?? null;
+  const earlierUnitCosts = [...new Set(costs.filter((c) => c.unitCost !== latestCost).map((c) => c.unitCost))];
+
+  return {
+    unitsSold: round2(unitsSold),
+    revenue: round2(revenue),
+    unitCost: totalCogs === null ? null : (latestCost ?? round2(totalCogs / unitsSold)),
+    earlierUnitCosts: totalCogs === null ? [] : earlierUnitCosts,
+    totalCogs,
+    grossProfit,
+    grossMarginPct,
+    hasUnknownCost,
+  };
+}
+
 // For one product's own row in the Margin Report: any sold line with an
 // unknown cost makes that product's whole total unknown -- a partial sum
 // would read as a real (but wrong) margin.

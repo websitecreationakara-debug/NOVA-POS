@@ -266,6 +266,8 @@ export type Order = {
   created_by: string | null;
   created_at: string;
   paid_at: string | null;
+  // When a Pre-Order was moved to Delivered / Complete / Cancelled (migration 0055).
+  settled_at?: string | null;
   // Customer-requested delivery date & time (ISO); null = ASAP / same day.
   delivery_at: string | null;
   invoice_number: string | null;

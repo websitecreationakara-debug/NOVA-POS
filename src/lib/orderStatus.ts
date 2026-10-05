@@ -29,6 +29,17 @@ export const STATUS_STYLES: Record<FulfillmentStatus, string> = {
   complete: "bg-green-100 text-green-700 dark:bg-green-950 dark:text-green-300",
 };
 
+// The day (M/D/YYYY, Phnom Penh) a Pre-Order was finished -- Delivered /
+// Complete / Cancel -- shown only when it's a different day than the order's
+// own date. Finishing it the same day adds nothing to show, so null.
+export function settledDayLabel(settledAt: string | null, paidAt: string | null): string | null {
+  if (!settledAt || !paidAt) return null;
+  const fmt = (iso: string) =>
+    new Date(iso).toLocaleDateString("en-US", { timeZone: "Asia/Phnom_Penh" });
+  const day = fmt(settledAt);
+  return day === fmt(paidAt) ? null : day;
+}
+
 // Only orders that have moved past Pre-Order / New Order count towards money:
 // revenue, orders, COGS, profit, the daily sales and cash reconciliation, and
 // the margin report. A Pre-Order or New Order hasn't been taken on yet, and a

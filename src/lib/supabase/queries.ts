@@ -8,7 +8,7 @@ import { formatInvoiceNumber, invoiceMonthStamp, invoiceMonthStartIso } from "@/
 import { ppDay, ppDayEnd, ppDayStart } from "@/lib/phnomPenhTime";
 import { COUNTED_FULFILLMENT_STATUSES } from "@/lib/orderStatus";
 import { ALL_PAYMENT_METHODS, type PaymentMethod } from "@/lib/paymentMethods";
-import { aggregateStrictCogs, computeGrossMargin } from "@/lib/cogs";
+import { summarizeMarginLines, type MarginLine } from "@/lib/cogs";
 import { productWeightGrams } from "@/lib/costControl";
 import { getEffectiveProductCost } from "@/lib/websiteProducts/purchaseCosts";
 import type {
@@ -653,6 +653,7 @@ export type OrderListRow = {
   fulfillmentStatus: FulfillmentStatus;
   paidAt: string | null;
   deliveryAt: string | null;
+  settledAt: string | null;
 };
 
 export type OrdersListParams = {
@@ -741,6 +742,7 @@ export async function getOrdersList(
     fulfillment_status: FulfillmentStatus;
     paid_at: string | null;
     delivery_at: string | null;
+    settled_at?: string | null;
     brands: { name: string } | null;
   };
 
@@ -755,6 +757,7 @@ export async function getOrdersList(
     fulfillmentStatus: o.fulfillment_status,
     paidAt: o.paid_at,
     deliveryAt: o.delivery_at ?? null,
+    settledAt: o.settled_at ?? null,
   }));
 
   // Date-based invoice numbers (YYYYMM-N): an order's number is its position
@@ -1330,6 +1333,9 @@ export type MarginReportRow = {
   // null (not 0/undefined) whenever any sold line in range had no cost
   // price -- see hasUnknownCost. Never a silently-wrong number.
   unitCost: number | null;
+  // Different, older per-unit costs that other sales in this range were made
+  // with (the cost changed during the period); empty when it never did.
+  earlierUnitCosts: number[];
   // Prefill for the "Add cost price" input when unitCost is null -- the
   // product's current effective cost (Stock's Purchase Cost Total when
   // linked to a website listing, else its own cost_price). Same source
@@ -1355,7 +1361,7 @@ export async function getMarginReport(
 ): Promise<MarginReportRow[]> {
   let query = supabaseAdmin
     .from("order_items")
-    .select("product_id, quantity, line_total, cogs, orders!inner(status, paid_at, brand_id)")
+    .select("product_id, quantity, line_total, cogs, unit_cost, orders!inner(status, paid_at, brand_id)")
     .eq("orders.status", "paid")
     .in("orders.fulfillment_status", COUNTED_FULFILLMENT_STATUSES)
     .gte("orders.paid_at", ppDayStart(fromDate))
@@ -1378,41 +1384,34 @@ export async function getMarginReport(
     for (const p of (products ?? []) as unknown as { id: string; name: string; price: number; categories: { name: string } | null }[]) productById.set(p.id, p);
   }
 
-  const byProduct = new Map<string, { unitsSold: number; revenue: number; cogsValues: (number | null)[] }>();
+  const byProduct = new Map<string, MarginLine[]>();
   for (const item of items) {
-    const entry = byProduct.get(item.product_id) ?? { unitsSold: 0, revenue: 0, cogsValues: [] };
-    entry.unitsSold += item.quantity;
-    entry.revenue += item.line_total;
-    entry.cogsValues.push(item.cogs);
-    byProduct.set(item.product_id, entry);
+    const lines = byProduct.get(item.product_id) ?? [];
+    lines.push({
+      quantity: item.quantity,
+      lineTotal: item.line_total,
+      cogs: item.cogs,
+      unitCost: item.unit_cost,
+      paidAt: (item.orders as unknown as { paid_at: string | null } | null)?.paid_at ?? null,
+    });
+    byProduct.set(item.product_id, lines);
   }
 
-  const rows = Array.from(byProduct.entries()).map(([productId, agg]) => {
+  const rows = Array.from(byProduct.entries()).map(([productId, lines]) => {
     const product = productById.get(productId);
-    const { totalCogs, hasUnknownCost } = aggregateStrictCogs(agg.cogsValues);
-    const { grossProfit, grossMarginPct } = computeGrossMargin(agg.revenue, totalCogs);
+    const summary = summarizeMarginLines(lines);
     return {
       productId,
       name: product?.name ?? "—",
       categoryName: (product?.categories as { name: string } | null)?.name ?? null,
-      unitsSold: round2(agg.unitsSold),
-      revenue: round2(agg.revenue),
-      unitCost: totalCogs === null ? null : round2(totalCogs / agg.unitsSold),
+      ...summary,
       suggestedCost: null as number | null,
-      sellingPrice: product?.price ?? round2(agg.revenue / agg.unitsSold),
-      totalCogs,
-      grossProfit,
-      grossMarginPct,
-      hasUnknownCost,
+      sellingPrice: product?.price ?? round2(summary.revenue / summary.unitsSold),
     };
   });
 
-  // Unit Cost is the cost recorded when each sale was made -- the product's
-  // Stock Total at that moment (see effective_product_cost, used by charge_order
-  // and the website order import). Changing the Total in Stock later never
-  // rewrites a past sale; only sales made after the change pick up the new
-  // Total. Only a row with no recorded cost at all (sold before costs were
-  // tracked) falls back to the product's current Stock cost, as a suggestion.
+  // Only a row with no recorded cost at all (sold before costs were tracked)
+  // gets the product's current Stock cost, as a suggestion for "Add cost price".
   await Promise.all(
     rows
       .filter((r) => r.unitCost === null)
