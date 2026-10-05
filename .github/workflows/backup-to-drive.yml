@@ -1,9 +1,13 @@
 name: Backup orders to Google Drive
 
-# Every day at 03:00 Phnom Penh time (20:00 UTC). Reads the orders, order lines and
-# (optionally) customers straight from Supabase, zips them, and saves the zip into
-# the shared Google Drive folder via the Apps Script web app -- see
-# scripts/backup-to-drive.mjs and scripts/google-drive-backup.gs.
+# Four backups a month: every Saturday at 23:00 Phnom Penh time (16:00 UTC), so each
+# one includes the whole Saturday. A month can have a 5th Saturday (day 29 or later);
+# the "Decide whether to run" step skips that one so it is always exactly 4.
+#
+# Reads the orders, order lines and (optionally) customers straight from Supabase,
+# zips them, and saves the zip into the shared Google Drive folder via the Apps
+# Script web app -- see scripts/backup-to-drive.mjs and scripts/google-drive-backup.gs.
+# The Drive script keeps the newest 60 zips, so 4 a month lasts about 15 months.
 #
 # It runs here, not inside the app: the app is on Cloudflare Workers, whose
 # memory/CPU limits are too small to build a backup this size (error 1102).
@@ -13,10 +17,10 @@ name: Backup orders to Google Drive
 #   GOOGLE_DRIVE_BACKUP_URL, GOOGLE_DRIVE_BACKUP_SECRET
 # and, to include customer details, a repository VARIABLE (or secret)
 #   BACKUP_INCLUDE_CUSTOMER = true
-# "Run workflow" in the Actions tab triggers one by hand.
+# "Run workflow" in the Actions tab triggers one by hand (never skipped).
 on:
   schedule:
-    - cron: "0 20 * * *"
+    - cron: "0 16 * * 6"
   workflow_dispatch:
 
 jobs:
@@ -24,18 +28,34 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
+      - name: Decide whether to run
+        id: gate
+        env:
+          EVENT: ${{ github.event_name }}
+        run: |
+          day=$(TZ=Asia/Phnom_Penh date +%-d)
+          if [ "$EVENT" = "schedule" ] && [ "$day" -gt 28 ]; then
+            echo "Day $day of the month is a 5th Saturday -- skipping, 4 backups a month is enough."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Check out the backup script
+        if: steps.gate.outputs.skip != 'true'
         uses: actions/checkout@v4
         with:
           sparse-checkout: scripts/backup-to-drive.mjs
           sparse-checkout-cone-mode: false
 
       - name: Set up Node
+        if: steps.gate.outputs.skip != 'true'
         uses: actions/setup-node@v4
         with:
           node-version: 22
 
       - name: Run the backup
+        if: steps.gate.outputs.skip != 'true'
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
