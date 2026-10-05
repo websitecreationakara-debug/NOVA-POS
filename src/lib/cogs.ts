@@ -62,10 +62,14 @@ export function aggregatePartialCogs(cogsValues: (number | null)[]): {
 
 // One product's Margin Report figures from the order lines sold in range.
 // Every line keeps the cost it was sold with, so Total COGS and profit never
-// move when a cost later changes. Unit Cost is the LATEST cost in range (by
-// sale time), not an average; earlierUnitCosts lists any different older costs
-// used in the same range, newest first. A line with no cost makes the whole
-// product's cost unknown (see aggregateStrictCogs).
+// move when a cost later changes. Unit Cost is the product's CURRENT cost
+// (currentCost -- Stock's), the same for every date range; without one it falls
+// back to the latest cost recorded in range (by sale time), never an average.
+// soldAt breaks the units sold down by the cost they were sold at, newest cost
+// first, since Total COGS is built from those -- only when some sale in range
+// was made at a cost other than the Unit Cost shown, otherwise empty. A line
+// with no recorded cost makes the whole product's COGS unknown (see
+// aggregateStrictCogs).
 export type MarginLine = {
   quantity: number;
   lineTotal: number;
@@ -74,28 +78,39 @@ export type MarginLine = {
   paidAt: string | null;
 };
 
-export function summarizeMarginLines(lines: MarginLine[]) {
+// Units sold at each recorded per-unit cost, newest cost first (by the sale
+// time of its most recent line). Lines with no cost or no sale time are skipped.
+export function unitsSoldByCost(lines: MarginLine[]): { unitCost: number; units: number }[] {
+  const costs = lines
+    .map((l) => ({
+      paidAt: l.paidAt,
+      quantity: l.quantity,
+      unitCost: l.unitCost ?? (l.cogs !== null && l.quantity ? l.cogs / l.quantity : null),
+    }))
+    .filter((c): c is { paidAt: string; quantity: number; unitCost: number } => c.paidAt !== null && c.unitCost !== null)
+    .map((c) => ({ paidAt: c.paidAt, quantity: c.quantity, unitCost: round2(Number(c.unitCost)) }))
+    .sort((a, b) => b.paidAt.localeCompare(a.paidAt));
+  const unitsByCost = new Map<number, number>();
+  for (const c of costs) unitsByCost.set(c.unitCost, (unitsByCost.get(c.unitCost) ?? 0) + c.quantity);
+  return [...unitsByCost].map(([cost, units]) => ({ unitCost: cost, units: round2(units) }));
+}
+
+export function summarizeMarginLines(lines: MarginLine[], currentCost: number | null = null) {
   const unitsSold = lines.reduce((s, l) => s + l.quantity, 0);
   const revenue = lines.reduce((s, l) => s + l.lineTotal, 0);
   const { totalCogs, hasUnknownCost } = aggregateStrictCogs(lines.map((l) => l.cogs));
   const { grossProfit, grossMarginPct } = computeGrossMargin(revenue, totalCogs);
 
-  const costs = lines
-    .map((l) => ({
-      paidAt: l.paidAt,
-      unitCost: l.unitCost ?? (l.cogs !== null && l.quantity ? l.cogs / l.quantity : null),
-    }))
-    .filter((c): c is { paidAt: string; unitCost: number } => c.paidAt !== null && c.unitCost !== null)
-    .map((c) => ({ paidAt: c.paidAt, unitCost: round2(Number(c.unitCost)) }))
-    .sort((a, b) => b.paidAt.localeCompare(a.paidAt));
-  const latestCost = costs[0]?.unitCost ?? null;
-  const earlierUnitCosts = [...new Set(costs.filter((c) => c.unitCost !== latestCost).map((c) => c.unitCost))];
+  const soldAt = unitsSoldByCost(lines);
+  const unitCost =
+    currentCost ?? (totalCogs === null ? null : (soldAt[0]?.unitCost ?? round2(totalCogs / unitsSold)));
+  const anyDifferent = unitCost !== null && soldAt.some((s) => s.unitCost !== round2(unitCost));
 
   return {
     unitsSold: round2(unitsSold),
     revenue: round2(revenue),
-    unitCost: totalCogs === null ? null : (latestCost ?? round2(totalCogs / unitsSold)),
-    earlierUnitCosts: totalCogs === null ? [] : earlierUnitCosts,
+    unitCost: unitCost === null ? null : round2(unitCost),
+    soldAt: totalCogs === null || !anyDifferent ? [] : soldAt,
     totalCogs,
     grossProfit,
     grossMarginPct,
