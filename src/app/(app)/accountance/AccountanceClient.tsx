@@ -2119,6 +2119,14 @@ export default function AccountanceClient({
                                   {formatMoney(effectiveUnitCost)}
                                 </button>
                               )}
+                              {r.earlierUnitCosts.length > 0 && (
+                                <div
+                                  className="text-xs text-zinc-500"
+                                  title="Earlier sales in this period were made at these older costs; each sale keeps its own cost in Total COGS"
+                                >
+                                  was {r.earlierUnitCosts.map(formatMoney).join(", ")}
+                                </div>
+                              )}
                             </td>
                             <td className="py-2 pr-3 text-right">
                               <button

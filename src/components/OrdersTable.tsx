@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
@@ -8,7 +8,7 @@ import type { OrderListRow } from "@/lib/supabase/queries";
 import type { FulfillmentStatus } from "@/types/database";
 import { updateFulfillmentStatusAction } from "@/app/(app)/orders/actions";
 import { notifyOrdersChanged } from "@/lib/ordersChanged";
-import { FULFILLMENT_STATUSES, STATUS_LABELS } from "@/lib/orderStatus";
+import { FULFILLMENT_STATUSES, STATUS_LABELS, settledDayLabel } from "@/lib/orderStatus";
 import OrderStatusControl from "@/components/OrderStatusControl";
 import OrderRowMenu from "@/components/OrderRowMenu";
 
@@ -30,7 +30,7 @@ function formatDeliveryAt(iso: string) {
   });
 }
 
-const MONTH_RE = /^\d{4}-(0[1-9]|1[0-2])$/;
+const MONTH_RE =/^\d{4}-(0[1-9]|1[0-2])$/;
 
 function monthEnd(ym: string) {
   const [y, m] = ym.split("-").map(Number);
@@ -195,7 +195,7 @@ export default function OrdersTable({
             type="text"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search customer, phone, or invoice…"
+            placeholder="Search customer, phone, or invoiceâ€¦"
             className="w-full rounded-lg border border-border bg-transparent py-1.5 pr-3 pl-8 text-sm"
           />
         </div>
@@ -311,7 +311,7 @@ export default function OrdersTable({
               {STATUS_LABELS[s]}
             </button>
           ))}
-          {bulkBusy && <span className="text-xs text-muted-foreground">Updating…</span>}
+          {bulkBusy && <span className="text-xs text-muted-foreground">Updatingâ€¦</span>}
           <a
             href={bulkPdfUrl}
             target="_blank"
@@ -368,9 +368,9 @@ export default function OrdersTable({
                       </Link>
                       <span className="font-semibold tabular-nums">{formatMoney(o.total)}</span>
                     </div>
-                    <p className="mt-0.5 truncate text-sm">{o.customerName || "—"}</p>
+                    <p className="mt-0.5 truncate text-sm">{o.customerName || "â€”"}</p>
                     <p className="truncate text-xs text-muted-foreground">
-                      {o.customerPhone || "—"} · {o.brandName}
+                      {o.customerPhone || "â€”"} Â· {o.brandName}
                     </p>
                   </div>
                   <div onClick={(e) => e.stopPropagation()}>
@@ -387,7 +387,12 @@ export default function OrdersTable({
                     />
                   </div>
                   <div className="text-right text-xs text-muted-foreground">
-                    <div>{o.paidAt ? new Date(o.paidAt).toLocaleDateString("en-US", { timeZone: "Asia/Phnom_Penh" }) : "—"}</div>
+                    <div>{o.paidAt ? new Date(o.paidAt).toLocaleDateString("en-US", { timeZone: "Asia/Phnom_Penh" }) : "â€”"}</div>
+                    {settledDayLabel(o.settledAt, o.paidAt) && (
+                      <div className="mt-0.5">
+                        {STATUS_LABELS[o.fulfillmentStatus]}: {settledDayLabel(o.settledAt, o.paidAt)}
+                      </div>
+                    )}
                     {o.deliveryAt && (
                       <div className="mt-0.5 flex items-center justify-end gap-1">
                         <Truck className="size-3" />
@@ -449,8 +454,8 @@ export default function OrdersTable({
                     </Link>
                   </td>
                   <td className="py-2 pr-4">{o.brandName}</td>
-                  <td className="py-2 pr-4">{o.customerName || "—"}</td>
-                  <td className="py-2 pr-4 text-muted-foreground">{o.customerPhone || "—"}</td>
+                  <td className="py-2 pr-4">{o.customerName || "â€”"}</td>
+                  <td className="py-2 pr-4 text-muted-foreground">{o.customerPhone || "â€”"}</td>
                   <td className="py-2 pr-4 text-right tabular-nums">{formatMoney(o.total)}</td>
                   <td className="py-2 pr-4" onClick={(e) => e.stopPropagation()}>
                     {/* key includes the status so a bulk change (which updates
@@ -464,7 +469,12 @@ export default function OrdersTable({
                     />
                   </td>
                   <td className="py-2 pr-4 text-muted-foreground">
-                    <div>{o.paidAt ? new Date(o.paidAt).toLocaleDateString("en-US", { timeZone: "Asia/Phnom_Penh" }) : "—"}</div>
+                    <div>{o.paidAt ? new Date(o.paidAt).toLocaleDateString("en-US", { timeZone: "Asia/Phnom_Penh" }) : "â€”"}</div>
+                    {settledDayLabel(o.settledAt, o.paidAt) && (
+                      <div className="mt-0.5 text-xs font-medium">
+                        {STATUS_LABELS[o.fulfillmentStatus]}: {settledDayLabel(o.settledAt, o.paidAt)}
+                      </div>
+                    )}
                     {o.deliveryAt &&
                       (() => {
                         const due = new Date(o.deliveryAt).getTime() <= Date.now();
