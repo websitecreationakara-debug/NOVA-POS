@@ -24,6 +24,7 @@ export default async function MarketingPage({
     since_to?: string;
     bought_from?: string;
     bought_to?: string;
+    customer?: string;
   }>;
 }) {
   const sp = await searchParams;
@@ -66,7 +67,7 @@ export default async function MarketingPage({
   // brandId/q come straight from the URL, so promotions/customers don't
   // actually depend on the brands list -- fetch all three in parallel
   // instead of waiting on getBrands() first.
-  const [brands, promotions, { customers, total, buying }, filterOptions] = await Promise.all([
+  const [brands, promotions, { customers, total, buying, businesses }, filterOptions] = await Promise.all([
     getBrands(),
     listPromotionsAction(brandId),
     listCustomersAction(q, page, limit, customerFilters),
@@ -83,9 +84,11 @@ export default async function MarketingPage({
       customerPage={page}
       customerLimit={limit}
       customerBuying={buying}
+      customerBusinesses={businesses}
       customerFilters={customerFilters}
       filterOptions={filterOptions}
       today={ppToday()}
+      openCustomerId={sp.customer ?? ""}
       searchTerm={q}
     />
   );

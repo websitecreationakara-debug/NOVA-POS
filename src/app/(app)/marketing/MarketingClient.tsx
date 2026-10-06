@@ -43,9 +43,11 @@ export default function MarketingClient({
   customerPage,
   customerLimit,
   customerBuying,
+  customerBusinesses,
   customerFilters,
   filterOptions,
   today,
+  openCustomerId,
   searchTerm,
 }: {
   brands: Brand[];
@@ -57,6 +59,8 @@ export default function MarketingClient({
   customerLimit: number;
   // What each listed customer bought, by customer id (counted orders only).
   customerBuying: Record<string, CustomerBuying>;
+  // The businesses each listed customer has bought from, most-used first.
+  customerBusinesses: Record<string, string[]>;
   customerFilters: CustomerFilters;
   filterOptions: {
     states: { value: string; n: number }[];
@@ -65,6 +69,8 @@ export default function MarketingClient({
   };
   // Today in Phnom Penh (YYYY-MM-DD), for the "Bought on" quick buttons.
   today: string;
+  // The customer whose purchase-history window is open (?customer=), if any.
+  openCustomerId: string;
   searchTerm: string;
 }) {
   const router = useRouter();
@@ -85,7 +91,20 @@ export default function MarketingClient({
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editFields, setEditFields] = useState<Record<string, string>>({});
   const [deletingCustomer, setDeletingCustomer] = useState<Customer | null>(null);
-  const [viewingCustomer, setViewingCustomer] = useState<Customer | null>(null);
+  // The purchase-history window. Its customer is kept in the page address
+  // (?customer=<id>) so that coming BACK from an invoice opened inside it lands
+  // on the same window, not just the list behind it. Opened on load if the
+  // address names a customer on this page.
+  const [viewingCustomer, setViewingCustomer] = useState<Customer | null>(
+    () => customers.find((c) => c.id === openCustomerId) ?? null
+  );
+  function setViewing(customer: Customer | null) {
+    setViewingCustomer(customer);
+    const url = new URL(window.location.href);
+    if (customer) url.searchParams.set("customer", customer.id);
+    else url.searchParams.delete("customer");
+    window.history.replaceState(window.history.state, "", url);
+  }
 
   // Dynamic (type-as-you-go) filter over the current page of rows the server
   // already sent -- instant, no round trip while typing. The server only
@@ -625,7 +644,7 @@ export default function MarketingClient({
           </p>
         )}
 
-        {/* 21 columns don't fit at page width -- the wrapper scrolls sideways
+        {/* 18 columns don't fit at page width -- the wrapper scrolls sideways
             instead of squashing them. */}
         <div className="mt-4 overflow-x-auto">
         <table className="w-full text-left text-sm whitespace-nowrap [&_td]:pr-4 [&_th]:pr-4">
@@ -636,23 +655,18 @@ export default function MarketingClient({
               <th className="text-right">Orders</th>
               <th className="text-right">Products</th>
               <th className="text-right">Spent</th>
+              <th>Business</th>
               <th>Email</th>
-              <th>Photo</th>
               <th>Address</th>
               <th>Customer Since</th>
               <th>First Name</th>
               <th>Last Name</th>
               <th>Page UID</th>
-              <th>Source</th>
-              <th>Label</th>
               <th>Capital</th>
               <th>State</th>
-              <th>DOB</th>
-              <th>YOB</th>
               <th>Age</th>
               <th>Gender</th>
               <th>Nationality</th>
-              <th>Follow-Up</th>
               <th></th>
             </tr>
           </thead>
@@ -660,7 +674,7 @@ export default function MarketingClient({
             {visibleCustomers.map((c) => (
               <Fragment key={c.id}>
                 <tr
-                  onClick={() => setViewingCustomer(c)}
+                  onClick={() => setViewing(c)}
                   title="Click to see what this customer bought"
                   className="cursor-pointer border-t border-black/[.06] hover:bg-black/[.03] dark:border-white/[.08] dark:hover:bg-white/[.05]"
                 >
@@ -671,15 +685,8 @@ export default function MarketingClient({
                   <td className="text-right tabular-nums">
                     {customerBuying[c.id] ? `$${customerBuying[c.id].spent.toFixed(2)}` : "—"}
                   </td>
+                  <td>{customerBusinesses[c.id]?.join(", ") || "—"}</td>
                   <td>{c.email || "—"}</td>
-                  <td>
-                    {c.photo_url ? (
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <img src={c.photo_url} alt="" className="size-8 rounded-full object-cover" />
-                    ) : (
-                      "—"
-                    )}
-                  </td>
                   <td className="max-w-[16rem] truncate" title={c.address ?? undefined}>
                     {c.address || "—"}
                   </td>
@@ -687,16 +694,11 @@ export default function MarketingClient({
                   <td>{c.first_name || "—"}</td>
                   <td>{c.last_name || "—"}</td>
                   <td>{c.page_uid || "—"}</td>
-                  <td>{c.source || "—"}</td>
-                  <td>{c.label || "—"}</td>
                   <td>{c.capital || "—"}</td>
                   <td>{c.state || "—"}</td>
-                  <td>{c.dob || "—"}</td>
-                  <td>{c.yob ?? "—"}</td>
                   <td>{c.age ?? "—"}</td>
                   <td>{c.gender || "—"}</td>
                   <td>{c.nationality || "—"}</td>
-                  <td>{c.follow_up || "—"}</td>
                   <td className="text-right whitespace-nowrap">
                     <button
                       onClick={(e) => {
@@ -724,7 +726,7 @@ export default function MarketingClient({
                 </tr>
                 {editingId === c.id && (
                   <tr className="border-t border-black/[.06] dark:border-white/[.08]">
-                    <td colSpan={23} className="py-3 whitespace-normal">
+                    <td colSpan={18} className="py-3 whitespace-normal">
                       <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
                         <input
                           placeholder="Name"
@@ -814,7 +816,7 @@ export default function MarketingClient({
             ))}
             {visibleCustomers.length === 0 && (
               <tr>
-                <td colSpan={23} className="py-4 text-sm text-zinc-500">
+                <td colSpan={18} className="py-4 text-sm text-zinc-500">
                   {search.trim() !== searchTerm.trim() ? "Searching..." : "No customers found."}
                 </td>
               </tr>
@@ -868,7 +870,7 @@ export default function MarketingClient({
         <CustomerPurchasesDialog
           customerId={viewingCustomer.id}
           name={viewingCustomer.name}
-          onClose={() => setViewingCustomer(null)}
+          onClose={() => setViewing(null)}
         />
       )}
       {deletingCustomer && (

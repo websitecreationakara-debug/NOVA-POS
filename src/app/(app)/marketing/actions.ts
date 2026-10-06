@@ -7,6 +7,7 @@ import type { Customer, DiscountType, Promotion } from "@/types/database";
 import type { CustomerImportRow } from "@/lib/customerCsv";
 import { NO_CUSTOMER_FILTERS, type CustomerBuying, type CustomerFilters } from "@/lib/customerFilters";
 import { formatInvoiceNumber, invoiceMonthStartIso } from "@/lib/invoiceNumber";
+import { getBrands } from "@/lib/supabase/queries";
 
 export async function requireMarketingAccess() {
   // Defense in depth: /marketing is already role-gated in proxy.ts, but
@@ -108,12 +109,97 @@ export async function listCustomerFilterOptionsAction(): Promise<{
   };
 }
 
+// Which businesses each listed customer has bought from, most-used first -- the
+// CRM list's Business column. A customer's orders are found the same way as in
+// their purchase history (customer link, or the order's phone matching their
+// phone / second phone; cancelled and voided left out), and an order that spans
+// several businesses counts toward each (order_brands, migration 0058). With a
+// "Bought on" range set, only orders dated in it count. Never throws: on any
+// problem the column just stays empty.
+async function customerBusinessNames(
+  customers: Customer[],
+  boughtFrom: string,
+  boughtTo: string
+): Promise<Record<string, string[]>> {
+  if (customers.length === 0) return {};
+  try {
+    const quote = (s: string) => `"${s.replace(/[\\"]/g, "\\$&")}"`;
+    const customersByPhone = new Map<string, string[]>();
+    for (const c of customers) {
+      for (const p of [c.phone, c.second_phone]) {
+        const phone = p?.trim();
+        if (phone) customersByPhone.set(phone, [...(customersByPhone.get(phone) ?? []), c.id]);
+      }
+    }
+    const filters = [`customer_id.in.(${customers.map((c) => c.id).join(",")})`];
+    if (customersByPhone.size > 0) {
+      filters.push(`customer_phone.in.(${[...customersByPhone.keys()].map(quote).join(",")})`);
+    }
+
+    type OrderRow = {
+      customer_id: string | null;
+      customer_phone: string | null;
+      brand_id: string;
+      order_brands: { brand_id: string }[];
+    };
+    const orders: OrderRow[] = [];
+    for (let from = 0; ; from += 1000) {
+      let query = supabaseAdmin
+        .from("orders")
+        .select("customer_id, customer_phone, brand_id, order_brands(brand_id)")
+        .neq("status", "voided")
+        .neq("fulfillment_status", "cancelled")
+        .or(filters.join(","))
+        .order("id")
+        .range(from, from + 999);
+      if (boughtFrom) query = query.gte("list_at", `${boughtFrom}T00:00:00+07:00`);
+      if (boughtTo) query = query.lte("list_at", `${boughtTo}T23:59:59.999+07:00`);
+      const { data, error } = await query;
+      if (error) return {};
+      orders.push(...((data ?? []) as unknown as OrderRow[]));
+      if ((data ?? []).length < 1000) break;
+    }
+
+    const brandName = new Map((await getBrands()).map((b) => [b.id, b.name]));
+    const counts = new Map<string, Map<string, number>>();
+    const bump = (customerId: string, brandId: string) => {
+      const m = counts.get(customerId) ?? new Map<string, number>();
+      m.set(brandId, (m.get(brandId) ?? 0) + 1);
+      counts.set(customerId, m);
+    };
+    const listed = new Set(customers.map((c) => c.id));
+    for (const o of orders) {
+      const owners = new Set<string>();
+      if (o.customer_id && listed.has(o.customer_id)) owners.add(o.customer_id);
+      const phone = o.customer_phone?.trim();
+      if (phone) for (const id of customersByPhone.get(phone) ?? []) owners.add(id);
+      const brandIds = o.order_brands.length > 0 ? o.order_brands.map((b) => b.brand_id) : [o.brand_id];
+      for (const id of owners) for (const brandId of brandIds) bump(id, brandId);
+    }
+
+    const result: Record<string, string[]> = {};
+    for (const [customerId, m] of counts) {
+      result[customerId] = [...m.entries()]
+        .sort((a, b) => b[1] - a[1] || (brandName.get(a[0]) ?? "").localeCompare(brandName.get(b[0]) ?? ""))
+        .map(([brandId]) => brandName.get(brandId) ?? "—");
+    }
+    return result;
+  } catch {
+    return {};
+  }
+}
+
 export async function listCustomersAction(
   search?: string,
   page = 1,
   limit = 50,
   filters: CustomerFilters = NO_CUSTOMER_FILTERS
-): Promise<{ customers: Customer[]; total: number; buying: Record<string, CustomerBuying> }> {
+): Promise<{
+  customers: Customer[];
+  total: number;
+  buying: Record<string, CustomerBuying>;
+  businesses: Record<string, string[]>;
+}> {
   await requireMarketingAccess();
 
   const offset = (page - 1) * limit;
@@ -139,7 +225,12 @@ export async function listCustomersAction(
       buying[c.id] = { orders: Number(r.orders_count), units: Number(r.units), spent: Number(r.spent) };
       return c;
     });
-    return { customers, total: Number(ranked?.[0]?.total_count ?? 0), buying };
+    return {
+      customers,
+      total: Number(ranked?.[0]?.total_count ?? 0),
+      buying,
+      businesses: await customerBusinessNames(customers, filters.boughtFrom, filters.boughtTo),
+    };
   }
   // Migration 0064 not applied yet: plain name-ordered list, no filters.
   if (rankedError.code !== "PGRST202") throw new Error(rankedError.message);
@@ -161,7 +252,12 @@ export async function listCustomersAction(
 
   const { data, error, count } = await query;
   if (error) throw new Error(error.message);
-  return { customers: data ?? [], total: count ?? 0, buying: {} };
+  return {
+    customers: data ?? [],
+    total: count ?? 0,
+    buying: {},
+    businesses: await customerBusinessNames(data ?? [], "", ""),
+  };
 }
 
 export async function updateCustomerAction(
