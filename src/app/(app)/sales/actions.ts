@@ -208,11 +208,22 @@ export async function chargeOrder(input: {
   const user = await getSessionUser();
   const customerId = await getOrCreateCustomerId(phone, name, customerAddress);
 
+  // A cart can hold products from several businesses (the cart survives
+  // switching business tabs). The invoice's own business -- its letterhead --
+  // is the first product's; each business's revenue share is then worked out
+  // from the lines by the order_brands trigger (migration 0058).
+  const { data: firstProduct } = await supabaseAdmin
+    .from("products")
+    .select("brand_id")
+    .eq("id", lines[0].productId)
+    .maybeSingle();
+  const orderBrandId = firstProduct?.brand_id ?? brandId;
+
   // charge_order() runs the order insert, order_items insert, and stock
   // decrement as one DB transaction — see supabase/migrations/0003 and
   // 0012 (discount/delivery_fee). It also clamps the final total at 0.
   const { data: orderId, error } = await supabaseAdmin.rpc("charge_order", {
-    p_brand_id: brandId,
+    p_brand_id: orderBrandId,
     p_customer_id: customerId,
     p_created_by: user?.id ?? null,
     p_payment_method: paymentMethod,

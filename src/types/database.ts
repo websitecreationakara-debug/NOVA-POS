@@ -310,6 +310,14 @@ export type OrderItem = {
   size_label: string | null;
 };
 
+// One business on an order and the fraction (0..1) of the order it accounts
+// for -- shares of one order add up to 1 (migration 0058).
+export type OrderBrand = {
+  order_id: string;
+  brand_id: string;
+  share: number;
+};
+
 export type Expense = {
   id: string;
   // null = All Businesses (migration 0057).
@@ -594,6 +602,27 @@ export type Database = {
         CashReconciliation,
         Omit<CashReconciliation, "id" | "created_at"> & Partial<Pick<CashReconciliation, "id">>
       >;
+      // Every business on an order and its share of it (migration 0058).
+      order_brands: Table<
+        OrderBrand,
+        OrderBrand,
+        [
+          {
+            foreignKeyName: "order_brands_order_id_fkey";
+            columns: ["order_id"];
+            isOneToOne: false;
+            referencedRelation: "orders";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "order_brands_brand_id_fkey";
+            columns: ["brand_id"];
+            isOneToOne: false;
+            referencedRelation: "brands";
+            referencedColumns: ["id"];
+          },
+        ]
+      >;
     };
     Views: Record<string, never>;
     Functions: {
@@ -606,6 +635,8 @@ export type Database = {
           revenue: number;
           orders: number;
           delivery_fees: number;
+          // Sum of the order shares: counts a mixed order once across businesses.
+          order_share?: number;
         }[];
       };
       live_change_stamp: {

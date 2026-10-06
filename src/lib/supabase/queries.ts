@@ -7,6 +7,7 @@ import type { WebsiteCatalogId } from "@/lib/websiteProducts/types";
 import { formatInvoiceNumber, invoiceMonthStamp, invoiceMonthStartIso } from "@/lib/invoiceNumber";
 import { ppDay, ppDayEnd, ppDayStart } from "@/lib/phnomPenhTime";
 import { COUNTED_FULFILLMENT_STATUSES } from "@/lib/orderStatus";
+import { orderForBrandShare } from "@/lib/orderBrandShare";
 import { ALL_PAYMENT_METHODS, type PaymentMethod } from "@/lib/paymentMethods";
 import { summarizeMarginLines, unitsSoldByCost, type MarginLine } from "@/lib/cogs";
 import { productWeightGrams } from "@/lib/costControl";
@@ -186,20 +187,26 @@ export async function getDailySales(
   fromDate: string,
   toDate: string
 ): Promise<{ summary: DailySalesSummary; orders: Order[] }> {
+  // One business's view of an order that spans several businesses (see
+  // order_brands, migration 0058): only that business's share of the money.
+  // "All businesses" reads the orders whole.
+  const scoped = brandId !== ALL_BUSINESSES_ID;
   let query = supabaseAdmin
     .from("orders")
-    .select("*")
+    .select(scoped ? "*, order_brands!inner(brand_id, share)" : "*")
     .eq("status", "paid")
     .in("fulfillment_status", COUNTED_FULFILLMENT_STATUSES)
     .gte("paid_at", ppDayStart(fromDate))
     .lte("paid_at", ppDayEnd(toDate))
     .order("paid_at", { ascending: false })
     .order("id");
-  if (brandId !== ALL_BUSINESSES_ID) query = query.eq("brand_id", brandId);
+  if (scoped) query = query.eq("order_brands.brand_id", brandId);
   const { data, error } = await selectAll(query);
 
   if (error) throw error;
-  const orders = data;
+  const orders = (data as unknown as (Order & { order_brands?: { share: number }[] })[]).map(
+    ({ order_brands, ...o }) => orderForBrandShare(o as Order, Number(order_brands?.[0]?.share ?? 1))
+  );
   // A paid order with no payment_method recorded (create_online_order()
   // allows it, and it can be cleared via Edit) still got paid somehow --
   // counted as cash, the POS's own default, rather than left out of every
@@ -362,8 +369,13 @@ type OrderDayRow = {
   brand_name: string;
   day: string;
   revenue: number;
+  // Orders touching this business -- a mixed order counts once in each of its
+  // businesses, so don't add these up across businesses.
   orders: number;
   delivery_fees: number;
+  // Adds up to 1 per order across its businesses: the right count for an
+  // "All businesses" total (see migration 0058).
+  order_share: number;
 };
 
 // Summed in the database (migration 0053's dashboard_order_days). If that
@@ -397,6 +409,7 @@ async function loadOrderDays(brandId: string): Promise<{ data: OrderDayRow[]; er
         revenue: Number(r.revenue),
         orders: Number(r.orders),
         delivery_fees: Number(r.delivery_fees),
+        order_share: Number(r.order_share ?? r.orders),
       })),
       error: null,
     };
@@ -429,7 +442,9 @@ async function loadOrderDays(brandId: string): Promise<{ data: OrderDayRow[]; er
       revenue: 0,
       orders: 0,
       delivery_fees: 0,
+      order_share: 0,
     };
+    e.order_share += 1;
     e.revenue += o.total;
     e.orders += 1;
     e.delivery_fees += Number(o.delivery_fee ?? 0);
@@ -465,12 +480,14 @@ export async function getDashboardStats(
   const makeOrderItemsQuery = () => {
     let q = supabaseAdmin
       .from("order_items")
-      .select("product_id, quantity, unit_price, cogs, line_total, products(name), orders!inner(status, paid_at, brand_id)")
+      .select("product_id, quantity, unit_price, cogs, line_total, products!inner(name, brand_id), orders!inner(status, paid_at)")
       .eq("orders.status", "paid")
       .in("orders.fulfillment_status", COUNTED_FULFILLMENT_STATUSES)
       .gte("orders.paid_at", ppDayStart(fromDate))
       .lte("orders.paid_at", ppDayEnd(toDate));
-    if (brandId !== ALL_BUSINESSES_ID) q = q.eq("orders.brand_id", brandId);
+    // By the product's own business (not the order's), so a mixed order's lines
+    // land in the right business.
+    if (brandId !== ALL_BUSINESSES_ID) q = q.eq("products.brand_id", brandId);
     return q.order("id");
   };
 
@@ -525,7 +542,10 @@ export async function getDashboardStats(
   const inRange = (dateStr: string) => dateStr >= fromDate && dateStr <= toDate;
   const daysInRange = orderDays.filter((d) => inRange(d.day));
   const totalRevenue = daysInRange.reduce((sum, d) => sum + d.revenue, 0);
-  const orderCount = daysInRange.reduce((sum, d) => sum + d.orders, 0);
+  // One business: every order touching it counts. All businesses: a mixed order
+  // is still ONE order, so use the shares that add up to 1.
+  const ordersIn = (d: OrderDayRow) => (brandId === ALL_BUSINESSES_ID ? d.order_share : d.orders);
+  const orderCount = Math.round(daysInRange.reduce((sum, d) => sum + ordersIn(d), 0));
   const deliveryFees = round2(daysInRange.reduce((sum, d) => sum + d.delivery_fees, 0));
 
   type OrderItemCogsRow = {
@@ -601,10 +621,10 @@ export async function getDashboardStats(
   // Same idea, but counting orders instead of summing their totals.
   const dailyOrderCounts = new Map<string, number>();
   for (const o of orderDays) {
-    dailyOrderCounts.set(o.day, (dailyOrderCounts.get(o.day) ?? 0) + o.orders);
+    dailyOrderCounts.set(o.day, (dailyOrderCounts.get(o.day) ?? 0) + ordersIn(o));
   }
   const dailyOrders = Array.from(dailyOrderCounts.entries())
-    .map(([date, total]) => ({ date, total }))
+    .map(([date, total]) => ({ date, total: Math.round(total) }))
     .sort((a, b) => (a.date < b.date ? -1 : 1));
 
   // Same two series again, this time bucketed per brand -- so "how much did
@@ -727,14 +747,16 @@ export async function getOrdersList(
   // just undefined until then).
   let query = supabaseAdmin
     .from("orders")
-    .select("*, brands(name)", { count: "exact" })
+    .select(brandId ? "*, brands(name), order_brands!inner(brand_id)" : "*, brands(name)", { count: "exact" })
     .eq("status", "paid")
     .order("paid_at", { ascending: false })
     .order("id")
     .range(offset, offset + limit - 1);
 
   if (status) query = query.eq("fulfillment_status", status);
-  if (brandId) query = query.eq("brand_id", brandId);
+  // An order shows under EVERY business it has products from (order_brands,
+  // migration 0058), not just its main one.
+  if (brandId) query = query.eq("order_brands.brand_id", brandId);
   if (from && DAY_RE.test(from)) query = query.gte("paid_at", `${from}T00:00:00+07:00`);
   if (to && DAY_RE.test(to)) query = query.lte("paid_at", `${to}T23:59:59.999+07:00`);
 
@@ -779,7 +801,7 @@ export async function getOrdersList(
     brands: { name: string } | null;
   };
 
-  const rows: OrderListRow[] = ((data ?? []) as Row[]).map((o) => ({
+  const rows: OrderListRow[] = ((data ?? []) as unknown as Row[]).map((o) => ({
     id: o.id,
     invoiceNumber: null,
     brandId: o.brand_id,
@@ -1062,12 +1084,13 @@ export async function getCogsSummary(
 ): Promise<CogsSummary> {
   let itemsQuery = supabaseAdmin
     .from("order_items")
-    .select("product_id, quantity, cogs, orders!inner(status, paid_at, brand_id)")
+    .select("product_id, quantity, cogs, products!inner(brand_id), orders!inner(status, paid_at)")
     .eq("orders.status", "paid")
     .in("orders.fulfillment_status", COUNTED_FULFILLMENT_STATUSES)
     .gte("orders.paid_at", ppDayStart(fromDate))
     .lte("orders.paid_at", ppDayEnd(toDate));
-  if (brandId !== ALL_BUSINESSES_ID) itemsQuery = itemsQuery.eq("orders.brand_id", brandId);
+  // By the product's own business, so a mixed order's lines count where they belong.
+  if (brandId !== ALL_BUSINESSES_ID) itemsQuery = itemsQuery.eq("products.brand_id", brandId);
 
   let adjustmentsQuery = supabaseAdmin
     .from("stock_adjustments")
@@ -1398,12 +1421,12 @@ export async function getMarginReport(
 ): Promise<MarginReportRow[]> {
   let query = supabaseAdmin
     .from("order_items")
-    .select("product_id, quantity, line_total, cogs, unit_cost, orders!inner(status, paid_at, brand_id)")
+    .select("product_id, quantity, line_total, cogs, unit_cost, products!inner(brand_id), orders!inner(status, paid_at)")
     .eq("orders.status", "paid")
     .in("orders.fulfillment_status", COUNTED_FULFILLMENT_STATUSES)
     .gte("orders.paid_at", ppDayStart(fromDate))
     .lte("orders.paid_at", ppDayEnd(toDate));
-  if (brandId !== ALL_BUSINESSES_ID) query = query.eq("orders.brand_id", brandId);
+  if (brandId !== ALL_BUSINESSES_ID) query = query.eq("products.brand_id", brandId);
 
   const { data: items, error } = await selectAll(query.order("id"));
   if (error) throw error;
@@ -1507,13 +1530,13 @@ export async function getProductMarginDetail(
 
   let query = supabaseAdmin
     .from("order_items")
-    .select("order_id, quantity, unit_price, line_total, cogs, unit_cost, orders!inner(status, paid_at, brand_id)")
+    .select("order_id, quantity, unit_price, line_total, cogs, unit_cost, products!inner(brand_id), orders!inner(status, paid_at)")
     .eq("product_id", productId)
     .eq("orders.status", "paid")
     .in("orders.fulfillment_status", COUNTED_FULFILLMENT_STATUSES)
     .gte("orders.paid_at", ppDayStart(fromDate))
     .lte("orders.paid_at", ppDayEnd(toDate));
-  if (brandId !== ALL_BUSINESSES_ID) query = query.eq("orders.brand_id", brandId);
+  if (brandId !== ALL_BUSINESSES_ID) query = query.eq("products.brand_id", brandId);
   const { data: items, error } = await selectAll(query.order("id"));
   if (error) throw error;
 
