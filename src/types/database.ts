@@ -268,6 +268,10 @@ export type Order = {
   paid_at: string | null;
   // When a Pre-Order was moved to Delivered / Complete / Cancelled (migration 0055).
   settled_at?: string | null;
+  // The day the Orders list files the order under -- settled_at, else paid_at (migration 0062).
+  list_at?: string | null;
+  // Flagged "Unpaid" from the Orders list (migration 0059); the order still counts.
+  is_unpaid?: boolean;
   // Customer-requested delivery date & time (ISO); null = ASAP / same day.
   delivery_at: string | null;
   invoice_number: string | null;

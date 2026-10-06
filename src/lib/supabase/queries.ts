@@ -196,16 +196,21 @@ export async function getDailySales(
     .select(scoped ? "*, order_brands!inner(brand_id, share)" : "*")
     .eq("status", "paid")
     .in("fulfillment_status", COUNTED_FULFILLMENT_STATUSES)
-    .gte("paid_at", ppDayStart(fromDate))
-    .lte("paid_at", ppDayEnd(toDate))
-    .order("paid_at", { ascending: false })
+    // Counted on the order's list day (migration 0062): the day a Pre-Order was
+    // changed to another status, else its own date.
+    .gte("list_at", ppDayStart(fromDate))
+    .lte("list_at", ppDayEnd(toDate))
+    .order("list_at", { ascending: false })
     .order("id");
   if (scoped) query = query.eq("order_brands.brand_id", brandId);
   const { data, error } = await selectAll(query);
 
   if (error) throw error;
+  // paid_at is swapped for that same day, so the charts and CSV built from these
+  // orders bucket them where their revenue is counted.
   const orders = (data as unknown as (Order & { order_brands?: { share: number }[] })[]).map(
-    ({ order_brands, ...o }) => orderForBrandShare(o as Order, Number(order_brands?.[0]?.share ?? 1))
+    ({ order_brands, ...o }) =>
+      orderForBrandShare({ ...o, paid_at: o.list_at ?? o.paid_at } as Order, Number(order_brands?.[0]?.share ?? 1))
   );
   // A paid order with no payment_method recorded (create_online_order()
   // allows it, and it can be cleared via Edit) still got paid somehow --
@@ -480,11 +485,11 @@ export async function getDashboardStats(
   const makeOrderItemsQuery = () => {
     let q = supabaseAdmin
       .from("order_items")
-      .select("product_id, quantity, unit_price, cogs, line_total, products!inner(name, brand_id), orders!inner(status, paid_at)")
+      .select("product_id, quantity, unit_price, cogs, line_total, products!inner(name, brand_id), orders!inner(status, list_at, paid_at)")
       .eq("orders.status", "paid")
       .in("orders.fulfillment_status", COUNTED_FULFILLMENT_STATUSES)
-      .gte("orders.paid_at", ppDayStart(fromDate))
-      .lte("orders.paid_at", ppDayEnd(toDate));
+      .gte("orders.list_at", ppDayStart(fromDate))
+      .lte("orders.list_at", ppDayEnd(toDate));
     // By the product's own business (not the order's), so a mixed order's lines
     // land in the right business.
     if (brandId !== ALL_BUSINESSES_ID) q = q.eq("products.brand_id", brandId);
@@ -555,10 +560,10 @@ export async function getDashboardStats(
     cogs: number | null;
     line_total: number;
     products: { name: string } | null;
-    orders: { status: string; paid_at: string | null } | null;
+    orders: { status: string; paid_at: string | null; list_at: string | null } | null;
   };
   const itemsInRange = ((orderItemsData ?? []) as OrderItemCogsRow[]).filter((i) =>
-    inRange(ppDay(i.orders?.paid_at))
+    inRange(ppDay(i.orders?.list_at ?? i.orders?.paid_at))
   );
 
   // Best sellers in the selected range, both ranked by revenue (units sold
@@ -705,8 +710,14 @@ export type OrderListRow = {
   total: number;
   fulfillmentStatus: FulfillmentStatus;
   paidAt: string | null;
+  // The day the list files the order under: the day it was changed away from
+  // Pre-Order if it was, else paidAt. paidAt itself (and the invoice number
+  // worked out from it) never moves.
+  listAt: string | null;
   deliveryAt: string | null;
   settledAt: string | null;
+  // Flagged Unpaid from the list's row menu (migration 0059).
+  isUnpaid: boolean;
 };
 
 export type OrdersListParams = {
@@ -749,7 +760,10 @@ export async function getOrdersList(
     .from("orders")
     .select(brandId ? "*, brands!orders_brand_id_fkey(name), order_brands!inner(brand_id)" : "*, brands!orders_brand_id_fkey(name)", { count: "exact" })
     .eq("status", "paid")
-    .order("paid_at", { ascending: false })
+    // By list_at, not paid_at: a Pre-Order that was changed to another status is
+    // filed under the day of that change (migration 0062) while the order keeps
+    // its own date and invoice number.
+    .order("list_at", { ascending: false })
     .order("id")
     .range(offset, offset + limit - 1);
 
@@ -757,8 +771,8 @@ export async function getOrdersList(
   // An order shows under EVERY business it has products from (order_brands,
   // migration 0058), not just its main one.
   if (brandId) query = query.eq("order_brands.brand_id", brandId);
-  if (from && DAY_RE.test(from)) query = query.gte("paid_at", `${from}T00:00:00+07:00`);
-  if (to && DAY_RE.test(to)) query = query.lte("paid_at", `${to}T23:59:59.999+07:00`);
+  if (from && DAY_RE.test(from)) query = query.gte("list_at", `${from}T00:00:00+07:00`);
+  if (to && DAY_RE.test(to)) query = query.lte("list_at", `${to}T23:59:59.999+07:00`);
 
   if (q) {
     // A full invoice number (YYYYMM-N) is derived, not stored: resolve it to
@@ -798,6 +812,8 @@ export async function getOrdersList(
     paid_at: string | null;
     delivery_at: string | null;
     settled_at?: string | null;
+    list_at?: string | null;
+    is_unpaid?: boolean;
     brands: { name: string } | null;
   };
 
@@ -811,8 +827,10 @@ export async function getOrdersList(
     total: o.total,
     fulfillmentStatus: o.fulfillment_status,
     paidAt: o.paid_at,
+    listAt: o.list_at ?? o.paid_at,
     deliveryAt: o.delivery_at ?? null,
     settledAt: o.settled_at ?? null,
+    isUnpaid: o.is_unpaid ?? false,
   }));
 
   // Date-based invoice numbers (YYYYMM-N): an order's number is its position
@@ -1084,11 +1102,11 @@ export async function getCogsSummary(
 ): Promise<CogsSummary> {
   let itemsQuery = supabaseAdmin
     .from("order_items")
-    .select("product_id, quantity, cogs, products!inner(brand_id), orders!inner(status, paid_at)")
+    .select("product_id, quantity, cogs, products!inner(brand_id), orders!inner(status, list_at, paid_at)")
     .eq("orders.status", "paid")
     .in("orders.fulfillment_status", COUNTED_FULFILLMENT_STATUSES)
-    .gte("orders.paid_at", ppDayStart(fromDate))
-    .lte("orders.paid_at", ppDayEnd(toDate));
+    .gte("orders.list_at", ppDayStart(fromDate))
+    .lte("orders.list_at", ppDayEnd(toDate));
   // By the product's own business, so a mixed order's lines count where they belong.
   if (brandId !== ALL_BUSINESSES_ID) itemsQuery = itemsQuery.eq("products.brand_id", brandId);
 
@@ -1421,11 +1439,11 @@ export async function getMarginReport(
 ): Promise<MarginReportRow[]> {
   let query = supabaseAdmin
     .from("order_items")
-    .select("product_id, quantity, line_total, cogs, unit_cost, products!inner(brand_id), orders!inner(status, paid_at)")
+    .select("product_id, quantity, line_total, cogs, unit_cost, products!inner(brand_id), orders!inner(status, list_at, paid_at)")
     .eq("orders.status", "paid")
     .in("orders.fulfillment_status", COUNTED_FULFILLMENT_STATUSES)
-    .gte("orders.paid_at", ppDayStart(fromDate))
-    .lte("orders.paid_at", ppDayEnd(toDate));
+    .gte("orders.list_at", ppDayStart(fromDate))
+    .lte("orders.list_at", ppDayEnd(toDate));
   if (brandId !== ALL_BUSINESSES_ID) query = query.eq("products.brand_id", brandId);
 
   const { data: items, error } = await selectAll(query.order("id"));
@@ -1464,7 +1482,7 @@ export async function getMarginReport(
       lineTotal: item.line_total,
       cogs: item.cogs,
       unitCost: item.unit_cost,
-      paidAt: (item.orders as unknown as { paid_at: string | null } | null)?.paid_at ?? null,
+      paidAt: (item.orders as unknown as { list_at: string | null; paid_at: string | null } | null)?.list_at ?? (item.orders as unknown as { paid_at: string | null } | null)?.paid_at ?? null,
     });
     byProduct.set(item.product_id, lines);
   }
@@ -1530,12 +1548,12 @@ export async function getProductMarginDetail(
 
   let query = supabaseAdmin
     .from("order_items")
-    .select("order_id, quantity, unit_price, line_total, cogs, unit_cost, products!inner(brand_id), orders!inner(status, paid_at)")
+    .select("order_id, quantity, unit_price, line_total, cogs, unit_cost, products!inner(brand_id), orders!inner(status, list_at, paid_at)")
     .eq("product_id", productId)
     .eq("orders.status", "paid")
     .in("orders.fulfillment_status", COUNTED_FULFILLMENT_STATUSES)
-    .gte("orders.paid_at", ppDayStart(fromDate))
-    .lte("orders.paid_at", ppDayEnd(toDate));
+    .gte("orders.list_at", ppDayStart(fromDate))
+    .lte("orders.list_at", ppDayEnd(toDate));
   if (brandId !== ALL_BUSINESSES_ID) query = query.eq("products.brand_id", brandId);
   const { data: items, error } = await selectAll(query.order("id"));
   if (error) throw error;
@@ -1543,7 +1561,7 @@ export async function getProductMarginDetail(
   const sales = items
     .map((i) => ({
       orderId: i.order_id,
-      paidAt: (i.orders as unknown as { paid_at: string | null } | null)?.paid_at ?? null,
+      paidAt: (i.orders as unknown as { list_at: string | null; paid_at: string | null } | null)?.list_at ?? (i.orders as unknown as { paid_at: string | null } | null)?.paid_at ?? null,
       quantity: Number(i.quantity),
       unitPrice: Number(i.unit_price),
       unitCost: i.unit_cost === null ? (i.cogs === null ? null : round2(Number(i.cogs) / Number(i.quantity))) : Number(i.unit_cost),

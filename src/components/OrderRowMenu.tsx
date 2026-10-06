@@ -1,16 +1,20 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 import Link from "next/link";
-import { Eye, MoreHorizontal, Printer, Trash2 } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { CircleCheck, Clock, Eye, MoreHorizontal, Printer, Trash2 } from "lucide-react";
+import { setOrderUnpaidAction } from "@/app/(app)/orders/actions";
 import DeleteOrderDialog from "./DeleteOrderDialog";
 
 // The per-row "…" actions menu on the orders list. Groups the secondary
-// actions (view / print / delete) behind one control so a destructive button
+// actions (view / print / unpaid / delete) behind one control so a destructive button
 // isn't sitting exposed on every row. The popover is position:fixed so the
 // table's own scroll container can't clip it. The delete dialog lives outside
 // the popover so closing the menu doesn't unmount it mid-flow.
-export default function OrderRowMenu({ orderId }: { orderId: string }) {
+export default function OrderRowMenu({ orderId, isUnpaid }: { orderId: string; isUnpaid: boolean }) {
+  const router = useRouter();
+  const [, startToggle] = useTransition();
   const [open, setOpen] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const btnRef = useRef<HTMLButtonElement>(null);
@@ -24,7 +28,7 @@ export default function OrderRowMenu({ orderId }: { orderId: string }) {
       if (!r) return;
       const right = window.innerWidth - r.right;
       // Flip above the button when the menu wouldn't fit below it.
-      const h = menuRef.current?.offsetHeight ?? 130;
+      const h = menuRef.current?.offsetHeight ?? 160;
       if (r.bottom + 4 + h > window.innerHeight) {
         setPos({ bottom: window.innerHeight - r.top + 4, right });
       } else {
@@ -95,6 +99,21 @@ export default function OrderRowMenu({ orderId }: { orderId: string }) {
             <Printer className="size-3.5 shrink-0" />
             Print invoice
           </Link>
+          <button
+            type="button"
+            role="menuitem"
+            onClick={() => {
+              setOpen(false);
+              startToggle(async () => {
+                await setOrderUnpaidAction(orderId, !isUnpaid);
+                router.refresh();
+              });
+            }}
+            className={`${itemClass} text-foreground`}
+          >
+            {isUnpaid ? <CircleCheck className="size-3.5 shrink-0" /> : <Clock className="size-3.5 shrink-0" />}
+            {isUnpaid ? "Mark as paid" : "Unpaid"}
+          </button>
           <div className="my-1 border-t border-border" />
           <button
             type="button"
