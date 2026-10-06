@@ -124,7 +124,7 @@ export async function getDueDeliveries(): Promise<DueDelivery[]> {
   try {
     const { data, error } = await supabaseAdmin
       .from("orders")
-      .select("id, invoice_number, customer_name, delivery_at, fulfillment_status, brands(name)")
+      .select("id, invoice_number, customer_name, delivery_at, fulfillment_status, brands!orders_brand_id_fkey(name)")
       .eq("status", "paid")
       .not("delivery_at", "is", null)
       .lte("delivery_at", cutoff)

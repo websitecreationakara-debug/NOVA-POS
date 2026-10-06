@@ -424,7 +424,7 @@ async function loadOrderDays(brandId: string): Promise<{ data: OrderDayRow[]; er
   }>(() => {
     let q = supabaseAdmin
       .from("orders")
-      .select("total, delivery_fee, paid_at, brand_id, brands(name)")
+      .select("total, delivery_fee, paid_at, brand_id, brands!orders_brand_id_fkey(name)")
       .eq("status", "paid")
       .in("fulfillment_status", COUNTED_FULFILLMENT_STATUSES);
     if (brandId !== ALL_BUSINESSES_ID) q = q.eq("brand_id", brandId);
@@ -466,7 +466,7 @@ export async function getDashboardStats(
 
   let recentOrdersQuery = supabaseAdmin
     .from("orders")
-    .select("id, status, total, paid_at, brands(name)")
+    .select("id, status, total, paid_at, brands!orders_brand_id_fkey(name)")
     .eq("status", "paid")
     .order("paid_at", { ascending: false })
     .limit(5);
@@ -747,7 +747,7 @@ export async function getOrdersList(
   // just undefined until then).
   let query = supabaseAdmin
     .from("orders")
-    .select(brandId ? "*, brands(name), order_brands!inner(brand_id)" : "*, brands(name)", { count: "exact" })
+    .select(brandId ? "*, brands!orders_brand_id_fkey(name), order_brands!inner(brand_id)" : "*, brands!orders_brand_id_fkey(name)", { count: "exact" })
     .eq("status", "paid")
     .order("paid_at", { ascending: false })
     .order("id")
@@ -956,7 +956,7 @@ async function getSiteWeightLabels(productIds: string[]): Promise<Map<string, st
 export async function getInvoice(orderId: string): Promise<InvoiceData | null> {
   const { data: order, error: orderError } = await supabaseAdmin
     .from("orders")
-    .select("*, brands(name, slug, logo_url), customers(address)")
+    .select("*, brands!orders_brand_id_fkey(name, slug, logo_url), customers(address)")
     .eq("id", orderId)
     .maybeSingle();
 

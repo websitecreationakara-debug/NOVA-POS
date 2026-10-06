@@ -10,7 +10,7 @@ export async function fetchOrdersBackupData(): Promise<{ orders: BackupOrder[]; 
   for (let from = 0; ; from += PAGE) {
     const { data, error } = await supabaseAdmin
       .from("orders")
-      .select("*, brands(name), customers(address)")
+      .select("*, brands!orders_brand_id_fkey(name), customers(address)")
       .order("created_at", { ascending: false })
       .order("id")
       .range(from, from + PAGE - 1);
