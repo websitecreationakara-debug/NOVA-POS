@@ -8,7 +8,7 @@ import type { OrderListRow } from "@/lib/supabase/queries";
 import type { FulfillmentStatus } from "@/types/database";
 import { updateFulfillmentStatusAction } from "@/app/(app)/orders/actions";
 import { notifyOrdersChanged } from "@/lib/ordersChanged";
-import { COUNTED_FULFILLMENT_STATUSES, FULFILLMENT_STATUSES, STATUS_LABELS, settledDayLabel } from "@/lib/orderStatus";
+import { COUNTED_FULFILLMENT_STATUSES, FULFILLMENT_STATUSES, STATUS_LABELS } from "@/lib/orderStatus";
 import OrderStatusControl from "@/components/OrderStatusControl";
 import OrderRowMenu from "@/components/OrderRowMenu";
 
@@ -37,6 +37,15 @@ function DayHeader({ day, revenue, orders }: { day: string; revenue: number; ord
         {orders} {orders === 1 ? "order" : "orders"}
       </span>
     </div>
+  );
+}
+
+// Small orange tag beside the invoice number of an order flagged Unpaid.
+function UnpaidBadge() {
+  return (
+    <span className="ml-2 rounded-full bg-orange-100 px-2 py-0.5 align-middle text-[10px] font-semibold text-orange-700 dark:bg-orange-950 dark:text-orange-300">
+      Unpaid
+    </span>
   );
 }
 
@@ -171,7 +180,7 @@ export default function OrdersTable({
   // header showing that day's revenue (of the orders on this page).
   const dayStats = new Map<string, { revenue: number; orders: number }>();
   for (const o of paged) {
-    const day = dayLabel(o.paidAt);
+    const day = dayLabel(o.listAt);
     const s = dayStats.get(day) ?? { revenue: 0, orders: 0 };
     s.revenue += orderRevenue(o);
     s.orders += 1;
@@ -382,15 +391,19 @@ export default function OrdersTable({
           <ul className="space-y-2 md:hidden">
             {paged.map((o, i) => (
               <Fragment key={o.id}>
-              {(i === 0 || dayLabel(paged[i - 1].paidAt) !== dayLabel(o.paidAt)) && (
+              {(i === 0 || dayLabel(paged[i - 1].listAt) !== dayLabel(o.listAt)) && (
                 <li className="px-1 pt-3">
-                  <DayHeader day={dayLabel(o.paidAt)} {...(dayStats.get(dayLabel(o.paidAt)) ?? { revenue: 0, orders: 0 })} />
+                  <DayHeader day={dayLabel(o.listAt)} {...(dayStats.get(dayLabel(o.listAt)) ?? { revenue: 0, orders: 0 })} />
                 </li>
               )}
               <li
                 onClick={() => router.push(`/orders/${o.id}`)}
                 className={`cursor-pointer rounded-xl border border-border bg-card p-3 ${
-                  selected.has(o.id) ? "border-brand/50 bg-brand/5" : ""
+                  selected.has(o.id)
+                    ? "border-brand/50 bg-brand/5"
+                    : o.isUnpaid
+                      ? "border-orange-300/60 bg-orange-500/[.07] dark:border-orange-400/30"
+                      : ""
                 }`}
               >
                 <div className="flex items-start gap-3">
@@ -410,6 +423,7 @@ export default function OrdersTable({
                         className="font-semibold text-brand hover:underline"
                       >
                         {o.invoiceNumber ?? `#${o.id.slice(0, 8)}`}
+                        {o.isUnpaid && <UnpaidBadge />}
                       </Link>
                       <span className="font-semibold tabular-nums">{formatMoney(o.total)}</span>
                     </div>
@@ -419,7 +433,7 @@ export default function OrdersTable({
                     </p>
                   </div>
                   <div onClick={(e) => e.stopPropagation()}>
-                    <OrderRowMenu orderId={o.id} />
+                    <OrderRowMenu orderId={o.id} isUnpaid={o.isUnpaid} />
                   </div>
                 </div>
                 <div className="mt-2.5 flex flex-wrap items-center justify-between gap-2 border-t border-border pt-2.5">
@@ -432,11 +446,9 @@ export default function OrdersTable({
                     />
                   </div>
                   <div className="text-right text-xs text-muted-foreground">
-                    <div>{dayLabel(o.paidAt)}</div>
-                    {settledDayLabel(o.settledAt, o.paidAt) && (
-                      <div className="mt-0.5">
-                        {STATUS_LABELS[o.fulfillmentStatus]}: {settledDayLabel(o.settledAt, o.paidAt)}
-                      </div>
+                    <div>{dayLabel(o.listAt)}</div>
+                    {dayLabel(o.listAt) !== dayLabel(o.paidAt) && (
+                      <div className="mt-0.5">Ordered: {dayLabel(o.paidAt)}</div>
                     )}
                     {o.deliveryAt && (
                       <div className="mt-0.5 flex items-center justify-end gap-1">
@@ -475,17 +487,21 @@ export default function OrdersTable({
             <tbody>
               {paged.map((o, i) => (
                 <Fragment key={o.id}>
-                {(i === 0 || dayLabel(paged[i - 1].paidAt) !== dayLabel(o.paidAt)) && (
+                {(i === 0 || dayLabel(paged[i - 1].listAt) !== dayLabel(o.listAt)) && (
                   <tr className="border-b border-border bg-muted/50">
                     <td colSpan={9} className="border-l-[3px] border-l-brand py-3 pl-3">
-                      <DayHeader day={dayLabel(o.paidAt)} {...(dayStats.get(dayLabel(o.paidAt)) ?? { revenue: 0, orders: 0 })} />
+                      <DayHeader day={dayLabel(o.listAt)} {...(dayStats.get(dayLabel(o.listAt)) ?? { revenue: 0, orders: 0 })} />
                     </td>
                   </tr>
                 )}
                 <tr
                   onClick={() => router.push(`/orders/${o.id}`)}
-                  className={`cursor-pointer border-b border-border hover:bg-muted ${
-                    selected.has(o.id) ? "bg-brand/5" : ""
+                  className={`cursor-pointer border-b border-border ${
+                    selected.has(o.id)
+                      ? "bg-brand/5 hover:bg-muted"
+                      : o.isUnpaid
+                        ? "bg-orange-500/[.07] hover:bg-orange-500/[.13]"
+                        : "hover:bg-muted"
                   }`}
                 >
                   <td className="py-2 pr-2" onClick={(e) => e.stopPropagation()}>
@@ -505,6 +521,7 @@ export default function OrdersTable({
                     >
                       {o.invoiceNumber ?? `#${o.id.slice(0, 8)}`}
                     </Link>
+                    {o.isUnpaid && <UnpaidBadge />}
                   </td>
                   <td className="py-2 pr-4">{o.brandName}</td>
                   <td className="py-2 pr-4">
@@ -527,11 +544,9 @@ export default function OrdersTable({
                     />
                   </td>
                   <td className="py-2 pr-4 whitespace-nowrap text-muted-foreground">
-                    <div>{dayLabel(o.paidAt)}</div>
-                    {settledDayLabel(o.settledAt, o.paidAt) && (
-                      <div className="mt-0.5 text-xs font-medium">
-                        {STATUS_LABELS[o.fulfillmentStatus]}: {settledDayLabel(o.settledAt, o.paidAt)}
-                      </div>
+                    <div>{dayLabel(o.listAt)}</div>
+                    {dayLabel(o.listAt) !== dayLabel(o.paidAt) && (
+                      <div className="mt-0.5 text-xs font-medium">Ordered: {dayLabel(o.paidAt)}</div>
                     )}
                     {o.deliveryAt &&
                       (() => {
@@ -555,7 +570,7 @@ export default function OrdersTable({
                       })()}
                   </td>
                   <td className="py-2" onClick={(e) => e.stopPropagation()}>
-                    <OrderRowMenu orderId={o.id} />
+                    <OrderRowMenu orderId={o.id} isUnpaid={o.isUnpaid} />
                   </td>
                 </tr>
                 </Fragment>

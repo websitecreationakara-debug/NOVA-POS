@@ -520,6 +520,17 @@ export async function updateFulfillmentStatusAction(
 // Deletes an invoice/order and restores the stock it consumed (see
 // delete_order() in supabase/migrations/0016) -- for voiding a mistaken or
 // test order, not routine order management.
+// Flags an order Unpaid (or back to paid) from the Orders list's row menu. Only
+// the flag changes -- the order's payment method, totals and stock are left
+// alone, and it keeps counting in revenue.
+export async function setOrderUnpaidAction(orderId: string, unpaid: boolean): Promise<void> {
+  const { error } = await supabaseAdmin.from("orders").update({ is_unpaid: unpaid }).eq("id", orderId);
+  if (error) throw error;
+
+  revalidatePath(`/orders/${orderId}`);
+  revalidatePath("/orders");
+}
+
 export async function deleteOrderAction(orderId: string): Promise<void> {
   const { data, error } = await supabaseAdmin.rpc("delete_order", { p_order_id: orderId });
   if (error) throw error;
