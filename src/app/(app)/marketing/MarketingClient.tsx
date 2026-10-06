@@ -8,6 +8,13 @@ import CustomerPurchasesDialog from "@/components/CustomerPurchasesDialog";
 import DeleteCustomerDialog from "@/components/DeleteCustomerDialog";
 import ImportCustomersButton from "@/components/ImportCustomersButton";
 import {
+  CUSTOMER_SORT_LABELS,
+  NO_CUSTOMER_FILTERS,
+  type CustomerBuying,
+  type CustomerFilters,
+  type CustomerSort,
+} from "@/lib/customerFilters";
+import {
   createPromotionAction,
   deletePromotionAction,
   setPromotionActiveAction,
@@ -35,6 +42,10 @@ export default function MarketingClient({
   customerTotal,
   customerPage,
   customerLimit,
+  customerBuying,
+  customerFilters,
+  filterOptions,
+  today,
   searchTerm,
 }: {
   brands: Brand[];
@@ -44,6 +55,16 @@ export default function MarketingClient({
   customerTotal: number;
   customerPage: number;
   customerLimit: number;
+  // What each listed customer bought, by customer id (counted orders only).
+  customerBuying: Record<string, CustomerBuying>;
+  customerFilters: CustomerFilters;
+  filterOptions: {
+    states: { value: string; n: number }[];
+    ages: { value: string; n: number }[];
+    genders: { value: string; n: number }[];
+  };
+  // Today in Phnom Penh (YYYY-MM-DD), for the "Bought on" quick buttons.
+  today: string;
   searchTerm: string;
 }) {
   const router = useRouter();
@@ -103,6 +124,65 @@ export default function MarketingClient({
     params.set("limit", String(limit));
     router.push(`/marketing?${params.toString()}`, { scroll: false });
   }
+
+  // The from/to "Bought on" boxes stay folded away behind the "Range" button
+  // unless the page was opened on a custom range (not a single day / one of the
+  // quick buttons) -- then they're needed to show it.
+  const [showBoughtRange, setShowBoughtRange] = useState(
+    () =>
+      Boolean(customerFilters.boughtFrom || customerFilters.boughtTo) &&
+      customerFilters.boughtFrom !== customerFilters.boughtTo
+  );
+
+  // The CRM filters live in the URL; changing one drops back to page 1.
+  const filtersActive = JSON.stringify(customerFilters) !== JSON.stringify(NO_CUSTOMER_FILTERS);
+  function setCustomerFilter(patch: Partial<Record<string, string>>) {
+    const params = new URLSearchParams(window.location.search);
+    for (const [key, value] of Object.entries(patch)) {
+      if (value) params.set(key, value);
+      else params.delete(key);
+    }
+    params.delete("page");
+    router.push(`/marketing?${params.toString()}`, { scroll: false });
+  }
+  function clearCustomerFilters() {
+    setCustomerFilter({
+      sort: "",
+      state: "",
+      gender: "",
+      age: "",
+      since_from: "",
+      since_to: "",
+      bought_from: "",
+      bought_to: "",
+    });
+  }
+  // Quick "Bought on" choices, in Phnom Penh days (YYYY-MM-DD).
+  // `today` comes from the server (Phnom Penh day, YYYY-MM-DD).
+  const daysAgo = (n: number) => {
+    const t = new Date(`${today}T00:00:00Z`);
+    t.setUTCDate(t.getUTCDate() - n);
+    return t.toISOString().slice(0, 10);
+  };
+  const boughtPresets = [
+    { label: "Today", from: today, to: today },
+    { label: "Yesterday", from: daysAgo(1), to: daysAgo(1) },
+    { label: "Last 7 days", from: daysAgo(6), to: today },
+    { label: "This month", from: `${today.slice(0, 8)}01`, to: today },
+  ];
+  // "10/03/2026" from a YYYY-MM-DD filter value.
+  const usDay = (d: string) => `${d.slice(5, 7)}/${d.slice(8, 10)}/${d.slice(0, 4)}`;
+  // One date on its own is open ended ("since" / "up to"); the same date in both
+  // boxes is that single day.
+  const boughtLabel = customerFilters.boughtFrom
+    ? customerFilters.boughtTo
+      ? customerFilters.boughtTo === customerFilters.boughtFrom
+        ? `on ${usDay(customerFilters.boughtFrom)}`
+        : `between ${usDay(customerFilters.boughtFrom)} and ${usDay(customerFilters.boughtTo)}`
+      : `since ${usDay(customerFilters.boughtFrom)}`
+    : customerFilters.boughtTo
+      ? `up to ${usDay(customerFilters.boughtTo)}`
+      : null;
 
   function withBrandParam(brandId: string) {
     const params = new URLSearchParams();
@@ -375,7 +455,177 @@ export default function MarketingClient({
           <ImportCustomersButton kind="pdf" />
         </div>
 
-        {/* 18 columns don't fit at page width -- the wrapper scrolls sideways
+        {/* Filters + top-buyer ranking -- applied across ALL customers (in the
+            database), not just the page on screen. */}
+        <div className="mt-3 flex flex-wrap items-end gap-3 text-xs text-zinc-500">
+          <label className="flex flex-col gap-1">
+            Sort
+            <select
+              value={customerFilters.sort}
+              onChange={(e) => setCustomerFilter({ sort: e.target.value === "name" ? "" : (e.target.value as CustomerSort) })}
+              className={selectClass}
+            >
+              {(Object.keys(CUSTOMER_SORT_LABELS) as CustomerSort[]).map((s) => (
+                <option key={s} value={s}>
+                  {CUSTOMER_SORT_LABELS[s]}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="flex flex-col gap-1">
+            State
+            <select
+              value={customerFilters.state}
+              onChange={(e) => setCustomerFilter({ state: e.target.value })}
+              className={selectClass}
+            >
+              <option value="">All states</option>
+              {filterOptions.states.map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.value} ({o.n.toLocaleString()})
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="flex flex-col gap-1">
+            Age
+            <select
+              value={customerFilters.age}
+              onChange={(e) => setCustomerFilter({ age: e.target.value })}
+              className={selectClass}
+            >
+              <option value="">All ages</option>
+              {filterOptions.ages.map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.value} ({o.n.toLocaleString()})
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="flex flex-col gap-1">
+            Gender
+            <select
+              value={customerFilters.gender}
+              onChange={(e) => setCustomerFilter({ gender: e.target.value })}
+              className={selectClass}
+            >
+              <option value="">All genders</option>
+              {filterOptions.genders.map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.value === "F" ? "Female" : o.value === "M" ? "Male" : o.value} ({o.n.toLocaleString()})
+                </option>
+              ))}
+            </select>
+          </label>
+          {/* Each date range is its own group, its two dates kept side by side
+              (never wrapped apart) and independent: "from" never changes "to". */}
+          <div className="flex flex-col gap-1">
+            Customer since
+            <div className="flex items-center gap-1.5">
+              <input
+                type="date"
+                aria-label="Customer since: from"
+                value={customerFilters.sinceFrom}
+                onChange={(e) => setCustomerFilter({ since_from: e.target.value })}
+                className={selectClass}
+              />
+              <span>to</span>
+              <input
+                type="date"
+                aria-label="Customer since: to"
+                value={customerFilters.sinceTo}
+                onChange={(e) => setCustomerFilter({ since_to: e.target.value })}
+                className={selectClass}
+              />
+            </div>
+          </div>
+          <div className="flex flex-col gap-1">
+            Bought on
+            {/* One click for the usual days, or pick a single day -- no need to
+                fill both range boxes for one date. */}
+            <div className="flex flex-wrap items-center gap-1.5">
+              {boughtPresets.map((p) => {
+                const active = customerFilters.boughtFrom === p.from && customerFilters.boughtTo === p.to;
+                return (
+                  <button
+                    key={p.label}
+                    type="button"
+                    onClick={() =>
+                      active
+                        ? setCustomerFilter({ bought_from: "", bought_to: "" })
+                        : setCustomerFilter({ bought_from: p.from, bought_to: p.to })
+                    }
+                    aria-pressed={active}
+                    className={`rounded border px-2.5 py-1.5 text-sm transition-colors ${
+                      active
+                        ? "border-brand bg-brand text-white"
+                        : "border-black/[.15] text-foreground hover:bg-black/[.04] dark:border-white/[.2] dark:hover:bg-white/[.06]"
+                    }`}
+                  >
+                    {p.label}
+                  </button>
+                );
+              })}
+              <input
+                type="date"
+                aria-label="Bought on: one day"
+                title="Pick one day"
+                value={customerFilters.boughtFrom && customerFilters.boughtFrom === customerFilters.boughtTo ? customerFilters.boughtFrom : ""}
+                onChange={(e) => setCustomerFilter({ bought_from: e.target.value, bought_to: e.target.value })}
+                className={selectClass}
+              />
+              <button
+                type="button"
+                onClick={() => setShowBoughtRange((v) => !v)}
+                aria-expanded={showBoughtRange}
+                className={`rounded border px-2.5 py-1.5 text-sm transition-colors ${
+                  showBoughtRange
+                    ? "border-brand text-brand"
+                    : "border-black/[.15] text-foreground hover:bg-black/[.04] dark:border-white/[.2] dark:hover:bg-white/[.06]"
+                }`}
+              >
+                Range
+              </button>
+            </div>
+            {showBoughtRange && (
+              <div className="flex items-center gap-1.5">
+                <input
+                  type="date"
+                  aria-label="Bought on: from"
+                  value={customerFilters.boughtFrom}
+                  onChange={(e) => setCustomerFilter({ bought_from: e.target.value })}
+                  className={selectClass}
+                />
+                <span>to</span>
+                <input
+                  type="date"
+                  aria-label="Bought on: to"
+                  value={customerFilters.boughtTo}
+                  onChange={(e) => setCustomerFilter({ bought_to: e.target.value })}
+                  className={selectClass}
+                />
+              </div>
+            )}
+          </div>
+          {filtersActive && (
+            <button
+              onClick={clearCustomerFilters}
+              className="rounded border border-black/[.15] px-3 py-1.5 text-sm text-foreground hover:bg-black/[.04] dark:border-white/[.2] dark:hover:bg-white/[.06]"
+            >
+              Clear filters
+            </button>
+          )}
+        </div>
+
+        {boughtLabel && (
+          <p className="mt-3 text-sm">
+            <span className="font-semibold tabular-nums">{customerTotal.toLocaleString()}</span>{" "}
+            {customerTotal === 1 ? "customer" : "customers"} bought {boughtLabel}
+            <span className="text-zinc-500"> -- Orders, Products and Spent below count only those days.</span>
+          </p>
+        )}
+
+        {/* 21 columns don't fit at page width -- the wrapper scrolls sideways
             instead of squashing them. */}
         <div className="mt-4 overflow-x-auto">
         <table className="w-full text-left text-sm whitespace-nowrap [&_td]:pr-4 [&_th]:pr-4">
@@ -383,6 +633,9 @@ export default function MarketingClient({
             <tr className="border-b border-black/[.08] text-xs tracking-wide text-zinc-500 uppercase dark:border-white/[.145]">
               <th className="py-2">Phone Number</th>
               <th>Customer Name</th>
+              <th className="text-right">Orders</th>
+              <th className="text-right">Products</th>
+              <th className="text-right">Spent</th>
               <th>Email</th>
               <th>Photo</th>
               <th>Address</th>
@@ -413,6 +666,11 @@ export default function MarketingClient({
                 >
                   <td className="py-2">{c.phone || "—"}</td>
                   <td>{c.name}</td>
+                  <td className="text-right tabular-nums">{customerBuying[c.id]?.orders ?? "—"}</td>
+                  <td className="text-right tabular-nums">{customerBuying[c.id]?.units ?? "—"}</td>
+                  <td className="text-right tabular-nums">
+                    {customerBuying[c.id] ? `$${customerBuying[c.id].spent.toFixed(2)}` : "—"}
+                  </td>
                   <td>{c.email || "—"}</td>
                   <td>
                     {c.photo_url ? (
@@ -466,7 +724,7 @@ export default function MarketingClient({
                 </tr>
                 {editingId === c.id && (
                   <tr className="border-t border-black/[.06] dark:border-white/[.08]">
-                    <td colSpan={20} className="py-3 whitespace-normal">
+                    <td colSpan={23} className="py-3 whitespace-normal">
                       <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
                         <input
                           placeholder="Name"
@@ -556,7 +814,7 @@ export default function MarketingClient({
             ))}
             {visibleCustomers.length === 0 && (
               <tr>
-                <td colSpan={20} className="py-4 text-sm text-zinc-500">
+                <td colSpan={23} className="py-4 text-sm text-zinc-500">
                   {search.trim() !== searchTerm.trim() ? "Searching..." : "No customers found."}
                 </td>
               </tr>

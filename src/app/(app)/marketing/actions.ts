@@ -5,6 +5,7 @@ import { supabaseAdmin } from "@/lib/supabase/server";
 import { getSessionUser } from "@/lib/supabase/auth-server";
 import type { Customer, DiscountType, Promotion } from "@/types/database";
 import type { CustomerImportRow } from "@/lib/customerCsv";
+import { NO_CUSTOMER_FILTERS, type CustomerBuying, type CustomerFilters } from "@/lib/customerFilters";
 import { formatInvoiceNumber, invoiceMonthStartIso } from "@/lib/invoiceNumber";
 
 export async function requireMarketingAccess() {
@@ -86,14 +87,64 @@ export async function deletePromotionAction(id: string): Promise<void> {
   revalidatePath("/marketing");
 }
 
+// The State / Age / Gender dropdown choices (with how many customers each),
+// for the CRM filter bar. Empty if migration 0064 isn't applied yet.
+export async function listCustomerFilterOptionsAction(): Promise<{
+  states: { value: string; n: number }[];
+  ages: { value: string; n: number }[];
+  genders: { value: string; n: number }[];
+}> {
+  await requireMarketingAccess();
+
+  const { data, error } = await supabaseAdmin.rpc("marketing_customer_filter_options");
+  const rows = error ? [] : (data ?? []);
+  const pick = (kind: string) =>
+    rows.filter((r) => r.kind === kind).map((r) => ({ value: r.value, n: Number(r.n) }));
+  return {
+    states: pick("state").sort((a, b) => b.n - a.n),
+    // "18-24", "25-34", "55+" ... -- youngest range first.
+    ages: pick("age").sort((a, b) => parseInt(a.value, 10) - parseInt(b.value, 10)),
+    genders: pick("gender").sort((a, b) => b.n - a.n),
+  };
+}
+
 export async function listCustomersAction(
   search?: string,
   page = 1,
-  limit = 50
-): Promise<{ customers: Customer[]; total: number }> {
+  limit = 50,
+  filters: CustomerFilters = NO_CUSTOMER_FILTERS
+): Promise<{ customers: Customer[]; total: number; buying: Record<string, CustomerBuying> }> {
   await requireMarketingAccess();
 
-  const from = (page - 1) * limit;
+  const offset = (page - 1) * limit;
+
+  // Filters + top-buyer ranking run in the database (migration 0064).
+  const { data: ranked, error: rankedError } = await supabaseAdmin.rpc("marketing_customers", {
+    p_search: search?.trim() || null,
+    p_state: filters.state || null,
+    p_gender: filters.gender || null,
+    p_age: filters.age || null,
+    p_since_from: filters.sinceFrom || null,
+    p_since_to: filters.sinceTo || null,
+    p_sort: filters.sort,
+    p_limit: limit,
+    p_offset: offset,
+    p_bought_from: filters.boughtFrom || null,
+    p_bought_to: filters.boughtTo || null,
+  });
+  if (!rankedError) {
+    const buying: Record<string, CustomerBuying> = {};
+    const customers = (ranked ?? []).map((r) => {
+      const c = r.customer as unknown as Customer;
+      buying[c.id] = { orders: Number(r.orders_count), units: Number(r.units), spent: Number(r.spent) };
+      return c;
+    });
+    return { customers, total: Number(ranked?.[0]?.total_count ?? 0), buying };
+  }
+  // Migration 0064 not applied yet: plain name-ordered list, no filters.
+  if (rankedError.code !== "PGRST202") throw new Error(rankedError.message);
+
+  const from = offset;
   let query = supabaseAdmin
     .from("customers")
     .select("*", { count: "exact" })
@@ -110,7 +161,7 @@ export async function listCustomersAction(
 
   const { data, error, count } = await query;
   if (error) throw new Error(error.message);
-  return { customers: data ?? [], total: count ?? 0 };
+  return { customers: data ?? [], total: count ?? 0, buying: {} };
 }
 
 export async function updateCustomerAction(
@@ -269,6 +320,10 @@ export async function getCustomerPurchaseHistoryAction(
     history.totalItems += l.quantity;
     history.totalSpent += l.line_total;
   }
+  // Quantities can be fractions (a custom size), and adding those in floating
+  // point leaves tails like 226.89999999999998 -- keep 2 decimals.
+  history.totalItems = Math.round(history.totalItems * 100) / 100;
+  history.totalSpent = Math.round(history.totalSpent * 100) / 100;
   for (const o of orders) {
     for (const l of linesByOrder.get(o.id) ?? []) {
       history.items.push({

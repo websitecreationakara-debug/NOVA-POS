@@ -643,6 +643,33 @@ export type Database = {
           order_share?: number;
         }[];
       };
+      // Marketing > CRM customer list: filters + "top buying" ranking (migration 0064).
+      marketing_customers: {
+        Args: {
+          p_search?: string | null;
+          p_state?: string | null;
+          p_gender?: string | null;
+          p_age?: string | null;
+          p_since_from?: string | null;
+          p_since_to?: string | null;
+          p_sort?: string;
+          p_limit?: number;
+          p_offset?: number;
+          p_bought_from?: string | null;
+          p_bought_to?: string | null;
+        };
+        Returns: {
+          customer: Json;
+          total_count: number;
+          orders_count: number;
+          units: number;
+          spent: number;
+        }[];
+      };
+      marketing_customer_filter_options: {
+        Args: Record<string, never>;
+        Returns: { kind: string; value: string; n: number }[];
+      };
       live_change_stamp: {
         Args: Record<string, never>;
         Returns: string;
