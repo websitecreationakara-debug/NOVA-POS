@@ -1,5 +1,7 @@
 import { getBrands, getStockPickerItems } from "@/lib/supabase/queries";
-import { listCustomersAction, listPromotionsAction } from "./actions";
+import { listCustomerFilterOptionsAction, listCustomersAction, listPromotionsAction } from "./actions";
+import { parseCustomerFilters } from "@/lib/customerFilters";
+import { ppToday } from "@/lib/phnomPenhTime";
 import { getSetAction, listSetsAction } from "./costControlActions";
 import MarketingClient from "./MarketingClient";
 import CostControlClient from "./CostControlClient";
@@ -14,9 +16,19 @@ export default async function MarketingPage({
     set?: string;
     page?: string;
     limit?: string;
+    sort?: string;
+    state?: string;
+    gender?: string;
+    age?: string;
+    since_from?: string;
+    since_to?: string;
+    bought_from?: string;
+    bought_to?: string;
   }>;
 }) {
-  const { brand: brandId = "", q = "", tab, set: setParam, page: pageParam, limit: limitParam } = await searchParams;
+  const sp = await searchParams;
+  const { brand: brandId = "", q = "", tab, set: setParam, page: pageParam, limit: limitParam } = sp;
+  const customerFilters = parseCustomerFilters(sp);
   const limit = Math.min(Math.max(parseInt(limitParam ?? "", 10) || 50, 1), 200);
   const page = Math.max(parseInt(pageParam ?? "", 10) || 1, 1);
 
@@ -54,10 +66,11 @@ export default async function MarketingPage({
   // brandId/q come straight from the URL, so promotions/customers don't
   // actually depend on the brands list -- fetch all three in parallel
   // instead of waiting on getBrands() first.
-  const [brands, promotions, { customers, total }] = await Promise.all([
+  const [brands, promotions, { customers, total, buying }, filterOptions] = await Promise.all([
     getBrands(),
     listPromotionsAction(brandId),
-    listCustomersAction(q, page, limit),
+    listCustomersAction(q, page, limit, customerFilters),
+    listCustomerFilterOptionsAction(),
   ]);
 
   return (
@@ -69,6 +82,10 @@ export default async function MarketingPage({
       customerTotal={total}
       customerPage={page}
       customerLimit={limit}
+      customerBuying={buying}
+      customerFilters={customerFilters}
+      filterOptions={filterOptions}
+      today={ppToday()}
       searchTerm={q}
     />
   );
