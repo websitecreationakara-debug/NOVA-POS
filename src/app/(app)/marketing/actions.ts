@@ -19,6 +19,14 @@ export async function requireMarketingAccess() {
   }
 }
 
+// The CRM customer list: everyone who manages marketing, plus Sale Customer
+// Support (role "sales"), who can look customers up and edit them but not
+// delete / import them or touch promotions and Cost Control.
+async function requireCrmAccess() {
+  const caller = await getSessionUser();
+  if (caller?.role !== "sales") await requireMarketingAccess();
+}
+
 export async function listPromotionsAction(brandId?: string): Promise<Promotion[]> {
   await requireMarketingAccess();
 
@@ -95,7 +103,7 @@ export async function listCustomerFilterOptionsAction(): Promise<{
   ages: { value: string; n: number }[];
   genders: { value: string; n: number }[];
 }> {
-  await requireMarketingAccess();
+  await requireCrmAccess();
 
   const { data, error } = await supabaseAdmin.rpc("marketing_customer_filter_options");
   const rows = error ? [] : (data ?? []);
@@ -200,7 +208,7 @@ export async function listCustomersAction(
   buying: Record<string, CustomerBuying>;
   businesses: Record<string, string[]>;
 }> {
-  await requireMarketingAccess();
+  await requireCrmAccess();
 
   const offset = (page - 1) * limit;
 
@@ -277,7 +285,7 @@ export async function updateCustomerAction(
     notes?: string;
   }
 ): Promise<void> {
-  await requireMarketingAccess();
+  await requireCrmAccess();
 
   if (!input.name.trim()) throw new Error("Name is required");
 
@@ -349,7 +357,7 @@ export type CustomerPurchaseHistory = {
 export async function getCustomerPurchaseHistoryAction(
   customerId: string
 ): Promise<CustomerPurchaseHistory> {
-  await requireMarketingAccess();
+  await requireCrmAccess();
 
   const { data: customer, error: customerErr } = await supabaseAdmin
     .from("customers")

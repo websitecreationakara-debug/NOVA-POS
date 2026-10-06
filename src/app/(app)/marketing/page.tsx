@@ -1,4 +1,6 @@
+import { redirect } from "next/navigation";
 import { getBrands, getStockPickerItems } from "@/lib/supabase/queries";
+import { getSessionUser } from "@/lib/supabase/auth-server";
 import { listCustomerFilterOptionsAction, listCustomersAction, listPromotionsAction } from "./actions";
 import { parseCustomerFilters } from "@/lib/customerFilters";
 import { ppToday } from "@/lib/phnomPenhTime";
@@ -30,6 +32,12 @@ export default async function MarketingPage({
   const sp = await searchParams;
   const { brand: brandId = "", q = "", tab, set: setParam, page: pageParam, limit: limitParam } = sp;
   const customerFilters = parseCustomerFilters(sp);
+
+  // Sale Customer Support (role "sales") gets the CRM customer list only: no
+  // promotions, no Cost Control, no deleting or importing customers.
+  const caller = await getSessionUser();
+  const crmOnly = caller?.role === "sales";
+  if (crmOnly && tab === "cost-control") redirect("/marketing");
   const limit = Math.min(Math.max(parseInt(limitParam ?? "", 10) || 50, 1), 200);
   const page = Math.max(parseInt(pageParam ?? "", 10) || 1, 1);
 
@@ -69,7 +77,7 @@ export default async function MarketingPage({
   // instead of waiting on getBrands() first.
   const [brands, promotions, { customers, total, buying, businesses }, filterOptions] = await Promise.all([
     getBrands(),
-    listPromotionsAction(brandId),
+    crmOnly ? Promise.resolve([]) : listPromotionsAction(brandId),
     listCustomersAction(q, page, limit, customerFilters),
     listCustomerFilterOptionsAction(),
   ]);
@@ -88,6 +96,7 @@ export default async function MarketingPage({
       customerFilters={customerFilters}
       filterOptions={filterOptions}
       today={ppToday()}
+      crmOnly={crmOnly}
       openCustomerId={sp.customer ?? ""}
       searchTerm={q}
     />
