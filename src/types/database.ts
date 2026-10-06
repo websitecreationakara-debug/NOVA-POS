@@ -666,6 +666,11 @@ export type Database = {
           spent: number;
         }[];
       };
+      // Product Insight overview, added up in the database (migration 0070).
+      product_insight: {
+        Args: { p_from: string | null; p_to: string; p_brand?: string | null };
+        Returns: Json;
+      };
       marketing_customer_filter_options: {
         Args: Record<string, never>;
         Returns: { kind: string; value: string; n: number }[];

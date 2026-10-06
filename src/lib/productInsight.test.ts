@@ -4,6 +4,7 @@ import {
   buildMonthlyTable,
   buildProductInsight,
   insightBounds,
+  insightFromSummary,
   parseInsightRange,
   type InsightLine,
 } from "./productInsight";
@@ -118,5 +119,52 @@ describe("buildMonthlyTable", () => {
     expect(uni.qty[5]).toBe(0);
     expect(uni.qty).toHaveLength(12);
     expect(rows[0].qty[11]).toBe(4);
+  });
+});
+
+describe("insightFromSummary", () => {
+  it("turns the database summary into the same shape, filling the quiet days", () => {
+    const out = insightFromSummary(
+      {
+        revenue: 150,
+        units: 8,
+        orders: 3,
+        products: 3,
+        first_day: "2026-10-04",
+        top_revenue: [{ name: "Uni", revenue: 90, units: 3 }],
+        top_units: [{ name: "Rice", revenue: 20, units: 4 }],
+        by_category: [{ name: "Seafood", value: 90 }],
+        by_brand: [{ name: "Premium", value: 110 }],
+        days: [
+          { day: "2026-10-04", revenue: 65, units: 3 },
+          { day: "2026-10-06", revenue: 40, units: 1 },
+        ],
+        pairs: [{ a: "Uni", b: "Rice", count: 2 }],
+      },
+      { from: "2026-10-04", to: "2026-10-06" }
+    );
+    expect(out.revenue).toBe(150);
+    expect(out.topByRevenue).toEqual([{ name: "Uni", revenue: 90, units: 3 }]);
+    expect(out.trendBy).toBe("day");
+    expect(out.trend.map((p) => [p.key, p.revenue])).toEqual([
+      ["2026-10-04", 65],
+      ["2026-10-05", 0],
+      ["2026-10-06", 40],
+    ]);
+    expect(out.pairs).toEqual([{ a: "Uni", b: "Rice", count: 2 }]);
+  });
+
+  it("starts an all-time trend at the first sale and goes by month", () => {
+    const out = insightFromSummary(
+      {
+        revenue: 15, units: 2, orders: 2, products: 1, first_day: "2026-07-15",
+        top_revenue: [], top_units: [], by_category: [], by_brand: [],
+        days: [{ day: "2026-07-15", revenue: 10, units: 1 }, { day: "2026-10-02", revenue: 5, units: 1 }],
+        pairs: [],
+      },
+      { from: null, to: "2026-10-06" }
+    );
+    expect(out.trendBy).toBe("month");
+    expect(out.trend.map((p) => p.key)).toEqual(["2026-07", "2026-08", "2026-09", "2026-10"]);
   });
 });

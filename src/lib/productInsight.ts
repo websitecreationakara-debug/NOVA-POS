@@ -81,6 +81,83 @@ export type ProductInsight = {
 const round2 = (n: number) => Math.round((n + Number.EPSILON) * 100) / 100;
 export const UNCATEGORIZED = "Uncategorized";
 
+// Daily points for a period up to ~2 months, monthly beyond that, with 0 for the
+// days / months nothing sold. `byDay` holds the days that had sales.
+export function fillTrend(
+  byDay: Map<string, { revenue: number; units: number }>,
+  start: string,
+  to: string
+): { trend: ProductInsight["trend"]; trendBy: "day" | "month" } {
+  const spanDays = Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${start}T00:00:00Z`)) / 864e5) + 1;
+  const trendBy: "day" | "month" = spanDays <= 62 ? "day" : "month";
+  const trend: ProductInsight["trend"] = [];
+  if (trendBy === "day") {
+    for (let day = start; day <= to; day = addDays(day, 1)) {
+      const d = byDay.get(day);
+      trend.push({ key: day, revenue: round2(d?.revenue ?? 0), units: round2(d?.units ?? 0) });
+    }
+  } else {
+    const byMonth = new Map<string, { revenue: number; units: number }>();
+    for (const [day, v] of byDay) {
+      const m = day.slice(0, 7);
+      const e = byMonth.get(m) ?? { revenue: 0, units: 0 };
+      e.revenue += v.revenue;
+      e.units += v.units;
+      byMonth.set(m, e);
+    }
+    let [y, m] = start.slice(0, 7).split("-").map(Number);
+    const [ey, em] = to.slice(0, 7).split("-").map(Number);
+    while (y < ey || (y === ey && m <= em)) {
+      const key = `${y}-${String(m).padStart(2, "0")}`;
+      const v = byMonth.get(key);
+      trend.push({ key, revenue: round2(v?.revenue ?? 0), units: round2(v?.units ?? 0) });
+      m += 1;
+      if (m > 12) {
+        m = 1;
+        y += 1;
+      }
+    }
+  }
+  return { trend, trendBy };
+}
+
+// What the database's product_insight() hands back (migration 0070): the same
+// figures as buildProductInsight(), already added up -- only the zero-filled
+// trend still has to be drawn out here.
+export type InsightSummary = {
+  revenue: number;
+  units: number;
+  orders: number;
+  products: number;
+  first_day: string | null;
+  top_revenue: NamedAmount[];
+  top_units: NamedAmount[];
+  by_category: { name: string; value: number }[];
+  by_brand: { name: string; value: number }[];
+  days: { day: string; revenue: number; units: number }[];
+  pairs: { a: string; b: string; count: number }[];
+};
+
+export function insightFromSummary(raw: InsightSummary, bounds: { from: string | null; to: string }): ProductInsight {
+  const byDay = new Map(raw.days.map((d) => [d.day, { revenue: Number(d.revenue), units: Number(d.units) }]));
+  const { trend, trendBy } = fillTrend(byDay, bounds.from ?? raw.first_day ?? bounds.to, bounds.to);
+  const named = (list: NamedAmount[]) =>
+    list.map((p) => ({ name: p.name, revenue: Number(p.revenue), units: Number(p.units) }));
+  return {
+    revenue: Number(raw.revenue),
+    units: Number(raw.units),
+    orders: Number(raw.orders),
+    products: Number(raw.products),
+    topByRevenue: named(raw.top_revenue),
+    topByUnits: named(raw.top_units),
+    byCategory: raw.by_category.map((c) => ({ name: c.name, value: Number(c.value) })),
+    byBrand: raw.by_brand.map((c) => ({ name: c.name, value: Number(c.value) })),
+    trend,
+    trendBy,
+    pairs: raw.pairs.map((p) => ({ a: p.a, b: p.b, count: Number(p.count) })),
+  };
+}
+
 export function buildProductInsight(
   lines: InsightLine[],
   bounds: { from: string | null; to: string },
@@ -153,38 +230,7 @@ export function buildProductInsight(
     .sort((x, y) => y.count - x.count || x.a.localeCompare(y.a))
     .slice(0, 8);
 
-  // Daily points for a period up to ~2 months, monthly beyond that.
-  const start = bounds.from ?? firstDay;
-  const spanDays = Math.round((Date.parse(`${bounds.to}T00:00:00Z`) - Date.parse(`${start}T00:00:00Z`)) / 864e5) + 1;
-  const trendBy: "day" | "month" = spanDays <= 62 ? "day" : "month";
-  const trend: ProductInsight["trend"] = [];
-  if (trendBy === "day") {
-    for (let day = start; day <= bounds.to; day = addDays(day, 1)) {
-      const d = byDay.get(day);
-      trend.push({ key: day, revenue: round2(d?.revenue ?? 0), units: round2(d?.units ?? 0) });
-    }
-  } else {
-    const byMonth = new Map<string, { revenue: number; units: number }>();
-    for (const [day, v] of byDay) {
-      const m = day.slice(0, 7);
-      const e = byMonth.get(m) ?? { revenue: 0, units: 0 };
-      e.revenue += v.revenue;
-      e.units += v.units;
-      byMonth.set(m, e);
-    }
-    let [y, m] = start.slice(0, 7).split("-").map(Number);
-    const [ey, em] = bounds.to.slice(0, 7).split("-").map(Number);
-    while (y < ey || (y === ey && m <= em)) {
-      const key = `${y}-${String(m).padStart(2, "0")}`;
-      const v = byMonth.get(key);
-      trend.push({ key, revenue: round2(v?.revenue ?? 0), units: round2(v?.units ?? 0) });
-      m += 1;
-      if (m > 12) {
-        m = 1;
-        y += 1;
-      }
-    }
-  }
+  const { trend, trendBy } = fillTrend(byDay, bounds.from ?? firstDay, bounds.to);
 
   return {
     revenue: round2(revenue),
