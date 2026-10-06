@@ -15,7 +15,9 @@ import {
   buildMonthlyTable,
   buildProductInsight,
   insightBounds,
+  insightFromSummary,
   type InsightLine,
+  type InsightSummary,
   type InsightRange,
   type MonthlyRow,
   type ProductInsight,
@@ -278,6 +280,20 @@ export async function getProductInsightAction(
   await requireMarketingAccess();
 
   const bounds = insightBounds(range, ppToday());
+
+  // Added up in the database (migration 0070), so only the summary comes back
+  // instead of every sold line.
+  const { data, error } = await supabaseAdmin.rpc("product_insight", {
+    p_from: bounds.from,
+    p_to: bounds.to,
+    p_brand: brandId || null,
+  });
+  if (!error && data) {
+    return { insight: insightFromSummary(data as unknown as InsightSummary, bounds), from: bounds.from, to: bounds.to };
+  }
+  // Migration 0070 not applied yet: read the lines and add them up here (slower).
+  if (error && error.code !== "PGRST202") throw new Error(error.message);
+
   const lines = await fetchInsightLines(bounds.from, bounds.to, brandId);
   const brandNames = new Map((await getBrands()).map((b) => [b.id, b.name]));
   return { insight: buildProductInsight(lines, bounds, brandNames), from: bounds.from, to: bounds.to };
