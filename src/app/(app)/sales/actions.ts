@@ -156,7 +156,8 @@ async function getOrCreateCustomerId(phone: string, name: string, address?: stri
 
   const { data: created, error: insertError } = await supabaseAdmin
     .from("customers")
-    .insert({ name, phone, address: address?.trim() || null })
+    // customer_since: the CRM counts a customer as new from this day.
+    .insert({ name, phone, address: address?.trim() || null, customer_since: ppToday() })
     .select("id")
     .single();
   if (insertError) throw insertError;

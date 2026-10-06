@@ -1,11 +1,22 @@
 import { redirect } from "next/navigation";
 import { getBrands, getStockPickerItems } from "@/lib/supabase/queries";
 import { getSessionUser } from "@/lib/supabase/auth-server";
-import { listCustomerFilterOptionsAction, listCustomersAction, listPromotionsAction } from "./actions";
+import {
+  getCrmChartDataAction,
+  getProductInsightAction,
+  getProductMonthlyAction,
+  listCustomerFilterOptionsAction,
+  listCustomersAction,
+  listPromotionsAction,
+} from "./actions";
 import { parseCustomerFilters } from "@/lib/customerFilters";
 import { ppToday } from "@/lib/phnomPenhTime";
 import { getSetAction, listSetsAction } from "./costControlActions";
 import MarketingClient from "./MarketingClient";
+import CrmChartsClient from "./CrmChartsClient";
+import ProductInsightClient from "./ProductInsightClient";
+import ProductMonthlyClient from "./ProductMonthlyClient";
+import { parseInsightRange } from "@/lib/productInsight";
 import CostControlClient from "./CostControlClient";
 
 export default async function MarketingPage({
@@ -27,6 +38,13 @@ export default async function MarketingPage({
     bought_from?: string;
     bought_to?: string;
     customer?: string;
+    range?: string;
+    view?: string;
+    year?: string;
+    g?: string;
+    a?: string;
+    b?: string;
+    province?: string;
   }>;
 }) {
   const sp = await searchParams;
@@ -37,7 +55,50 @@ export default async function MarketingPage({
   // promotions, no Cost Control, no deleting or importing customers.
   const caller = await getSessionUser();
   const crmOnly = caller?.role === "sales";
-  if (crmOnly && tab === "cost-control") redirect("/marketing");
+  if (crmOnly && (tab === "cost-control" || tab === "product-insight")) redirect("/marketing");
+
+  // CRM Charts: customers by province / gender / age / nationality / district,
+  // new customers per month and top buyers.
+  if (tab === "crm-charts") {
+    return (
+      <CrmChartsClient
+        data={await getCrmChartDataAction({ gran: sp.g ?? "", anchor: sp.a, compare: sp.b, province: sp.province })}
+      />
+    );
+  }
+
+  // Product Insight: what sells, by period and business (not for the CRM-only role).
+  if (tab === "product-insight") {
+    // "Insight by Quantity" / "Insight by Price": each product per month of a year.
+    if (sp.view === "quantity" || sp.view === "price") {
+      const [brandList, monthly] = await Promise.all([
+        getBrands(),
+        getProductMonthlyAction(parseInt(sp.year ?? "", 10), brandId),
+      ]);
+      return (
+        <ProductMonthlyClient
+          rows={monthly.rows}
+          year={monthly.year}
+          years={monthly.years}
+          brandId={brandId}
+          brands={brandList}
+          initialView={sp.view}
+        />
+      );
+    }
+    const range = parseInsightRange(sp.range);
+    const [brandList, result] = await Promise.all([getBrands(), getProductInsightAction(range, brandId)]);
+    return (
+      <ProductInsightClient
+        insight={result.insight}
+        range={range}
+        brandId={brandId}
+        brands={brandList}
+        from={result.from}
+        to={result.to}
+      />
+    );
+  }
   const limit = Math.min(Math.max(parseInt(limitParam ?? "", 10) || 50, 1), 200);
   const page = Math.max(parseInt(pageParam ?? "", 10) || 1, 1);
 

@@ -4,6 +4,7 @@ import { Fragment, useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { ChevronLeft, ChevronRight, Trash2 } from "lucide-react";
 import type { Brand, Customer, DiscountType, Promotion } from "@/types/database";
+import { CUSTOMER_GENDERS, CUSTOMER_NATIONALITIES, PROVINCES } from "@/lib/cambodiaPlaces";
 import CustomerPurchasesDialog from "@/components/CustomerPurchasesDialog";
 import DeleteCustomerDialog from "@/components/DeleteCustomerDialog";
 import ImportCustomersButton from "@/components/ImportCustomersButton";
@@ -33,6 +34,42 @@ function formatWindow(p: Promotion) {
 }
 
 const PAGE_SIZE_OPTIONS = [10, 25, 50];
+
+// A dropdown for the customer edit form. The first entry is the empty choice
+// (shown as the field name). A value already saved on the customer that isn't
+// in the list (an older spelling, say) is kept as its own entry rather than
+// silently dropped when the form opens.
+function OptionSelect({
+  value,
+  onChange,
+  placeholder,
+  options,
+  className,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  placeholder: string;
+  options: { value: string; label: string }[];
+  className: string;
+}) {
+  const known = options.some((o) => o.value === value);
+  return (
+    <select
+      aria-label={placeholder}
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      className={`${className} ${value ? "" : "text-zinc-400"}`}
+    >
+      <option value="">{placeholder}</option>
+      {value && !known && <option value={value}>{value}</option>}
+      {options.map((o) => (
+        <option key={o.value} value={o.value} className="text-foreground">
+          {o.label}
+        </option>
+      ))}
+    </select>
+  );
+}
 
 export default function MarketingClient({
   brands,
@@ -778,23 +815,26 @@ export default function MarketingClient({
                           onChange={(e) => setEditFields({ ...editFields, source: e.target.value })}
                           className={inputClass}
                         />
-                        <input
+                        <OptionSelect
                           placeholder="State/Province"
                           value={editFields.state ?? ""}
-                          onChange={(e) => setEditFields({ ...editFields, state: e.target.value })}
-                          className={inputClass}
+                          onChange={(v) => setEditFields({ ...editFields, state: v })}
+                          options={PROVINCES.map((p) => ({ value: p, label: p }))}
+                          className={selectClass}
                         />
-                        <input
+                        <OptionSelect
                           placeholder="Gender"
                           value={editFields.gender ?? ""}
-                          onChange={(e) => setEditFields({ ...editFields, gender: e.target.value })}
-                          className={inputClass}
+                          onChange={(v) => setEditFields({ ...editFields, gender: v })}
+                          options={CUSTOMER_GENDERS.map((g) => ({ value: g, label: g === "F" ? "F (Female)" : "M (Male)" }))}
+                          className={selectClass}
                         />
-                        <input
+                        <OptionSelect
                           placeholder="Nationality"
                           value={editFields.nationality ?? ""}
-                          onChange={(e) => setEditFields({ ...editFields, nationality: e.target.value })}
-                          className={inputClass}
+                          onChange={(v) => setEditFields({ ...editFields, nationality: v })}
+                          options={CUSTOMER_NATIONALITIES.map((n) => ({ value: n, label: n }))}
+                          className={selectClass}
                         />
                         <input
                           type="date"

@@ -8,6 +8,30 @@ import type { CustomerImportRow } from "@/lib/customerCsv";
 import { NO_CUSTOMER_FILTERS, type CustomerBuying, type CustomerFilters } from "@/lib/customerFilters";
 import { formatInvoiceNumber, invoiceMonthStartIso } from "@/lib/invoiceNumber";
 import { getBrands } from "@/lib/supabase/queries";
+import { ppDay, ppDayEnd, ppDayStart, ppToday } from "@/lib/phnomPenhTime";
+import { COUNTED_FULFILLMENT_STATUSES } from "@/lib/orderStatus";
+import {
+  MONTH_NAMES,
+  buildMonthlyTable,
+  buildProductInsight,
+  insightBounds,
+  type InsightLine,
+  type InsightRange,
+  type MonthlyRow,
+  type ProductInsight,
+} from "@/lib/productInsight";
+import { buildXlsx, type XlsxCell, type XlsxColumn } from "@/lib/xlsxWriter";
+import { tally } from "@/lib/crmCharts";
+import {
+  buildPeriod,
+  normalizeAnchor,
+  parseCompareAnchors,
+  parseGranularity,
+  periodRange,
+  type CrmChartsResult,
+  type CustomerRow,
+  type PeriodOrder,
+} from "@/lib/crmPeriods";
 
 export async function requireMarketingAccess() {
   // Defense in depth: /marketing is already role-gated in proxy.ts, but
@@ -25,6 +49,294 @@ export async function requireMarketingAccess() {
 async function requireCrmAccess() {
   const caller = await getSessionUser();
   if (caller?.role !== "sales") await requireMarketingAccess();
+}
+
+// Everything the CRM Charts page shows, for one period (a day, week, month, year
+// or all time) and optionally up to five more of the same kind to compare it
+// with, optionally for one province. Customers are read once, in parallel pages of 1000 (the
+// database's per-request cap); each period's orders are read separately. An
+// order is matched to its customer by link or by phone (see buildPeriod), and
+// orders that were cancelled or voided are left out -- the same rule as the CRM
+// list's "Bought on" filter.
+export async function getCrmChartDataAction(input: {
+  gran: string;
+  anchor?: string;
+  compare?: string;
+  province?: string;
+}): Promise<CrmChartsResult> {
+  await requireCrmAccess();
+
+  const today = ppToday();
+  const gran = parseGranularity(input.gran);
+  const anchorA = normalizeAnchor(gran, input.anchor, today);
+  const anchors = [anchorA, ...parseCompareAnchors(gran, input.compare, anchorA, today)];
+
+  const { count, error: countError } = await supabaseAdmin
+    .from("customers")
+    .select("id", { count: "exact", head: true });
+  if (countError) throw new Error(countError.message);
+
+  type Row = {
+    id: string;
+    name: string;
+    phone: string | null;
+    second_phone: string | null;
+    state: string | null;
+    gender: string | null;
+    age: string | null;
+    nationality: string | null;
+    capital: string | null;
+    customer_since: string | null;
+    created_at: string;
+  };
+  const pages = await Promise.all(
+    Array.from({ length: Math.ceil((count ?? 0) / 1000) }, (_, i) =>
+      supabaseAdmin
+        .from("customers")
+        .select("id, name, phone, second_phone, state, gender, age, nationality, capital, customer_since, created_at")
+        .order("id")
+        .range(i * 1000, i * 1000 + 999)
+    )
+  );
+  const customers: CustomerRow[] = [];
+  for (const page of pages) {
+    if (page.error) throw new Error(page.error.message);
+    for (const r of (page.data ?? []) as unknown as Row[]) {
+      customers.push({
+        id: r.id,
+        name: r.name,
+        phone: r.phone,
+        second_phone: r.second_phone,
+        state: r.state,
+        gender: r.gender,
+        age: r.age,
+        nationality: r.nationality,
+        capital: r.capital,
+        // A customer added at checkout has no customer-since date, so their
+        // creation date stands in for it.
+        since: r.customer_since ?? ppDay(r.created_at),
+      });
+    }
+  }
+
+  // A province that isn't one of the customers' provinces is ignored.
+  const provinces = tally(customers.map((c) => c.state)).filter((s) => s.name !== "Unknown");
+  const province = provinces.some((p) => p.name === input.province) ? (input.province as string) : "";
+
+  const orderSets = await Promise.all(
+    anchors.map((anchor) => {
+      const { from, to } = periodRange(gran, anchor, today);
+      return fetchPeriodOrders(from, to);
+    })
+  );
+
+  const firstYear = Number(
+    customers.reduce((min, c) => (c.since < min ? c.since : min), today).slice(0, 4)
+  );
+  const thisYear = Number(today.slice(0, 4));
+  // The year picker goes back at least 15 years -- further if the data does -- so
+  // a year can be compared even where there are no records yet (it just shows 0).
+  const lastYear = Math.min(firstYear, thisYear - 14);
+  return {
+    gran,
+    anchors,
+    province,
+    provinces,
+    totalCustomers: customers.length,
+    years: Array.from({ length: thisYear - lastYear + 1 }, (_, i) => thisYear - i),
+    periods: anchors.map((anchor, i) =>
+      buildPeriod({ gran, anchor, today, customers, orders: orderSets[i], province })
+    ),
+  };
+}
+
+// The orders of a period (Phnom Penh days, inclusive; `from` null = from the
+// start) that count as a customer having bought: not cancelled, not voided. Dated
+// by the day the Orders list files them under.
+async function fetchPeriodOrders(from: string | null, to: string): Promise<PeriodOrder[]> {
+  const makeQuery = () => {
+    let q = supabaseAdmin
+      .from("orders")
+      .select("id, customer_id, customer_phone, subtotal, list_at, paid_at", { count: "exact" })
+      .neq("status", "voided")
+      .neq("fulfillment_status", "cancelled")
+      .lte("list_at", ppDayEnd(to));
+    if (from) q = q.gte("list_at", ppDayStart(from));
+    return q.order("id");
+  };
+  type Row = {
+    id: string;
+    customer_id: string | null;
+    customer_phone: string | null;
+    subtotal: number;
+    list_at: string | null;
+    paid_at: string | null;
+  };
+  const first = await makeQuery().range(0, 999);
+  if (first.error) throw new Error(first.error.message);
+  const rows: Row[] = [...((first.data ?? []) as unknown as Row[])];
+  const pageCount = Math.ceil((first.count ?? 0) / 1000);
+  for (let i = 1; i < pageCount; i += 6) {
+    const batch = await Promise.all(
+      Array.from({ length: Math.min(6, pageCount - i) }, (_, k) =>
+        makeQuery().range((i + k) * 1000, (i + k) * 1000 + 999)
+      )
+    );
+    for (const page of batch) {
+      if (page.error) throw new Error(page.error.message);
+      rows.push(...((page.data ?? []) as unknown as Row[]));
+    }
+  }
+  return rows.flatMap((r) => {
+    const at = r.list_at ?? r.paid_at;
+    if (!at) return [];
+    return [
+      {
+        id: r.id,
+        customerId: r.customer_id,
+        phone: r.customer_phone,
+        subtotal: Number(r.subtotal),
+        day: ppDay(at),
+        // Phnom Penh is UTC+7 all year.
+        hour: new Date(new Date(at).getTime() + 7 * 3600e3).getUTCHours(),
+      },
+    ];
+  });
+}
+
+// The sold lines for Product Insight: every line of an order that counts towards
+// money (paid, Processing / Delivered / Complete) dated between `from` and `to`
+// (Phnom Penh days; `from` null = from the start), optionally one business (by
+// the product's own business). Dated by the day the Orders list files the order
+// under. Read in parallel pages of 1000 (the database's per-request cap).
+async function fetchInsightLines(from: string | null, to: string, brandId: string): Promise<InsightLine[]> {
+  const makeQuery = () => {
+    let q = supabaseAdmin
+      .from("order_items")
+      .select(
+        "order_id, product_id, quantity, line_total, products!inner(name, unit, unit_km, brand_id, categories(name)), orders!inner(list_at, paid_at)",
+        { count: "exact" }
+      )
+      .eq("orders.status", "paid")
+      .in("orders.fulfillment_status", COUNTED_FULFILLMENT_STATUSES)
+      .lte("orders.list_at", ppDayEnd(to));
+    if (from) q = q.gte("orders.list_at", ppDayStart(from));
+    if (brandId) q = q.eq("products.brand_id", brandId);
+    return q.order("id");
+  };
+
+  type Row = {
+    order_id: string;
+    product_id: string;
+    quantity: number;
+    line_total: number;
+    products: {
+      name: string;
+      unit: string | null;
+      unit_km: string | null;
+      brand_id: string;
+      categories: { name: string } | null;
+    };
+    orders: { list_at: string | null; paid_at: string | null };
+  };
+  const first = await makeQuery().range(0, 999);
+  if (first.error) throw new Error(first.error.message);
+  const rows: Row[] = [...((first.data ?? []) as unknown as Row[])];
+  const pageCount = Math.ceil((first.count ?? 0) / 1000);
+  // The remaining pages, a few at a time.
+  for (let i = 1; i < pageCount; i += 6) {
+    const batch = await Promise.all(
+      Array.from({ length: Math.min(6, pageCount - i) }, (_, k) =>
+        makeQuery().range((i + k) * 1000, (i + k) * 1000 + 999)
+      )
+    );
+    for (const page of batch) {
+      if (page.error) throw new Error(page.error.message);
+      rows.push(...((page.data ?? []) as unknown as Row[]));
+    }
+  }
+
+  return rows.map((r) => ({
+    orderId: r.order_id,
+    productId: r.product_id,
+    name: r.products.name,
+    brandId: r.products.brand_id,
+    category: r.products.categories?.name ?? null,
+    quantity: Number(r.quantity),
+    total: Number(r.line_total),
+    unit: r.products.unit_km?.trim() || r.products.unit?.trim() || "",
+    day: ppDay(r.orders.list_at ?? r.orders.paid_at),
+  }));
+}
+
+// Everything the Product Insight overview shows, for a period and optionally one
+// business.
+export async function getProductInsightAction(
+  range: InsightRange,
+  brandId: string
+): Promise<{ insight: ProductInsight; from: string | null; to: string }> {
+  await requireMarketingAccess();
+
+  const bounds = insightBounds(range, ppToday());
+  const lines = await fetchInsightLines(bounds.from, bounds.to, brandId);
+  const brandNames = new Map((await getBrands()).map((b) => [b.id, b.name]));
+  return { insight: buildProductInsight(lines, bounds, brandNames), from: bounds.from, to: bounds.to };
+}
+
+// "Insight by Quantity" / "Insight by Price": each product's quantity sold and
+// sales for every month of one year. `years` lists the years that have orders
+// (newest first) for the year picker.
+export async function getProductMonthlyAction(
+  year: number,
+  brandId: string
+): Promise<{ rows: MonthlyRow[]; year: number; years: number[] }> {
+  await requireMarketingAccess();
+
+  const thisYear = Number(ppToday().slice(0, 4));
+  const y = Number.isInteger(year) && year >= 2000 && year <= thisYear ? year : thisYear;
+  const [lines, earliest] = await Promise.all([
+    fetchInsightLines(`${y}-01-01`, `${y}-12-31`, brandId),
+    supabaseAdmin
+      .from("orders")
+      .select("list_at")
+      .eq("status", "paid")
+      .not("list_at", "is", null)
+      .order("list_at", { ascending: true })
+      .limit(1),
+  ]);
+  const firstYear = Number((earliest.data?.[0]?.list_at ?? `${thisYear}`).slice(0, 4)) || thisYear;
+  const years = Array.from({ length: thisYear - firstYear + 1 }, (_, i) => thisYear - i);
+  return { rows: buildMonthlyTable(lines), year: y, years };
+}
+
+// The monthly table as an Excel file. The rows come from the screen (already
+// loaded), so nothing is read again; only the layout is built here.
+export async function exportProductMonthlyAction(input: {
+  view: "quantity" | "price";
+  year: number;
+  businessLabel: string;
+  rows: MonthlyRow[];
+}): Promise<{ filename: string; mime: string; base64: string }> {
+  await requireMarketingAccess();
+
+  const isPrice = input.view === "price";
+  const columns: XlsxColumn[] = [
+    { header: "English Name", width: 44, kind: "text" },
+    { header: "Scale", width: 14, kind: "text" },
+    ...MONTH_NAMES.map((m) => ({ header: m, width: 11, kind: isPrice ? ("money" as const) : ("number" as const) })),
+    { header: isPrice ? "Sum Price" : "Sum QTY", width: 13, kind: isPrice ? "money" : "number" },
+  ];
+  const values = (r: MonthlyRow) => (isPrice ? r.amount : r.qty);
+  const rows: XlsxCell[][] = input.rows.map((r) => {
+    const v = values(r);
+    return [r.name, r.unit, ...v, Math.round(v.reduce((a, b) => a + b, 0) * 100) / 100];
+  });
+  const stem = `product-insight-by-${input.view}-${input.year}${input.businessLabel ? `-${input.businessLabel.replace(/[^\w]+/g, "-")}` : ""}`;
+  return {
+    filename: `${stem}.xlsx`,
+    mime: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    base64: buildXlsx(isPrice ? "Insight by Price" : "Insight by Quantity", columns, rows).toString("base64"),
+  };
 }
 
 export async function listPromotionsAction(brandId?: string): Promise<Promotion[]> {
