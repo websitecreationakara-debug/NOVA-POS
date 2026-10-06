@@ -2,6 +2,7 @@ import { notFound } from "next/navigation";
 import { getInvoice } from "@/lib/supabase/queries";
 import { invoiceBrandConfig, brandLogoPath, brandLogoHeightClass } from "@/lib/invoiceBrands";
 import PrintButton from "@/components/PrintButton";
+import BackButton from "@/components/BackButton";
 import FitInvoices from "@/components/FitInvoices";
 import OrderStatusControl from "@/components/OrderStatusControl";
 import { InvoiceDoc, hanuman } from "@/components/InvoiceDoc";
@@ -28,6 +29,9 @@ export default async function InvoicePage({
     >
       {/* Wraps onto more lines on a narrow screen instead of running off the edge. */}
       <div className="mb-4 flex flex-wrap items-center justify-center gap-3 sm:justify-end print:hidden">
+        <div className="sm:mr-auto">
+          <BackButton fallbackHref="/orders" />
+        </div>
         <OrderStatusControl orderId={invoice.order.id} status={invoice.order.fulfillment_status} />
         <PrintButton filename={`${invoice.brandName} ${invoice.invoiceNumber.replace(/^#/, "")}`} />
       </div>

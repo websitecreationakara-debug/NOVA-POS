@@ -4,6 +4,12 @@ import { supabaseAdmin } from "@/lib/supabase/server";
 import { getSessionUser } from "@/lib/supabase/auth-server";
 import { pushStockToSites } from "@/lib/site-sync";
 import type { OrderSource, PaymentMethod } from "@/types/database";
+import { ppToday } from "@/lib/phnomPenhTime";
+import {
+  CUSTOMER_AGES,
+  CUSTOMER_GENDERS,
+  CUSTOMER_NATIONALITIES,
+} from "@/lib/cambodiaPlaces";
 
 export interface CartLine {
   productId: string;
@@ -156,6 +162,74 @@ async function getOrCreateCustomerId(phone: string, name: string, address?: stri
   if (insertError) throw insertError;
 
   return created.id;
+}
+
+// The Sales "New customer" panel: saves a customer with their full profile
+// straight away (instead of only name/phone/address at charge time). If the
+// phone number already belongs to a customer, nothing is created -- that
+// customer is returned (existed: true) so the cashier just uses them.
+export async function createCustomerAction(input: {
+  phone: string;
+  name: string;
+  address?: string;
+  age: string;
+  gender: string;
+  nationality?: string;
+  province: string;
+  district?: string;
+}): Promise<{ customer: CustomerSuggestion; existed: boolean }> {
+  const phone = input.phone.trim();
+  const name = input.name.trim();
+  const province = input.province.trim();
+  if (!phone) throw new Error("Phone number is required");
+  if (!name) throw new Error("Customer name is required");
+  if (!province) throw new Error("Province is required");
+  if (!CUSTOMER_AGES.includes(input.age)) throw new Error("Pick an age range");
+  if (!CUSTOMER_GENDERS.includes(input.gender)) throw new Error("Pick a gender");
+  const nationality = input.nationality?.trim() || null;
+  if (nationality && !CUSTOMER_NATIONALITIES.includes(nationality)) throw new Error("Unknown nationality");
+
+  const filters = phoneVariants(phone).flatMap((v) => {
+    const quoted = `"${v.replace(/[\\"]/g, "\\$&")}"`;
+    return [`phone.eq.${quoted}`, `second_phone.eq.${quoted}`];
+  });
+  const { data: found, error: findError } = await supabaseAdmin
+    .from("customers")
+    .select("id, name, phone, photo_url, address")
+    .or(filters.join(","))
+    .order("created_at")
+    .limit(1);
+  if (findError) throw findError;
+  const toSuggestion = (c: { id: string; name: string; phone: string | null; photo_url: string | null; address: string | null }) => ({
+    id: c.id,
+    name: c.name,
+    phone: c.phone ?? phone,
+    photoUrl: c.photo_url,
+    address: c.address,
+  });
+  if (found?.[0]) return { customer: toSuggestion(found[0]), existed: true };
+
+  const { data: created, error: insertError } = await supabaseAdmin
+    .from("customers")
+    .insert({
+      name,
+      phone,
+      address: input.address?.trim() || null,
+      age: input.age,
+      gender: input.gender,
+      nationality,
+      state: province,
+      // The CRM keeps a customer's district in its "Capital" column.
+      capital: input.district?.trim() || null,
+      customer_since: ppToday(),
+    })
+    .select("id, name, phone, photo_url, address")
+    .single();
+  if (insertError) {
+    if (insertError.code === "23505") throw new Error("That phone number is already used by another customer");
+    throw insertError;
+  }
+  return { customer: toSuggestion(created), existed: false };
 }
 
 export async function chargeOrder(input: {

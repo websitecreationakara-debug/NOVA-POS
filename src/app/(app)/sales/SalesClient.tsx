@@ -37,6 +37,7 @@ import type { ProductWithStock } from "@/lib/supabase/queries";
 import type { WebsiteProduct, WebsiteProductVariation } from "@/lib/websiteProducts/types";
 import SalesWebsiteGrid from "./SalesWebsiteGrid";
 import TopBarSlot from "@/components/TopBarSlot";
+import NewCustomerPanel from "@/components/NewCustomerPanel";
 import type { SalesWebsiteCatalog } from "./page";
 import {
   chargeOrder,
@@ -207,6 +208,7 @@ export default function SalesClient({
   );
   const [suggestions, setSuggestions] = useState<CustomerSuggestion[]>([]);
   const [phoneDropdownOpen, setPhoneDropdownOpen] = useState(false);
+  const [newCustomerOpen, setNewCustomerOpen] = useState(false);
   // The phone-suggestion list is position:fixed and anchored just above the
   // phone input, so the checkout panel's own `overflow-y-auto` scroll
   // container can't clip it.
@@ -798,6 +800,8 @@ export default function SalesClient({
     setSelectedCustomer(null);
     setPhoneDropdownOpen(false);
     setNameDropdownOpen(false);
+    // "New" opens the new-customer panel, pre-filled with what's been typed.
+    setNewCustomerOpen(true);
   }
 
   function handleCharge() {
@@ -1256,7 +1260,7 @@ export default function SalesClient({
                       onBlur={() => setTimeout(() => setPhoneDropdownOpen(false), 150)}
                     />
                   </div>
-                  {phoneDropdownOpen && customerPhone.trim().length > 0 && phonePos && (
+                  {phoneDropdownOpen && phonePos && (
                     <div
                       style={{
                         position: "fixed",
@@ -1317,7 +1321,7 @@ export default function SalesClient({
                     onFocus={() => setNameDropdownOpen(true)}
                     onBlur={() => setTimeout(() => setNameDropdownOpen(false), 150)}
                   />
-                  {nameDropdownOpen && customerName.trim().length > 0 && nameSuggestions.length > 0 && namePos && (
+                  {nameDropdownOpen && namePos && (
                     <div
                       style={{
                         position: "fixed",
@@ -1328,7 +1332,16 @@ export default function SalesClient({
                       }}
                       className="max-h-64 overflow-y-auto rounded-lg border border-black/[.15] bg-white shadow-xl dark:border-white/[.2] dark:bg-zinc-900"
                     >
-                      {nameSuggestions.map((c) => (
+                      <button
+                        type="button"
+                        onMouseDown={(e) => e.preventDefault()}
+                        onClick={selectNewCustomer}
+                        className="flex w-full items-center gap-2 border-b border-black/[.08] px-3 py-2 text-left text-sm hover:bg-black/[.03] dark:border-white/[.145] dark:hover:bg-white/[.05]"
+                      >
+                        <Plus className="size-4" />
+                        New
+                      </button>
+                      {customerName.trim().length > 0 && nameSuggestions.map((c) => (
                         <button
                           type="button"
                           key={c.id}
@@ -1360,6 +1373,19 @@ export default function SalesClient({
                 value={customerAddress}
                 onChange={(e) => setCustomerAddress(e.target.value)}
               />
+              {newCustomerOpen && (
+                <NewCustomerPanel
+                  initialPhone={customerPhone}
+                  initialName={customerName}
+                  initialAddress={customerAddress}
+                  onClose={() => setNewCustomerOpen(false)}
+                  onCreated={(customer) => {
+                    // Carry on with the saved customer already selected.
+                    selectCustomer(customer);
+                    setNewCustomerOpen(false);
+                  }}
+                />
+              )}
               {isExistingCustomer && (
                 <p className="mt-1 text-xs text-green-600">
                   Existing customer — reusing their record.
