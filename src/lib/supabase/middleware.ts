@@ -12,8 +12,10 @@ const ROLE_HOME: Record<StaffRole, string> = {
 
 const ROLE_ALLOWED_PREFIXES: Record<StaffRole, string[]> = {
   admin: ["/", "/sales", "/stock", "/accountance", "/marketing", "/invoice", "/users", "/orders"],
-  // "Sale Customer Support": Sales + Orders, and Stock.
-  sales: ["/", "/sales", "/stock", "/invoice", "/orders"],
+  // "Sale Customer Support": Sales + Orders, and Stock -- plus /marketing, but
+  // only for the CRM customer list (the page and its actions hold back
+  // promotions, Cost Control, delete and import from this role).
+  sales: ["/", "/sales", "/stock", "/invoice", "/orders", "/marketing"],
   stock: ["/", "/stock", "/orders", "/invoice"],
   // "Cooperate Admin": everything except Staff Accounts (/users).
   accountance: ["/", "/sales", "/stock", "/accountance", "/marketing", "/invoice", "/orders"],

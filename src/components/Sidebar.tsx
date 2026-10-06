@@ -52,7 +52,8 @@ const MARKETING_LINKS = [
   { tab: "promotions", label: "CRM" },
   { tab: "cost-control", label: "Cost Control" },
 ];
-const MARKETING_ROLES = ["admin", "marketing", "accountance"];
+// "sales" (Sale Customer Support) gets only the CRM link, not Cost Control.
+const MARKETING_ROLES = ["admin", "marketing", "accountance", "sales"];
 
 // Mirrors AccountanceTab from src/app/(app)/accountance/page.tsx -- kept as
 // a literal list here (rather than imported) since that file is a server
@@ -331,7 +332,7 @@ export default function Sidebar({ role }: { role: string }) {
             </div>
             {marketingOpen && !collapsed && (
               <div className="mt-1 flex flex-col gap-0.5 border-l border-border pl-4">
-                {MARKETING_LINKS.map((l) => (
+                {MARKETING_LINKS.filter((l) => role !== "sales" || l.tab === "promotions").map((l) => (
                   <Link
                     key={l.tab}
                     href={`/marketing?tab=${l.tab}`}

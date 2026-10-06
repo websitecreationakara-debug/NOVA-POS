@@ -47,6 +47,7 @@ export default function MarketingClient({
   customerFilters,
   filterOptions,
   today,
+  crmOnly,
   openCustomerId,
   searchTerm,
 }: {
@@ -69,6 +70,9 @@ export default function MarketingClient({
   };
   // Today in Phnom Penh (YYYY-MM-DD), for the "Bought on" quick buttons.
   today: string;
+  // Sale Customer Support sees the customer list only -- no promotions, no
+  // import, no delete.
+  crmOnly: boolean;
   // The customer whose purchase-history window is open (?customer=), if any.
   openCustomerId: string;
   searchTerm: string;
@@ -323,9 +327,10 @@ export default function MarketingClient({
 
   return (
     <div className="min-h-screen p-6">
-      <h1 className="text-lg font-medium">Marketing</h1>
+      <h1 className="text-lg font-medium">{crmOnly ? "CRM" : "Marketing"}</h1>
       {error && <p className="mt-3 text-sm text-red-500">{error}</p>}
 
+      {!crmOnly && (
       <section className="mt-6 rounded-lg border border-black/[.08] p-4 dark:border-white/[.145]">
         <div className="flex flex-wrap items-center gap-3">
           <h2 className="font-medium">Promotions</h2>
@@ -459,6 +464,7 @@ export default function MarketingClient({
         </table>
         </div>
       </section>
+      )}
 
       <section className="mt-6 rounded-lg border border-black/[.08] p-4 dark:border-white/[.145]">
         <div className="flex flex-wrap items-center gap-3">
@@ -470,8 +476,8 @@ export default function MarketingClient({
             onChange={(e) => setSearch(e.target.value)}
             className={`ml-auto ${inputClass}`}
           />
-          <ImportCustomersButton kind="csv" />
-          <ImportCustomersButton kind="pdf" />
+          {!crmOnly && <ImportCustomersButton kind="csv" />}
+          {!crmOnly && <ImportCustomersButton kind="pdf" />}
         </div>
 
         {/* Filters + top-buyer ranking -- applied across ALL customers (in the
@@ -710,6 +716,7 @@ export default function MarketingClient({
                     >
                       {editingId === c.id ? "Cancel" : "Edit"}
                     </button>
+                    {!crmOnly && (
                     <button
                       onClick={(e) => {
                         e.stopPropagation();
@@ -722,6 +729,7 @@ export default function MarketingClient({
                     >
                       <Trash2 className="size-4" />
                     </button>
+                    )}
                   </td>
                 </tr>
                 {editingId === c.id && (
