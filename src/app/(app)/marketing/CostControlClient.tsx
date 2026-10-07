@@ -28,13 +28,14 @@ import {
   type SetItemDetail,
   type SetSummary,
 } from "./costControlActions";
+import { formatUsd } from "@/lib/formatNumber";
 
 // Small caption above each field of an item card on a phone (the table header is hidden there).
 const MOBILE_LABEL =
   "before:mb-1 before:block before:text-xs before:text-zinc-500 before:content-[attr(data-label)] md:before:hidden";
 
 function formatMoney(n: number | null): string {
-  return n === null ? "—" : `$${n.toFixed(2)}`;
+  return n === null ? "—" : formatUsd(n);
 }
 
 function formatPercent(n: number | null): string {
@@ -1198,7 +1199,7 @@ function SetEditor({
                     )}
                   </span>
                   <span className="text-xs text-zinc-500">
-                    {p.unit} · {p.costPrice === null ? "no cost" : `$${p.costPrice.toFixed(2)}`}
+                    {p.unit} · {p.costPrice === null ? "no cost" : formatUsd(p.costPrice)}
                   </span>
                 </button>
               ))}

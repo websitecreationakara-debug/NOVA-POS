@@ -46,6 +46,7 @@ import AddWasteItemModal from "@/components/AddWasteItemModal";
 import EditWasteLogModal from "@/components/EditWasteLogModal";
 import DeleteWasteLogDialog from "@/components/DeleteWasteLogDialog";
 import type { AccountanceTab } from "./page";
+import { formatCount, formatUsd } from "@/lib/formatNumber";
 
 type RangeMode = "day" | "week" | "month" | "quarter" | "year";
 
@@ -76,7 +77,7 @@ const PAYMENT_METHOD_COLORS: Record<PaymentMethod, string> = {
 };
 
 function formatMoney(n: number) {
-  return `$${n.toFixed(2)}`;
+  return formatUsd(n);
 }
 
 // Color-coded trend chip for a metric card -- "positive" (green) for a
@@ -1348,7 +1349,7 @@ export default function AccountanceClient({
             </span>
             <TrendChip pct={pctChange(orders.length, previousPeriod.orderCount)} />
           </div>
-          <div className="mt-1 text-xl font-semibold">{orders.length}</div>
+          <div className="mt-1 text-xl font-semibold">{formatCount(orders.length)}</div>
         </div>
         <div className="rounded-lg border border-black/[.08] bg-card p-4 shadow-sm dark:border-white/[.145]">
           <div className="flex items-center justify-between gap-2 text-xs font-medium text-zinc-600 dark:text-zinc-400">

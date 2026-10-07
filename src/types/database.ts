@@ -685,6 +685,11 @@ export type Database = {
         Args: { p_from: string | null; p_to: string; p_brand?: string | null };
         Returns: Json;
       };
+      // COGS / waste / promotion totals for the Accounting page (migration 0073).
+      cogs_summary: {
+        Args: { p_statuses: string[]; p_brand_id: string | null; p_from: string; p_to: string };
+        Returns: Json;
+      };
       // Insight by Quantity / Price: one row per product with its 12 months (migration 0072).
       product_monthly: {
         Args: { p_year: number; p_brand?: string | null };

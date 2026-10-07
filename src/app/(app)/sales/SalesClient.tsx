@@ -53,6 +53,7 @@ import { notifySaleCharged } from "@/lib/saleCharged";
 import { notifyOrdersChanged } from "@/lib/ordersChanged";
 import { khmerNameWeight, parseGrams, sizedLine } from "@/lib/weight";
 import { COUNTRY_PREFIX, toFullPhone } from "@/lib/phone";
+import { formatUsd } from "@/lib/formatNumber";
 
 // An existing order opened for editing via /sales?editOrder=<id> -- the
 // checkout loads with this cart, customer and totals, and "Update order"
@@ -76,7 +77,7 @@ export type EditOrderSeed = {
 };
 
 function formatMoney(n: number) {
-  return `$${n.toFixed(2)}`;
+  return formatUsd(n);
 }
 
 // Local calendar date, `n` days from today, as YYYY-MM-DD.

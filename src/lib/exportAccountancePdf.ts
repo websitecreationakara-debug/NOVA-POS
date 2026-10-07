@@ -1,5 +1,7 @@
 "use client";
 
+import { formatUsd } from "@/lib/formatNumber";
+
 // The Accountance page's numbers are already plain text/numbers (no chart or
 // invoice layout to preserve), so this builds the PDF directly from jsPDF's
 // text primitives instead of screenshotting the page like exportInvoicePdf
@@ -18,7 +20,7 @@ export async function exportAccountancePdf(
   }
 ): Promise<void> {
   const { jsPDF } = await import("jspdf");
-  const money = (n: number) => `$${n.toFixed(2)}`;
+  const money = (n: number) => formatUsd(n);
 
   const pdf = new jsPDF({ unit: "mm", format: "a4" });
   const marginX = 18;

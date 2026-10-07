@@ -7,6 +7,7 @@ import OrdersBackupButton from "@/components/OrdersBackupButton";
 import { getSessionUser } from "@/lib/supabase/auth-server";
 import { ppToday } from "@/lib/phnomPenhTime";
 import type { FulfillmentStatus } from "@/types/database";
+import { formatCount } from "@/lib/formatNumber";
 
 export const dynamic = "force-dynamic";
 
@@ -97,7 +98,7 @@ export default async function OrdersPage({
       <header className="flex flex-wrap items-baseline gap-x-3 gap-y-1 border-b border-black/[.08] px-3 py-3 sm:px-6 dark:border-white/[.145]">
         <h1 className="text-lg font-semibold">Orders</h1>
         <span className="rounded-full bg-muted px-2 py-0.5 text-xs font-medium whitespace-nowrap text-muted-foreground">
-          {counts.total} total
+          {formatCount(counts.total)} total
         </span>
         <span className="text-sm text-muted-foreground">
           Orders staff prepare for pickup/delivery
@@ -119,7 +120,7 @@ export default async function OrdersPage({
             <p className="text-[11px] leading-tight font-medium tracking-wide text-muted-foreground uppercase sm:text-xs">
               {s.label}
             </p>
-            <p className="font-display mt-0.5 text-2xl font-bold tabular-nums">{s.value}</p>
+            <p className="font-display mt-0.5 text-2xl font-bold tabular-nums">{formatCount(s.value)}</p>
           </Link>
         ))}
       </div>

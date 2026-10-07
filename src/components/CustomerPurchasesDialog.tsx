@@ -7,9 +7,10 @@ import {
   getCustomerPurchaseHistoryAction,
   type CustomerPurchaseHistory,
 } from "@/app/(app)/marketing/actions";
+import { formatUsd } from "@/lib/formatNumber";
 
 function formatMoney(n: number) {
-  return `$${n.toFixed(2)}`;
+  return formatUsd(n);
 }
 
 function formatDay(iso: string | null) {

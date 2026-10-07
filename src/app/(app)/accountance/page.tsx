@@ -115,6 +115,14 @@ function reconciliationFor(brandId: string, fromDate: string, toDate: string) {
   return getReconciliation(brandId, fromDate);
 }
 
+// The Margin Report (one row per product sold, each priced from its current cost) is
+// only shown on the COGS tab, and building it is by far the heaviest query here --
+// so the other tabs skip it.
+function marginReportFor(tab: AccountanceTab, brandId: string, fromDate: string, toDate: string) {
+  if (tab !== "cogs") return Promise.resolve<Awaited<ReturnType<typeof getMarginReport>>>([]);
+  return getMarginReport(brandId, fromDate, toDate);
+}
+
 export default async function AccountancePage({
   searchParams,
 }: {
@@ -184,7 +192,7 @@ export default async function AccountancePage({
         reconciliationFor(dataBrandParam, fromDate, toDate),
         getExpensesForDateRange(dataBrandParam, fromDate, toDate),
         getCogsSummary(dataBrandParam, fromDate, toDate),
-        getMarginReport(dataBrandParam, fromDate, toDate),
+        marginReportFor(tab, dataBrandParam, fromDate, toDate),
       ])
     : null;
 
@@ -205,22 +213,21 @@ export default async function AccountancePage({
       : (brands.find((b) => b.id === brandIdParam) ?? brands[0]);
   const currentBrand = tab === "expenses" ? ALL_BUSINESSES_BRAND : selectedBrand;
 
-  const [{ summary, orders }, reconciliation, expenses, cogsSummary, marginReport] =
-    optimisticDataPromise && currentBrand.id === dataBrandParam
-      ? await optimisticDataPromise
-      : await Promise.all([
-          getDailySales(currentBrand.id, fromDate, toDate),
-          reconciliationFor(currentBrand.id, fromDate, toDate),
-          getExpensesForDateRange(currentBrand.id, fromDate, toDate),
-          getCogsSummary(currentBrand.id, fromDate, toDate),
-          getMarginReport(currentBrand.id, fromDate, toDate),
-        ]);
-
-  // Only the COGS tab needs either of these -- skip the extra queries for
+  // Only the COGS tab needs the waste picker/log -- skip the extra queries for
   // every other tab. The "+ Add waste item" picker also needs one real
   // brand's product list (waste is logged against one brand's actual stock),
   // but the log itself reads fine for "All Businesses" too.
   const { from: prevFromDate, to: prevToDate } = previousPeriodRange(fromDate, toDate);
+  const currentDataPromise =
+    optimisticDataPromise && currentBrand.id === dataBrandParam
+      ? optimisticDataPromise
+      : Promise.all([
+          getDailySales(currentBrand.id, fromDate, toDate),
+          reconciliationFor(currentBrand.id, fromDate, toDate),
+          getExpensesForDateRange(currentBrand.id, fromDate, toDate),
+          getCogsSummary(currentBrand.id, fromDate, toDate),
+          marginReportFor(tab, currentBrand.id, fromDate, toDate),
+        ]);
   const wasteDataPromise: Promise<[StockPickerItem[], WasteLogEntry[]]> =
     tab === "cogs"
       ? Promise.all([
@@ -236,8 +243,12 @@ export default async function AccountancePage({
     getCogsSummary(currentBrand.id, prevFromDate, prevToDate),
   ]);
 
-  const [[wasteItems, wasteLog], [{ summary: prevSummary }, prevExpenses, prevCogsSummary]] =
-    await Promise.all([wasteDataPromise, previousPeriodPromise]);
+  // All three at once (the previous period used to wait for the current one).
+  const [
+    [{ summary, orders }, reconciliation, expenses, cogsSummary, marginReport],
+    [wasteItems, wasteLog],
+    [{ summary: prevSummary }, prevExpenses, prevCogsSummary],
+  ] = await Promise.all([currentDataPromise, wasteDataPromise, previousPeriodPromise]);
 
   const prevExpenseTotal = prevExpenses.reduce((sum, e) => sum + e.amount, 0);
   const prevGrossProfit = prevSummary.total - prevCogsSummary.totalCogs;

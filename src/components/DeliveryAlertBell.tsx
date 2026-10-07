@@ -6,6 +6,7 @@ import { Bell, Receipt } from "lucide-react";
 import { getDueDeliveries, type DueDelivery } from "@/app/(app)/orders/actions";
 import { ORDERS_CHANGED } from "@/lib/ordersChanged";
 import { SALE_CHARGED, type SaleChargedDetail } from "@/lib/saleCharged";
+import { formatUsd } from "@/lib/formatNumber";
 
 const POLL_MS = 60_000;
 // While an order is overdue and still not marked done, nag again this often.
@@ -42,7 +43,7 @@ function whenLabel(iso: string): string {
 }
 
 function formatMoney(n: number): string {
-  return `$${n.toFixed(2)}`;
+  return formatUsd(n);
 }
 
 // "just now" / "5m ago" for a charge timestamp (epoch ms).

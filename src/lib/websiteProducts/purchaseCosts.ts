@@ -142,6 +142,118 @@ export async function getEffectiveProductCost(productId: string): Promise<number
   return total ?? product.cost_price;
 }
 
+// getEffectiveProductCost for many products at once -- the same rules, but a
+// handful of queries in total instead of up to four PER product (a year of sales
+// touches hundreds of products). Keep the two in step: a Set listing's own Total
+// Cost, else the storefront listing's purchase-cost Total, else cost_price. A
+// product that can't be found comes back null (callers treat the single-product
+// version's thrown error the same way).
+export async function getEffectiveProductCosts(productIds: string[]): Promise<Map<string, number | null>> {
+  const ids = [...new Set(productIds)];
+  const out = new Map<string, number | null>(ids.map((id) => [id, null]));
+  // In chunks: hundreds of ids in one .in() make the request URL too long.
+  const CHUNK = 150;
+  const chunks: string[][] = [];
+  for (let i = 0; i < ids.length; i += CHUNK) chunks.push(ids.slice(i, i + CHUNK));
+
+  type SetRow = {
+    linked_product_id: string;
+    target_markup_pct: number | null;
+    labor_cost: number | null;
+    competitor_base_price: number | null;
+    set_items: { amount: number; unit_cost: number | null }[];
+  };
+  const [setPages, productPages, linkPages] = await Promise.all([
+    Promise.all(
+      chunks.map((c) =>
+        supabaseAdmin
+          .from("sets")
+          .select("linked_product_id, target_markup_pct, labor_cost, competitor_base_price, set_items(amount, unit_cost)")
+          .in("linked_product_id", c)
+      )
+    ),
+    Promise.all(chunks.map((c) => supabaseAdmin.from("products").select("id, cost_price").in("id", c))),
+    Promise.all(
+      chunks.map((c) =>
+        supabaseAdmin.from("product_site_links").select("product_id, site, site_product_id, variation_id").in("product_id", c)
+      )
+    ),
+  ]);
+
+  // A product with exactly one linked Set is priced as that Set (two Sets on one
+  // product is ambiguous, so it falls through like the single-product version).
+  const setsByProduct = new Map<string, SetRow[]>();
+  for (const page of setPages) {
+    if (page.error) throw page.error;
+    for (const row of (page.data ?? []) as unknown as SetRow[]) {
+      setsByProduct.set(row.linked_product_id, [...(setsByProduct.get(row.linked_product_id) ?? []), row]);
+    }
+  }
+  const costPrice = new Map<string, number | null>();
+  for (const page of productPages) {
+    if (page.error) throw page.error;
+    for (const p of page.data ?? []) costPrice.set(p.id, p.cost_price);
+  }
+  const linkByProduct = new Map<string, { site: string; site_product_id: string; variation_id: string }>();
+  for (const page of linkPages) {
+    if (page.error) throw page.error;
+    for (const l of page.data ?? []) if (!linkByProduct.has(l.product_id)) linkByProduct.set(l.product_id, l);
+  }
+
+  // Purchase-cost rows for the linked storefront items (one per site + item + variation).
+  const spIds = [...new Set([...linkByProduct.values()].map((l) => l.site_product_id))];
+  const costRows = new Map<
+    string,
+    { original_cost: number | null; total_cost_10pct: number | null; extra_money: number | null; total_override: number | null }
+  >();
+  const costPages = await Promise.all(
+    Array.from({ length: Math.ceil(spIds.length / CHUNK) }, (_, i) =>
+      supabaseAdmin
+        .from("website_product_purchase_costs")
+        .select("site, site_product_id, variation_id, original_cost, total_cost_10pct, extra_money, total_override")
+        .in("site_product_id", spIds.slice(i * CHUNK, (i + 1) * CHUNK))
+    )
+  );
+  for (const page of costPages) {
+    if (page.error) throw page.error;
+    for (const r of page.data ?? []) costRows.set(`${r.site}|${r.site_product_id}|${r.variation_id}`, r);
+  }
+
+  for (const id of ids) {
+    const sets = setsByProduct.get(id) ?? [];
+    if (sets.length === 1) {
+      const set = sets[0];
+      const setCost = computeSetTotalCost(set.set_items.map((i) => ({ amount: i.amount, unitCost: i.unit_cost })));
+      out.set(
+        id,
+        computeSetPricing({
+          setCost,
+          targetMarkupPct: set.target_markup_pct,
+          laborCost: set.labor_cost,
+          competitorBasePrice: set.competitor_base_price,
+        }).totalCost
+      );
+      continue;
+    }
+    if (!costPrice.has(id)) continue; // product not found -> null
+    const base = costPrice.get(id) ?? null;
+    const link = linkByProduct.get(id);
+    const row = link ? costRows.get(`${link.site}|${link.site_product_id}|${link.variation_id}`) : undefined;
+    if (!row) {
+      out.set(id, base);
+      continue;
+    }
+    const { total } = derivePurchaseCost({
+      originalCost: row.original_cost,
+      totalCost10pct: row.total_cost_10pct,
+      extraMoney: row.extra_money,
+      totalOverride: row.total_override,
+    });
+    out.set(id, total ?? base);
+  }
+  return out;
+}
+
 // What a Set line is priced at, per native pack/unit: the product's Purchase
 // Cost in Stock (the average of Original Cost and Total Cost 10%). When a
 // product has no Purchase Cost entered, it falls back to its Total (a typed
