@@ -81,6 +81,7 @@ export function Kpi({
   noteTone = "muted",
   tint,
   href,
+  hrefLabel = "View customers",
 }: {
   icon: React.ComponentType<{ className?: string }>;
   label: string;
@@ -90,6 +91,8 @@ export function Kpi({
   tint: string;
   // Makes the whole card a link (e.g. to the customers the number counts).
   href?: string;
+  // The link's wording (bottom right of the card).
+  hrefLabel?: string;
 }) {
   const tone =
     noteTone === "up" ? "text-emerald-600" : noteTone === "down" ? "text-rose-600" : "text-muted-foreground";
@@ -101,7 +104,7 @@ export function Kpi({
     >
       {href && (
         <span className="absolute right-4 bottom-4 inline-flex items-center gap-0.5 text-xs font-medium text-brand opacity-70 transition-opacity group-hover:opacity-100">
-          View customers
+          {hrefLabel}
           <ArrowUpRight className="size-3.5" />
         </span>
       )}
