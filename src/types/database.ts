@@ -685,6 +685,11 @@ export type Database = {
         Args: { p_from: string | null; p_to: string; p_brand?: string | null };
         Returns: Json;
       };
+      // Insight by Quantity / Price: one row per product with its 12 months (migration 0072).
+      product_monthly: {
+        Args: { p_year: number; p_brand?: string | null };
+        Returns: Json;
+      };
       marketing_customer_filter_options: {
         Args: Record<string, never>;
         Returns: { kind: string; value: string; n: number }[];
