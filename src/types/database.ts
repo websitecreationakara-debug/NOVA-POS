@@ -643,6 +643,20 @@ export type Database = {
           order_share?: number;
         }[];
       };
+      // Every Dashboard figure in one jsonb document (migration 0071); the shape
+      // is DashboardStatsRow in lib/supabase/queries.ts.
+      dashboard_stats: {
+        Args: {
+          p_statuses: string[];
+          p_brand_id: string | null;
+          p_from: string;
+          p_to: string;
+          p_from_day: string;
+          p_to_day: string;
+          p_min_price: number;
+        };
+        Returns: unknown;
+      };
       // Marketing > CRM customer list: filters + "top buying" ranking (migration 0064).
       marketing_customers: {
         Args: {
