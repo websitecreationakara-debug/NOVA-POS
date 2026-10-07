@@ -49,6 +49,7 @@ import {
   uploadWebsiteImageAction,
   setProductImageAction,
 } from "./websiteActions";
+import { formatUsd } from "@/lib/formatNumber";
 
 // Looked-up POS product for one entry (a simple product or one size of a
 // "variable" one), keyed by `${site_product_id}::${variation_id}` -- "" for
@@ -58,7 +59,7 @@ function posEntryKey(siteProductId: string, variationId: string): string {
 }
 
 function formatMoney(n: number): string {
-  return `$${n.toFixed(2)}`;
+  return formatUsd(n);
 }
 
 // How often to re-pull the storefront catalog so edits made on the website (or

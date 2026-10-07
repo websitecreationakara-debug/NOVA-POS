@@ -6,6 +6,7 @@ import { ORDER_SOURCE_LABELS } from "@/lib/orderSource";
 import { khmerNameWeight } from "@/lib/weight";
 import { formatDateTime } from "@/lib/invoiceFormat";
 import type { OrderSource, ProductSiteLink } from "@/types/database";
+import { formatUsd } from "@/lib/formatNumber";
 
 // Khmer + Latin webfont for the printed document so the bilingual labels
 // render consistently on screen and in the PDF. Defined once here (rather
@@ -18,7 +19,7 @@ export const hanuman = Hanuman({
 });
 
 export function formatMoney(n: number) {
-  return `$${n.toFixed(2)}`;
+  return formatUsd(n);
 }
 
 const PAYMENT_LABELS: Record<string, string> = {

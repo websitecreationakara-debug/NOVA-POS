@@ -30,13 +30,14 @@ import { ppDay } from "@/lib/phnomPenhTime";
 import DashboardRangeBar from "./DashboardRangeBar";
 import PeriodBarChart from "./PeriodBarChart";
 import RecentOrdersRows from "./RecentOrdersRows";
+import { formatCount, formatUsd } from "@/lib/formatNumber";
 
 export const dynamic = "force-dynamic";
 
 const BRANDS = ["BOSBA Premium Foods", "BOSBA Drink&Snack", "SORA SAKE"];
 
 function formatMoney(n: number) {
-  return `$${n.toFixed(2)}`;
+  return formatUsd(n);
 }
 
 // Percent change of the last 7 days vs the 7 days before that, from the
@@ -80,14 +81,14 @@ function Trend({ pct }: { pct: number | null }) {
 // would otherwise hold up the whole dashboard's first paint.
 async function WebsiteProductCount() {
   const total = await getWebsiteProductTotal();
-  return <>{total ?? "—"}</>;
+  return <>{total === null ? "—" : formatCount(total)}</>;
 }
 
 // Low-stock reads the storefront APIs too -- streamed like the product count so
 // the stats don't wait on it. getLowStockCount is cached, so the card and the
 // banner below share one lookup.
 async function LowStockCount() {
-  return <>{await getLowStockCount()}</>;
+  return <>{formatCount(await getLowStockCount())}</>;
 }
 
 async function LowStockBanner() {
@@ -100,7 +101,7 @@ async function LowStockBanner() {
     >
       <AlertTriangle className="size-5 shrink-0" />
       <span className="font-medium">
-        {count} item{count === 1 ? "" : "s"} at or below the low-stock level
+        {formatCount(count)} item{count === 1 ? "" : "s"} at or below the low-stock level
       </span>
       <span className="ml-auto flex items-center gap-1 font-semibold">
         Restock <ArrowRight className="size-4" />
@@ -236,7 +237,7 @@ export default async function Home({
     },
     {
       label: `Orders (${period})`,
-      value: stats.orderCount,
+      value: formatCount(stats.orderCount),
       icon: ShoppingCart,
       tint: "bg-blue-500/15 text-blue-600 dark:text-blue-400",
       trend: weekTrend(stats.dailyOrders),
@@ -421,7 +422,7 @@ export default async function Home({
                   </span>
                   <span className="min-w-0 flex-1 truncate font-medium">{b.name}</span>
                   <span className="text-xs text-muted-foreground">
-                    {b.orders} order{b.orders === 1 ? "" : "s"}
+                    {formatCount(b.orders)} order{b.orders === 1 ? "" : "s"}
                   </span>
                   <span className="w-24 text-right font-semibold">{formatMoney(b.revenue)}</span>
                 </li>
@@ -449,7 +450,7 @@ export default async function Home({
                     {i + 1}
                   </span>
                   <span className="min-w-0 flex-1 truncate font-medium">{p.name}</span>
-                  <span className="text-xs text-muted-foreground">{p.quantity} sold</span>
+                  <span className="text-xs text-muted-foreground">{formatCount(p.quantity)} sold</span>
                   <span className="w-24 text-right font-semibold">{formatMoney(p.revenue)}</span>
                 </li>
               ))}

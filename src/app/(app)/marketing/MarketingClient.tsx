@@ -21,9 +21,10 @@ import {
   setPromotionActiveAction,
   updateCustomerAction,
 } from "./actions";
+import { formatUsd } from "@/lib/formatNumber";
 
 function formatDiscount(p: Promotion) {
-  return p.discount_type === "percent" ? `${p.discount_value}%` : `$${p.discount_value.toFixed(2)}`;
+  return p.discount_type === "percent" ? `${p.discount_value}%` : formatUsd(p.discount_value);
 }
 
 function formatWindow(p: Promotion) {
@@ -737,7 +738,7 @@ export default function MarketingClient({
                   <td className="text-right tabular-nums">{customerBuying[c.id]?.orders ?? "—"}</td>
                   <td className="text-right tabular-nums">{customerBuying[c.id]?.units ?? "—"}</td>
                   <td className="text-right tabular-nums">
-                    {customerBuying[c.id] ? `$${customerBuying[c.id].spent.toFixed(2)}` : "—"}
+                    {customerBuying[c.id] ? formatUsd(customerBuying[c.id].spent) : "—"}
                   </td>
                   <td>{customerBusinesses[c.id]?.join(", ") || "—"}</td>
                   <td>{c.email || "—"}</td>

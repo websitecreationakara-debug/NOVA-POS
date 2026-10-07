@@ -11,7 +11,8 @@ import { orderForBrandShare } from "@/lib/orderBrandShare";
 import { ALL_PAYMENT_METHODS, type PaymentMethod } from "@/lib/paymentMethods";
 import { summarizeMarginLines, unitsSoldByCost, type MarginLine } from "@/lib/cogs";
 import { productWeightGrams } from "@/lib/costControl";
-import { getEffectiveProductCost } from "@/lib/websiteProducts/purchaseCosts";
+import { readAllPages } from "@/lib/supabase/readAllPages";
+import { getEffectiveProductCost, getEffectiveProductCosts } from "@/lib/websiteProducts/purchaseCosts";
 import type {
   Brand,
   CashReconciliation,
@@ -891,11 +892,8 @@ async function sumCogsWithFallback(
   items: { product_id: string; quantity: number; cogs: number | null }[]
 ): Promise<{ totalCogs: number; hasUnknownCost: boolean }> {
   const missingProductIds = [...new Set(items.filter((i) => i.cogs === null).map((i) => i.product_id))];
-  const effectiveCostByProduct = new Map<string, number | null>();
-  await Promise.all(
-    missingProductIds.map(async (id) => {
-      effectiveCostByProduct.set(id, await getEffectiveProductCost(id).catch(() => null));
-    })
+  const effectiveCostByProduct = await getEffectiveProductCosts(missingProductIds).catch(
+    () => new Map<string, number | null>()
   );
 
   let totalCogs = 0;
@@ -933,6 +931,33 @@ export async function getCogsSummary(
   fromDate: string,
   toDate: string
 ): Promise<CogsSummary> {
+  // Added up in the database (migration 0073). If that isn't applied yet, read the
+  // lines and adjustments and add them up here (slower) -- same numbers.
+  const { data: summary, error: summaryError } = await supabaseAdmin.rpc("cogs_summary", {
+    p_statuses: COUNTED_FULFILLMENT_STATUSES,
+    p_brand_id: brandId === ALL_BUSINESSES_ID ? null : brandId,
+    p_from: ppDayStart(fromDate),
+    p_to: ppDayEnd(toDate),
+  });
+  if (!summaryError && summary) {
+    const s = summary as unknown as {
+      known_cogs: number;
+      uncosted_lines: { product_id: string; quantity: number }[];
+      waste_cost: number;
+      promotion_cost: number;
+    };
+    const uncosted = await sumCogsWithFallback(
+      s.uncosted_lines.map((l) => ({ product_id: l.product_id, quantity: Number(l.quantity), cogs: null }))
+    );
+    return {
+      totalCogs: round2(Number(s.known_cogs) + uncosted.totalCogs),
+      hasUnknownCost: uncosted.hasUnknownCost,
+      wasteCost: round2(Number(s.waste_cost)),
+      promotionCost: round2(Number(s.promotion_cost)),
+    };
+  }
+  if (summaryError && summaryError.code !== "PGRST202") throw new Error(summaryError.message);
+
   let itemsQuery = supabaseAdmin
     .from("order_items")
     .select("product_id, quantity, cogs, products!inner(brand_id), orders!inner(status, list_at, paid_at)")
@@ -1270,41 +1295,51 @@ export async function getMarginReport(
   fromDate: string,
   toDate: string
 ): Promise<MarginReportRow[]> {
-  let query = supabaseAdmin
-    .from("order_items")
-    .select("product_id, quantity, line_total, cogs, unit_cost, products!inner(brand_id), orders!inner(status, list_at, paid_at)")
-    .eq("orders.status", "paid")
-    .in("orders.fulfillment_status", COUNTED_FULFILLMENT_STATUSES)
-    .gte("orders.list_at", ppDayStart(fromDate))
-    .lte("orders.list_at", ppDayEnd(toDate));
-  if (brandId !== ALL_BUSINESSES_ID) query = query.eq("products.brand_id", brandId);
-
-  const { data: items, error } = await selectAll(query.order("id"));
-  if (error) throw error;
+  // The sold lines are read in parallel pages (one page after another took ~3 s
+  // for a year of sales).
+  const items = await readAllPages<{
+    product_id: string;
+    quantity: number;
+    line_total: number;
+    cogs: number | null;
+    unit_cost: number | null;
+    orders: { list_at: string | null; paid_at: string | null } | null;
+  }>((withCount) => {
+    let query = supabaseAdmin
+      .from("order_items")
+      .select(
+        "product_id, quantity, line_total, cogs, unit_cost, products!inner(brand_id), orders!inner(status, list_at, paid_at)",
+        { count: withCount ? "exact" : undefined }
+      )
+      .eq("orders.status", "paid")
+      .in("orders.fulfillment_status", COUNTED_FULFILLMENT_STATUSES)
+      .gte("orders.list_at", ppDayStart(fromDate))
+      .lte("orders.list_at", ppDayEnd(toDate));
+    if (brandId !== ALL_BUSINESSES_ID) query = query.eq("products.brand_id", brandId);
+    return query.order("id");
+  });
   if (items.length === 0) return [];
 
   const productIds = [...new Set(items.map((i) => i.product_id))];
   // In chunks: hundreds of ids in one .in() make the request URL too long.
   const productById = new Map<string, { id: string; name: string; price: number; categories: { name: string } | null }>();
-  for (let i = 0; i < productIds.length; i += 150) {
-    const { data: products, error: prodError } = await supabaseAdmin
-      .from("products")
-      .select("id, name, price, categories(name)")
-      .in("id", productIds.slice(i, i + 150));
+  // Unit Cost is each product's current cost (see getEffectiveProductCost), so
+  // it reads the same whichever date range is viewed. Looked up for every
+  // product in a few queries, alongside the product details.
+  const [productPages, currentCostByProduct] = await Promise.all([
+    Promise.all(
+      Array.from({ length: Math.ceil(productIds.length / 150) }, (_, i) =>
+        supabaseAdmin
+          .from("products")
+          .select("id, name, price, categories(name)")
+          .in("id", productIds.slice(i * 150, (i + 1) * 150))
+      )
+    ),
+    getEffectiveProductCosts(productIds).catch(() => new Map<string, number | null>()),
+  ]);
+  for (const { data: products, error: prodError } of productPages) {
     if (prodError) throw prodError;
     for (const p of (products ?? []) as unknown as { id: string; name: string; price: number; categories: { name: string } | null }[]) productById.set(p.id, p);
-  }
-
-  // Unit Cost is each product's current cost (see getEffectiveProductCost), so
-  // it reads the same whichever date range is viewed. Looked up a few products
-  // at a time -- every lookup is several queries.
-  const currentCostByProduct = new Map<string, number | null>();
-  for (let i = 0; i < productIds.length; i += 25) {
-    await Promise.all(
-      productIds.slice(i, i + 25).map(async (id) => {
-        currentCostByProduct.set(id, await getEffectiveProductCost(id).catch(() => null));
-      })
-    );
   }
 
   const byProduct = new Map<string, MarginLine[]>();
@@ -1335,13 +1370,7 @@ export async function getMarginReport(
 
   // Only a row with no recorded cost at all (sold before costs were tracked)
   // gets the product's current Stock cost, as a suggestion for "Add cost price".
-  await Promise.all(
-    rows
-      .filter((r) => r.unitCost === null)
-      .map(async (r) => {
-        r.suggestedCost = await getEffectiveProductCost(r.productId).catch(() => null);
-      })
-  );
+  for (const r of rows) if (r.unitCost === null) r.suggestedCost = currentCostByProduct.get(r.productId) ?? null;
 
   return rows.sort((a, b) => b.revenue - a.revenue);
 }

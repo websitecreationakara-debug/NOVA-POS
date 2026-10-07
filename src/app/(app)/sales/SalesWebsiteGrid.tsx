@@ -9,6 +9,7 @@ import type {
   WebsiteProductVariation,
 } from "@/lib/websiteProducts/types";
 import { listSellableWebsiteProductsAction } from "../stock/websiteActions";
+import { formatUsd } from "@/lib/formatNumber";
 
 // useLayoutEffect on the client, useEffect on the server (avoids the SSR warning).
 const useIsoLayoutEffect = typeof window !== "undefined" ? useLayoutEffect : useEffect;
@@ -23,7 +24,7 @@ const POLL_INTERVAL_MS = 15_000;
 const PAGE_SIZE = 12;
 
 function formatMoney(n: number) {
-  return `$${n.toFixed(2)}`;
+  return formatUsd(n);
 }
 
 // Cheap "did anything move" check so a poll that returns identical data doesn't

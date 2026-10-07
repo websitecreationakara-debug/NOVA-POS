@@ -2,9 +2,10 @@
 
 import { useRouter } from "next/navigation";
 import type { DashboardStats } from "@/lib/supabase/queries";
+import { formatUsd } from "@/lib/formatNumber";
 
 function formatMoney(n: number) {
-  return `$${n.toFixed(2)}`;
+  return formatUsd(n);
 }
 
 // Whole-row navigation needs a click handler, so this one slice of the

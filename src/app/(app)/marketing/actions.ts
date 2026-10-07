@@ -24,6 +24,7 @@ import {
 } from "@/lib/productInsight";
 import { buildXlsx, type XlsxCell, type XlsxColumn } from "@/lib/xlsxWriter";
 import { tally } from "@/lib/crmCharts";
+import { readAllPages } from "@/lib/supabase/readAllPages";
 import {
   buildPeriod,
   normalizeAnchor,
@@ -51,41 +52,6 @@ export async function requireMarketingAccess() {
 async function requireCrmAccess() {
   const caller = await getSessionUser();
   if (caller?.role !== "sales") await requireMarketingAccess();
-}
-
-// Every row of a query, read in parallel pages of 1000 (the database's per-request
-// cap). The first 8 pages are asked for at once -- enough for most tables, so no
-// separate count round trip comes first (a page past the end comes back as
-// PostgREST's "range not satisfiable" error, which just means no more rows) -- and if the first page's exact count says
-// there are more, the rest are asked for together. The query needs a stable
-// .order() and { count: "exact" }, and is rebuilt per page (range() mutates it).
-async function readAllPages<T>(
-  makeQuery: () => {
-    range(
-      from: number,
-      to: number
-    ): PromiseLike<{ data: unknown[] | null; count: number | null; error: { message: string; code?: string } | null }>;
-  }
-): Promise<T[]> {
-  const PAGE = 1000;
-  const FIRST = 8;
-  const fetchPages = (from: number, to: number) =>
-    Promise.all(
-      Array.from({ length: to - from }, (_, i) => makeQuery().range((from + i) * PAGE, (from + i) * PAGE + PAGE - 1))
-    );
-  const out: T[] = [];
-  const take = (pages: Awaited<ReturnType<typeof fetchPages>>) => {
-    for (const page of pages) {
-      if (page.error?.code === "PGRST103") continue;
-      if (page.error) throw new Error(page.error.message);
-      out.push(...((page.data ?? []) as T[]));
-    }
-  };
-  const first = await fetchPages(0, FIRST);
-  take(first);
-  const total = Math.ceil((first[0].count ?? 0) / PAGE);
-  if (total > FIRST) take(await fetchPages(FIRST, total));
-  return out;
 }
 
 // Everything the CRM Charts page shows, for one period (a day, week, month, year
@@ -124,11 +90,11 @@ export async function getCrmChartDataAction(input: {
   // The customers and every period's orders are independent, so read them all at
   // the same time instead of one after another.
   const [customerRows, orderSets] = await Promise.all([
-    readAllPages<Row>(() =>
+    readAllPages<Row>((withCount) =>
       supabaseAdmin
         .from("customers")
         .select("id, name, phone, second_phone, state, gender, age, nationality, capital, customer_since, created_at", {
-          count: "exact",
+          count: withCount ? "exact" : undefined,
         })
         .order("id")
     ),
@@ -193,10 +159,10 @@ async function fetchPeriodOrders(from: string | null, to: string): Promise<Perio
     list_at: string | null;
     paid_at: string | null;
   };
-  const rows = await readAllPages<Row>(() => {
+  const rows = await readAllPages<Row>((withCount) => {
     let q = supabaseAdmin
       .from("orders")
-      .select("id, customer_id, customer_phone, subtotal, list_at, paid_at", { count: "exact" })
+      .select("id, customer_id, customer_phone, subtotal, list_at, paid_at", { count: withCount ? "exact" : undefined })
       .neq("status", "voided")
       .neq("fulfillment_status", "cancelled")
       .lte("list_at", ppDayEnd(to));

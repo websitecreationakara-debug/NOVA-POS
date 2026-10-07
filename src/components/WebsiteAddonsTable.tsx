@@ -20,6 +20,7 @@ import {
 } from "@/lib/websiteProducts/purchaseCosts";
 import DeleteWebsiteAddonDialog from "@/components/DeleteWebsiteAddonDialog";
 import { ENGLISH_SCALES, KHMER_SCALES } from "@/lib/khmerScales";
+import { formatUsd } from "@/lib/formatNumber";
 
 const fieldInputClass =
   "rounded border border-black/[.15] bg-transparent px-2.5 py-1.5 text-sm outline-none focus:border-black/40 dark:border-white/[.2] dark:focus:border-white/50";
@@ -36,7 +37,7 @@ const emptyForm: WebsiteAddonWrite = {
 const PAGE_SIZE_OPTIONS = [10, 25, 50];
 
 function formatMoney(n: number) {
-  return `$${n.toFixed(2)}`;
+  return formatUsd(n);
 }
 
 type CostField = "original" | "total10" | "extra" | "total";

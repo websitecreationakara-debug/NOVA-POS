@@ -29,6 +29,7 @@ import {
 } from "./actions";
 import type { StockAdjustmentCategory } from "@/types/database";
 import WebsiteProductsPanel from "./WebsiteProductsPanel";
+import { formatUsd } from "@/lib/formatNumber";
 
 type SiteProductCandidate = { id: string; title: string; stock: number | null; type: string };
 
@@ -938,7 +939,7 @@ export default function StockClient({
                   </td>
                   <td className="px-3 py-2">
                     <div className="flex items-center gap-1">
-                      <span>${p.price.toFixed(2)}</span>
+                      <span>{formatUsd(p.price)}</span>
                       <span className="text-zinc-400">/ {p.unit}</span>
                     </div>
                   </td>
@@ -946,7 +947,7 @@ export default function StockClient({
                     {p.cost_price === null ? (
                       <div className="text-xs text-amber-500">⚠ No cost price</div>
                     ) : (
-                      <span>${p.cost_price.toFixed(2)}</span>
+                      <span>{formatUsd(p.cost_price)}</span>
                     )}
                     <Link
                       href="/accountance?tab=cogs"

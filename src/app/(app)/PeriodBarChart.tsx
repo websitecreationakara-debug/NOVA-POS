@@ -12,6 +12,7 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
+import { formatCount, formatUsd } from "@/lib/formatNumber";
 
 type Range = "day" | "month" | "year";
 type Metric = "money" | "count";
@@ -77,13 +78,13 @@ const METRIC = {
   money: {
     barColor: "var(--chart-revenue)",
     allowDecimalTicks: true,
-    formatValue: (n: number) => `$${n.toFixed(2)}`,
+    formatValue: (n: number) => formatUsd(n),
     formatTick: (n: number) => `$${new Intl.NumberFormat("en", { notation: "compact" }).format(n)}`,
   },
   count: {
     barColor: "var(--chart-orders)",
     allowDecimalTicks: false,
-    formatValue: (n: number) => `${n} order${n === 1 ? "" : "s"}`,
+    formatValue: (n: number) => `${formatCount(n)} order${n === 1 ? "" : "s"}`,
     formatTick: (n: number) => new Intl.NumberFormat("en", { notation: "compact" }).format(n),
   },
 };

@@ -11,11 +11,12 @@ import { notifyOrdersChanged } from "@/lib/ordersChanged";
 import { COUNTED_FULFILLMENT_STATUSES, FULFILLMENT_STATUSES, STATUS_LABELS } from "@/lib/orderStatus";
 import OrderStatusControl from "@/components/OrderStatusControl";
 import OrderRowMenu from "@/components/OrderRowMenu";
+import { formatCount, formatUsd } from "@/lib/formatNumber";
 
 const PAGE_SIZE_OPTIONS = [10, 25, 50];
 
 function formatMoney(n: number) {
-  return `$${n.toFixed(2)}`;
+  return formatUsd(n);
 }
 
 // "10/4/2026" -- the Phnom Penh day an order was placed.
@@ -341,7 +342,7 @@ export default function OrdersTable({
           </button>
         )}
         <span className="ml-auto text-xs text-muted-foreground">
-          {total} {hasFilter || activeStatus ? "matching" : total === 1 ? "order" : "orders"}
+          {formatCount(total)} {hasFilter || activeStatus ? "matching" : total === 1 ? "order" : "orders"}
         </span>
       </div>
 

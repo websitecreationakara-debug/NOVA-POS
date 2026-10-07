@@ -8,9 +8,10 @@ import { updateOrderAction } from "@/app/(app)/orders/actions";
 import { notifyOrdersChanged } from "@/lib/ordersChanged";
 import { PAYMENT_METHOD_LABELS, type PaymentMethod } from "@/lib/paymentMethods";
 import { khmerNameWeight } from "@/lib/weight";
+import { formatUsd } from "@/lib/formatNumber";
 
 function formatMoney(n: number) {
-  return `$${n.toFixed(2)}`;
+  return formatUsd(n);
 }
 
 // "YYYY-MM-DDTHH:MM" local value for <input type="datetime-local">, from an

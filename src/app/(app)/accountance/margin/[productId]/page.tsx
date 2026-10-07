@@ -2,12 +2,13 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ALL_BUSINESSES_ID, getBrands, getProductMarginDetail } from "@/lib/supabase/queries";
 import { ppToday } from "@/lib/phnomPenhTime";
+import { formatUsd } from "@/lib/formatNumber";
 
 const DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
 const SALES_SHOWN = 200;
 
 function formatMoney(n: number) {
-  return `$${n.toFixed(2)}`;
+  return formatUsd(n);
 }
 
 function formatWhen(iso: string | null) {
