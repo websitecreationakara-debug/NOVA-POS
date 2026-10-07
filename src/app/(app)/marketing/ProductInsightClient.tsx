@@ -61,6 +61,22 @@ export default function ProductInsightClient({
   const pairMax = insight.pairs[0]?.count ?? 1;
   const brandName = brands.find((b) => b.id === brandId)?.name;
 
+  // Each number opens the data behind it: Sales / Units sold -> the by-product
+  // tables (for the year of the period's last day), Orders -> the Orders list for
+  // the same days and business.
+  const tableHref = (view: "price" | "quantity") =>
+    `/marketing?${new URLSearchParams({
+      tab: "product-insight",
+      view,
+      year: to.slice(0, 4),
+      ...(brandId ? { brand: brandId } : {}),
+    })}`;
+  const ordersHref = `/orders?${new URLSearchParams({
+    ...(brandId ? { brand: brandId } : {}),
+    ...(from ? { from } : {}),
+    to,
+  })}`;
+
   // The quantity / price tables are their own loads (a whole year of sales).
   function openView(view: InsightView) {
     if (view === "overview") return;
@@ -143,14 +159,32 @@ export default function ProductInsightClient({
       </div>
 
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <Kpi icon={TrendingUp} label="Sales" value={money(insight.revenue)} tint="#2b7fc4" note="Item prices, before discounts" />
-        <Kpi icon={Boxes} label="Units sold" value={num(insight.units)} tint="#0891b2" note={`${num(insight.products)} different products`} />
+        <Kpi
+          icon={TrendingUp}
+          label="Sales"
+          value={money(insight.revenue)}
+          tint="#2b7fc4"
+          note="Item prices, before discounts"
+          href={tableHref("price")}
+          hrefLabel="Sales by product"
+        />
+        <Kpi
+          icon={Boxes}
+          label="Units sold"
+          value={num(insight.units)}
+          tint="#0891b2"
+          note={`${num(insight.products)} different products`}
+          href={tableHref("quantity")}
+          hrefLabel="Units by product"
+        />
         <Kpi
           icon={Receipt}
           label="Orders"
           value={num(insight.orders)}
           tint="#7c5cbf"
           note={insight.orders ? `${money(avgOrder)} average per order` : undefined}
+          href={ordersHref}
+          hrefLabel="View orders"
         />
         <Kpi
           icon={Crown}
