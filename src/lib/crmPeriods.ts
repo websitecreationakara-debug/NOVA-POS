@@ -20,7 +20,8 @@ export const GRANULARITY_LABELS: Record<Granularity, string> = {
 };
 
 export function parseGranularity(v: string | undefined): Granularity {
-  return v && v in GRANULARITY_LABELS ? (v as Granularity) : "all";
+  // The page opens on the current day; "All time" is asked for explicitly (g=all).
+  return v && v in GRANULARITY_LABELS ? (v as Granularity) : "day";
 }
 
 const WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];

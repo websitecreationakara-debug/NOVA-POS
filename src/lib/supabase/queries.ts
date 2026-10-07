@@ -255,13 +255,6 @@ export type DashboardStats = {
     dailyRevenue: { date: string; total: number }[];
     dailyOrders: { date: string; total: number }[];
   }[];
-  recentOrders: {
-    id: string;
-    brandName: string;
-    status: string;
-    total: number;
-    paidAt: string | null;
-  }[];
   // Best sellers in the selected range: branches ranked by revenue, top 10
   // products ranked by units sold.
   topBranches: { name: string; revenue: number; orders: number }[];
@@ -368,7 +361,6 @@ type OrderDayRow = {
 type DashboardStatsRow = {
   order_days: OrderDayRow[];
   product_count: number;
-  recent_orders: { id: string; brand_name: string | null; status: string; total: number; paid_at: string | null }[];
   top_products: { name: string | null; quantity: number; revenue: number }[];
   known_cogs: number;
   uncosted_lines: { product_id: string; quantity: number }[];
@@ -505,14 +497,6 @@ export async function getDashboardStats(
     };
   });
 
-  const recentOrders = stats.recent_orders.map((o) => ({
-    id: o.id,
-    brandName: o.brand_name ?? "—",
-    status: o.status,
-    total: Number(o.total),
-    paidAt: o.paid_at,
-  }));
-
   return {
     totalRevenue,
     orderCount,
@@ -520,7 +504,6 @@ export async function getDashboardStats(
     dailyRevenue,
     dailyOrders,
     byBrand,
-    recentOrders,
     topBranches,
     topProducts,
     totalCogs,

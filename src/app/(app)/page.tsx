@@ -22,6 +22,7 @@ import {
   getBrands,
   getDashboardStats,
   getLowStockCount,
+  getOrdersList,
   TOP_PRODUCT_MIN_PRICE,
   getWebsiteProductTotal,
 } from "@/lib/supabase/queries";
@@ -164,7 +165,14 @@ export default async function Home({
 
   // The brand list and the stats don't depend on each other, so start them
   // together (optimistically trusting ?brand=) instead of one after the other.
-  const [brands, first] = await Promise.all([getBrands(), loadStats(brandParam ?? ALL_BUSINESSES_ID)]);
+  // Recent Orders are the Orders page's own rows (newest 5), for the same business.
+  const loadRecent = (brandId: string) =>
+    getOrdersList({ brandId: brandId === ALL_BUSINESSES_ID ? undefined : brandId, limit: 5 });
+  const [brands, first, firstRecent] = await Promise.all([
+    getBrands(),
+    loadStats(brandParam ?? ALL_BUSINESSES_ID),
+    loadRecent(brandParam ?? ALL_BUSINESSES_ID),
+  ]);
   // Same fixed display order as the chips themselves (see brandsOrdered
   // below) -- an unrecognized/stale ?brand= falls back to "All Business"
   // rather than erroring.
@@ -172,8 +180,10 @@ export default async function Home({
     brandParam === ALL_BUSINESSES_ID || brands.some((b) => b.id === brandParam)
       ? (brandParam ?? ALL_BUSINESSES_ID)
       : ALL_BUSINESSES_ID;
-  const { stats, topStats } =
-    currentBrandId === (brandParam ?? ALL_BUSINESSES_ID) ? first : await loadStats(currentBrandId);
+  const brandMatches = currentBrandId === (brandParam ?? ALL_BUSINESSES_ID);
+  const [{ stats, topStats }, recent] = brandMatches
+    ? [first, firstRecent]
+    : await Promise.all([loadStats(currentBrandId), loadRecent(currentBrandId)]);
   const topPeriod = rangeLabel(topRange.fromDate, topRange.toDate);
 
   // Same brand order as the header chips, not whatever order orders happened
@@ -473,7 +483,7 @@ export default async function Home({
         businesses={ordersByBusiness}
       />
 
-      <section className="overflow-hidden rounded-2xl border border-border bg-card">
+      <section id="recent-orders" className="scroll-mt-4 overflow-hidden rounded-2xl border border-border bg-card">
         <div className="border-b border-border px-4 py-4 sm:px-6">
           <h2 className="font-display font-bold">Recent Orders</h2>
         </div>
@@ -483,14 +493,17 @@ export default async function Home({
         <table className="w-full text-sm">
           <thead className="bg-muted text-[11px] font-bold tracking-wider text-muted-foreground uppercase sm:text-xs sm:tracking-widest">
             <tr>
-              <th className="py-3 pr-2 pl-4 text-left sm:px-6">Order</th>
-              <th className="px-2 py-3 text-left sm:px-3">Brand</th>
-              <th className="px-2 py-3 text-left sm:px-3">Payment</th>
-              <th className="py-3 pr-4 pl-2 text-right sm:px-6">Total</th>
+              <th className="py-3 pr-2 pl-4 text-left sm:px-6">Invoice</th>
+              <th className="px-2 py-3 text-left sm:px-3">Business</th>
+              <th className="px-2 py-3 text-left sm:px-3">Customer</th>
+              <th className="hidden px-2 py-3 text-left sm:px-3 lg:table-cell">Phone</th>
+              <th className="px-2 py-3 text-right sm:px-3">Total</th>
+              <th className="px-2 py-3 text-left sm:px-3">Status</th>
+              <th className="py-3 pr-4 pl-2 text-left sm:px-6">Date</th>
             </tr>
           </thead>
           <tbody>
-            <RecentOrdersRows orders={stats.recentOrders} />
+            <RecentOrdersRows orders={recent.rows} />
           </tbody>
         </table>
         </div>
