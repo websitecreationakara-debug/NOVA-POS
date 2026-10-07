@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { ALL_BUSINESSES_ID } from "@/lib/supabase/queries";
@@ -73,6 +73,19 @@ export default function DashboardRangeBar({
     }
     return `/?${params.toString()}`;
   }
+
+  // First visit to a bare "/" -> put the range actually in effect (business + mode +
+  // dates) in the address, so it can be reloaded or shared as is. No refetch, no
+  // history entry. Only the page-wide bar: the "top_" bar must not switch its
+  // own filter on just by existing.
+  useEffect(() => {
+    if (paramPrefix) return;
+    const target = urlFor({});
+    if (window.location.pathname + window.location.search !== target) {
+      window.history.replaceState(window.history.state, "", target);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [paramPrefix, brandId, mode, week, month, quarter, year, fromDate, toDate]);
 
   function switchBrand(newBrandId: string) {
     router.push(urlFor({ brand: newBrandId }), { scroll: false });
