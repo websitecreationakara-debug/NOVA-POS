@@ -24,6 +24,10 @@ export type SalesWebsiteCatalog = {
   categories: { id: string; label: string }[];
 };
 
+// What the page knows at once (static config); the products and live category
+// list stream in after, see websiteCatalogPromise.
+export type SalesWebsiteMeta = { id: WebsiteCatalogId; label: string };
+
 export default async function SalesPage({
   searchParams,
 }: {
@@ -47,6 +51,56 @@ export default async function SalesPage({
   // the known default brand's slug so it doesn't need getBrands() to resolve
   // an id first. Either way, only falls back to a second fetch below if the
   // guess turns out to be wrong/stale.
+  //
+  // The brand's storefront catalog, pulled live from its own products API (same
+  // source the Stock > Website tab uses). Failures here never block the sale
+  // screen -- they surface inside the grid. Add-ons (if this storefront has that
+  // endpoint configured) ride along as their own sellable entries under a
+  // synthetic "Addon" chip -- a failure fetching those alone never blocks
+  // regular products, it just means no add-ons show up this load. It is NOT
+  // awaited here: the page streams it in (see SalesClient) so the rest of the
+  // screen doesn't wait on the live storefront.
+  const loadWebsiteCatalog = (
+    catalog: ReturnType<typeof catalogForBrandSlug>
+  ): Promise<SalesWebsiteCatalog | null> => {
+    // Same "prefer the storefront's own live category list, fall back to the
+    // hand-maintained one in catalogs.ts" rule Stock's Website tab already
+    // uses (see WebsiteProductsPanel's categoryOptions) -- without this, Sales
+    // was stuck on the old hardcoded list even after categories were
+    // added/renamed/removed on the live site.
+    const liveCategoriesPromise = catalog ? listWebsiteCategories(catalog.id).catch(() => []) : Promise.resolve([]);
+    return catalog
+      ? Promise.all([listSellableWebsiteProducts(catalog.id), liveCategoriesPromise])
+          .then(([{ products, addonCount }, liveCategories]) => {
+            const baseCategories =
+              liveCategories.length > 0
+                ? liveCategories.map((c) => ({ id: c.id, label: c.name }))
+                : (catalog.categories ?? []);
+            return {
+              id: catalog.id,
+              label: catalog.label,
+              products,
+              error: null,
+              categories:
+                addonCount > 0
+                  ? [...baseCategories, { id: ADDON_CATEGORY_ID, label: "Addon" }]
+                  : baseCategories,
+            };
+          })
+          .catch((e) => ({
+            id: catalog.id,
+            label: catalog.label,
+            products: null,
+            error: e instanceof Error ? e.message : "Failed to load",
+            categories: catalog.categories ?? [],
+          }))
+      : Promise.resolve(null);
+  };
+  // The usual visit (sidebar link, no ?brand=) sells from the default brand: start its
+  // storefront fetch now, alongside getBrands(), instead of after it.
+  const earlyWebsiteCatalog = !effectiveBrandId
+    ? loadWebsiteCatalog(catalogForBrandSlug(DEFAULT_BRAND_SLUG))
+    : null;
   const brandsPromise = getBrands();
   const optimisticCatalogPromise = effectiveBrandId
     ? getCatalogForBrand(effectiveBrandId)
@@ -70,46 +124,12 @@ export default async function SalesPage({
     ? currentBrand.id === effectiveBrandId
     : currentBrand.slug === DEFAULT_BRAND_SLUG;
 
-  // The brand's storefront catalog, pulled live from its own products API (same
-  // source the Stock > Website tab uses). Kick the fetch off in parallel with
-  // the Supabase catalog; failures here never block the sale screen -- they
-  // surface inside the Website tab. Add-ons (if this storefront has that
-  // endpoint configured) ride along as their own sellable entries under a
-  // synthetic "Addon" chip -- a failure fetching those alone never blocks
-  // regular products, it just means no add-ons show up this load.
   const catalog = catalogForBrandSlug(currentBrand.slug);
-  // Same "prefer the storefront's own live category list, fall back to the
-  // hand-maintained one in catalogs.ts" rule Stock's Website tab already
-  // uses (see WebsiteProductsPanel's categoryOptions) -- without this, Sales
-  // was stuck on the old hardcoded list even after categories were
-  // added/renamed/removed on the live site.
-  const liveCategoriesPromise = catalog ? listWebsiteCategories(catalog.id).catch(() => []) : Promise.resolve([]);
-  const websiteCatalogPromise: Promise<SalesWebsiteCatalog | null> = catalog
-    ? Promise.all([listSellableWebsiteProducts(catalog.id), liveCategoriesPromise])
-        .then(([{ products, addonCount }, liveCategories]) => {
-          const baseCategories =
-            liveCategories.length > 0
-              ? liveCategories.map((c) => ({ id: c.id, label: c.name }))
-              : (catalog.categories ?? []);
-          return {
-            id: catalog.id,
-            label: catalog.label,
-            products,
-            error: null,
-            categories:
-              addonCount > 0
-                ? [...baseCategories, { id: ADDON_CATEGORY_ID, label: "Addon" }]
-                : baseCategories,
-          };
-        })
-        .catch((e) => ({
-          id: catalog.id,
-          label: catalog.label,
-          products: null,
-          error: e instanceof Error ? e.message : "Failed to load",
-          categories: catalog.categories ?? [],
-        }))
-    : Promise.resolve(null);
+  // Reuse the early start when the guess (default brand, no ?brand=) was right.
+  const websiteCatalogPromise =
+    earlyWebsiteCatalog && !effectiveBrandId && currentBrand.slug === DEFAULT_BRAND_SLUG
+      ? earlyWebsiteCatalog
+      : loadWebsiteCatalog(catalog);
 
   const { categories, products: allProducts } = optimisticIsValid
     ? await optimisticCatalogPromise
@@ -117,7 +137,6 @@ export default async function SalesPage({
   // Ingredients (recipe components/packaging) are managed in Stock but
   // aren't sold on their own -- keep them out of the checkout grid.
   const products = allProducts.filter((p) => !p.is_ingredient);
-  const websiteCatalog = await websiteCatalogPromise;
 
   const editOrder: EditOrderSeed | null = editInvoice
     ? {
@@ -156,7 +175,8 @@ export default async function SalesPage({
       currentBrand={currentBrand}
       categories={categories}
       products={products}
-      websiteCatalog={websiteCatalog}
+      websiteCatalog={catalog ? { id: catalog.id, label: catalog.label } : null}
+      websiteCatalogPromise={websiteCatalogPromise}
       initialSearch={q ?? ""}
       editOrder={editOrder}
     />

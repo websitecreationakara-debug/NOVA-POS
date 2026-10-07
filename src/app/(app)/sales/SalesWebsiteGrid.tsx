@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { useSearchParams } from "next/navigation";
 import { ChevronLeft, ChevronRight, UtensilsCrossed } from "lucide-react";
 import type {
@@ -67,6 +67,94 @@ function toEntries(list: WebsiteProduct[]): Entry[] {
     }
   }
   return out;
+}
+
+// --- Instant preview ---------------------------------------------------------
+// The live storefront catalog takes a moment to arrive. The grid remembers the
+// first page it showed (in this browser only) and SalesGridPreview paints it at
+// once, read-only, until the live grid replaces it -- so opening Sales never starts
+// from a blank screen. Never used for selling: prices/stock come from the live data.
+type PreviewCard = { key: string; title: string; option: string | null; image: string | null; price: number; sale: number | null };
+type PreviewData = { chips: string[]; cards: PreviewCard[] };
+const previewKey = (catalogId: string) => `nova-pos:sales-preview:${catalogId}`;
+
+function savePreview(catalogId: string, categories: { label: string }[], cards: PreviewCard[]) {
+  try {
+    const data: PreviewData = { chips: categories.map((c) => c.label), cards };
+    window.localStorage.setItem(previewKey(catalogId), JSON.stringify(data));
+  } catch {
+    // private window / storage full: no preview next time, nothing else changes
+  }
+}
+
+function readPreviewRaw(catalogId: string): string | null {
+  try {
+    return window.localStorage.getItem(previewKey(catalogId));
+  } catch {
+    return null;
+  }
+}
+const noSubscribe = () => () => {};
+
+export function SalesGridPreview({ catalogId }: { catalogId: WebsiteCatalogId }) {
+  // Nothing on the server (and while hydrating); the browser's saved copy after.
+  const raw = useSyncExternalStore(
+    noSubscribe,
+    () => readPreviewRaw(catalogId),
+    () => null
+  );
+  const data = useMemo<PreviewData | null>(() => {
+    try {
+      return raw ? (JSON.parse(raw) as PreviewData) : null;
+    } catch {
+      return null;
+    }
+  }, [raw]);
+
+  return (
+    <main className="pointer-events-none flex-none p-3 select-none sm:p-6 lg:flex-1 lg:overflow-y-auto" aria-busy="true">
+      <div className="mb-4 flex flex-wrap gap-2">
+        {data && data.chips.length > 0 ? (
+          <>
+            <span className="rounded-full border border-black bg-black px-3 py-1 text-xs text-white dark:border-white dark:bg-white dark:text-black">
+              All
+            </span>
+            {data.chips.map((label) => (
+              <span key={label} className="rounded-full border border-black/[.15] px-3 py-1 text-xs dark:border-white/[.2]">
+                {label}
+              </span>
+            ))}
+          </>
+        ) : (
+          Array.from({ length: 8 }, (_, i) => <div key={i} className="h-7 w-24 animate-pulse rounded-full bg-muted" />)
+        )}
+      </div>
+      <div className="mb-4 flex items-center justify-end gap-3">
+        <span className="text-xs text-zinc-400">Updating prices and stock…</span>
+        <div className="h-8 w-64 rounded border border-black/[.15] dark:border-white/[.2]" />
+      </div>
+      <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
+        {data && data.cards.length > 0
+          ? data.cards.map((c) => (
+              <div key={c.key} className="flex flex-col items-start rounded-xl border border-black/[.08] p-3 opacity-80 dark:border-white/[.145]">
+                <div className="relative mb-2.5 aspect-square w-full overflow-hidden rounded-lg bg-zinc-100 dark:bg-zinc-800">
+                  {c.image && (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={c.image} alt="" className="h-full w-full object-cover" />
+                  )}
+                </div>
+                <div className="line-clamp-2 h-12 leading-6 font-medium">{c.title}</div>
+                <div className="mt-1 flex min-h-6 items-center text-xs text-zinc-400">{c.option}</div>
+                <div className="text-sm font-semibold text-foreground">{formatMoney(c.sale ?? c.price)}</div>
+                <div className="mt-1 h-4" />
+              </div>
+            ))
+          : Array.from({ length: 12 }, (_, i) => (
+              <div key={i} className="h-[22rem] animate-pulse rounded-2xl border border-border bg-muted/50" />
+            ))}
+      </div>
+    </main>
+  );
 }
 
 export default function SalesWebsiteGrid({
@@ -250,6 +338,31 @@ export default function SalesWebsiteGrid({
     params.set("limit", String(PAGE_SIZE));
     window.history.replaceState(null, "", `/sales?${params.toString()}`);
   }, [currentPage]);
+
+  // Remember the unfiltered first page for next time's instant preview.
+  const firstPageCards =
+    products && !q && activeCategoryId === "all" && currentPage === 1 ? paged : null;
+  const firstPageSig = firstPageCards?.map((e) => e.key).join("|") ?? "";
+  useEffect(() => {
+    if (!firstPageCards || firstPageCards.length === 0) return;
+    savePreview(
+      catalogId,
+      categories,
+      firstPageCards.map(({ product: p, variation: v, key }) => {
+        const sale = v ? v.sale_price : p.sale_price;
+        const price = v ? v.price : p.price;
+        return {
+          key,
+          title: p.title,
+          option: v ? (v.weight?.trim() || v.flavor?.trim() || null) : (p.weight?.trim() || null),
+          image: v?.image_url ?? p.image_url ?? null,
+          price,
+          sale: sale != null && sale < price ? sale : null,
+        };
+      })
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [catalogId, firstPageSig]);
 
   // After the paged grid re-renders, restore the pager to the same on-screen
   // spot it was at when clicked, so the view doesn't jump up or down.
