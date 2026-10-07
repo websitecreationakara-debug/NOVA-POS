@@ -266,6 +266,12 @@ export default function SalesWebsiteGrid({
 
   return (
     <main ref={scrollerRef} className="flex-none p-3 sm:p-6 lg:flex-1 lg:overflow-y-auto">
+      {/* On a wide screen the categories and the search stay pinned at the top while the
+          products scroll underneath, looking exactly as they do unpinned. top is
+          -1.5rem because a sticky offset starts inside the page's padding; the negative
+          margins + padding let the background cover that padding, so no card shows
+          above or beside it. */}
+      <div className="lg:sticky lg:top-[-1.5rem] lg:z-10 lg:-mx-6 lg:-mt-6 lg:mb-1 lg:bg-background lg:px-6 lg:pt-6 lg:pb-1">
       {showChips && (
         // Plain wrap, no cap/collapse -- same as Stock's Website tab.
         <div className="mb-4 flex flex-wrap gap-2">
@@ -315,6 +321,7 @@ export default function SalesWebsiteGrid({
           onChange={(e) => setSearch(e.target.value)}
           className="w-64 rounded border border-black/[.15] bg-transparent px-3 py-1.5 text-sm dark:border-white/[.2]"
         />
+      </div>
       </div>
 
       {loadError && <p className="mb-4 text-sm text-red-500">{loadError}</p>}
