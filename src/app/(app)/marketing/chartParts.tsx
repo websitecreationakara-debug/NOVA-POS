@@ -155,7 +155,7 @@ export function Donut({
                 <Cell key={d.name} fill={d.name === "Unknown" || d.name === "Other" ? MUTED : PALETTE[i % PALETTE.length]} />
               ))}
             </Pie>
-            <Tooltip content={<Tip unit={unit} />} />
+            <Tooltip wrapperStyle={{ zIndex: 10 }} content={<Tip unit={unit} />} />
           </PieChart>
         </ResponsiveContainer>
         <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">

@@ -18,9 +18,9 @@ const useIsoLayoutEffect = typeof window !== "undefined" ? useLayoutEffect : use
 // or by another POS user.
 const POLL_INTERVAL_MS = 15_000;
 
-// Two rows of the lg:grid-cols-4 grid. Once a filtered view has more than this,
+// Three rows of the lg:grid-cols-4 grid. Once a filtered view has more than this,
 // it's paged so the cashier never scrolls a long wall of products.
-const PAGE_SIZE = 8;
+const PAGE_SIZE = 12;
 
 function formatMoney(n: number) {
   return `$${n.toFixed(2)}`;
