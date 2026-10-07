@@ -7,7 +7,7 @@
 // day the Orders list files them under. Sales = the lines' item prices, i.e.
 // before any order-level discount or delivery fee.
 
-export type InsightRange = "today" | "7d" | "30d" | "month" | "year" | "all";
+export type InsightRange = "today" | "7d" | "30d" | "month" | "year" | "all" | "custom";
 
 export const INSIGHT_RANGE_LABELS: Record<InsightRange, string> = {
   today: "Today",
@@ -16,6 +16,7 @@ export const INSIGHT_RANGE_LABELS: Record<InsightRange, string> = {
   month: "This month",
   year: "This year",
   all: "All time",
+  custom: "Custom",
 };
 
 export function parseInsightRange(v: string | undefined): InsightRange {
@@ -28,10 +29,23 @@ export function addDays(ymd: string, n: number): string {
   return d.toISOString().slice(0, 10);
 }
 
+const isDay = (v: string | undefined): v is string =>
+  !!v && /^\d{4}-\d{2}-\d{2}$/.test(v) && new Date(`${v}T00:00:00Z`).toISOString().slice(0, 10) === v;
+
 // The first and last day (YYYY-MM-DD, inclusive) of a range ending `today`;
-// `from` is null for "all time".
-export function insightBounds(range: InsightRange, today: string): { from: string | null; to: string } {
+// `from` is null for "all time". "custom" uses the two days picked (either order);
+// a missing or invalid one falls back to the start of this month / today.
+export function insightBounds(
+  range: InsightRange,
+  today: string,
+  custom?: { from?: string; to?: string }
+): { from: string | null; to: string } {
   switch (range) {
+    case "custom": {
+      const from = isDay(custom?.from) ? custom.from : `${today.slice(0, 8)}01`;
+      const to = isDay(custom?.to) ? custom.to : today;
+      return from <= to ? { from, to } : { from: to, to: from };
+    }
     case "today":
       return { from: today, to: today };
     case "7d":

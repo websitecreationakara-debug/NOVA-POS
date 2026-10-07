@@ -31,10 +31,22 @@ export default function ProductInsightClient({
   const router = useRouter();
 
   // The period and business live in the page address, so a view can be reloaded or shared.
-  function go(patch: { range?: InsightRange; brand?: string }) {
+  function go(patch: { range?: InsightRange; brand?: string; from?: string; to?: string }) {
     const params = new URLSearchParams(window.location.search);
     params.set("tab", "product-insight");
     if (patch.range) params.set("range", patch.range);
+    // The picked days only mean something for "Custom"; the other ranges drop them.
+    if (patch.range === "custom") {
+      params.set("from", patch.from ?? from ?? to);
+      params.set("to", patch.to ?? to);
+    } else if (patch.range) {
+      params.delete("from");
+      params.delete("to");
+    } else if (patch.from || patch.to) {
+      params.set("range", "custom");
+      params.set("from", patch.from ?? from ?? to);
+      params.set("to", patch.to ?? to);
+    }
     if (patch.brand !== undefined) {
       if (patch.brand) params.set("brand", patch.brand);
       else params.delete("brand");
@@ -56,6 +68,8 @@ export default function ProductInsightClient({
     params.set("tab", "product-insight");
     params.set("view", view);
     params.delete("range");
+    params.delete("from");
+    params.delete("to");
     router.push(`/marketing?${params.toString()}`, { scroll: false });
   }
 
@@ -92,6 +106,27 @@ export default function ProductInsightClient({
             {INSIGHT_RANGE_LABELS[r]}
           </button>
         ))}
+        {range === "custom" && (
+          <span className="flex items-center gap-2 text-sm text-muted-foreground">
+            <input
+              type="date"
+              aria-label="From"
+              value={from ?? to}
+              max={to}
+              onChange={(e) => e.target.value && go({ from: e.target.value })}
+              className="rounded-full border border-border bg-card px-3 py-1.5 text-sm text-foreground"
+            />
+            to
+            <input
+              type="date"
+              aria-label="To"
+              value={to}
+              min={from ?? undefined}
+              onChange={(e) => e.target.value && go({ to: e.target.value })}
+              className="rounded-full border border-border bg-card px-3 py-1.5 text-sm text-foreground"
+            />
+          </span>
+        )}
         <select
           aria-label="Business"
           value={brandId}

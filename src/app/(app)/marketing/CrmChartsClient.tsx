@@ -296,7 +296,7 @@ export default function CrmChartsClient({ data }: { data: CrmChartsResult }) {
                 key={g}
                 type="button"
                 aria-pressed={gran === g}
-                onClick={() => go({ g: g === "all" ? null : g, a: null, b: null })}
+                onClick={() => go({ g, a: null, b: null })}
                 className={`rounded-lg px-3.5 py-1.5 text-sm font-medium transition-colors ${
                   gran === g ? "bg-card text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
                 }`}

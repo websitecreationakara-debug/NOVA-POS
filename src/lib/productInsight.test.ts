@@ -38,6 +38,16 @@ describe("ranges", () => {
     expect(insightBounds("month", "2026-10-06")).toEqual({ from: "2026-10-01", to: "2026-10-06" });
     expect(insightBounds("year", "2026-10-06")).toEqual({ from: "2026-01-01", to: "2026-10-06" });
     expect(insightBounds("all", "2026-10-06").from).toBeNull();
+    expect(insightBounds("custom", "2026-10-06", { from: "2026-09-01", to: "2026-09-15" })).toEqual({
+      from: "2026-09-01",
+      to: "2026-09-15",
+    });
+    // either order; a missing / invalid day falls back to this month's start / today
+    expect(insightBounds("custom", "2026-10-06", { from: "2026-09-15", to: "2026-09-01" })).toEqual({
+      from: "2026-09-01",
+      to: "2026-09-15",
+    });
+    expect(insightBounds("custom", "2026-10-06", { from: "bad" })).toEqual({ from: "2026-10-01", to: "2026-10-06" });
     expect(addDays("2026-03-01", -1)).toBe("2026-02-28");
   });
 });

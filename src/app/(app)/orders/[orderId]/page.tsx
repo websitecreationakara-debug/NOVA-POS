@@ -14,9 +14,14 @@ export default async function OrderDetailPage({
 }) {
   const { orderId } = await params;
   const { back } = await searchParams;
-  // Opened from a Margin Report product page? Then "back" goes there instead of
-  // the Orders list. Only Accounting pages are accepted (it's a query string).
-  const backToMargin = back?.startsWith("/accountance") && !back.startsWith("//") ? back : null;
+  // Opened from a Margin Report product page or the Dashboard's Recent Orders? Then
+  // "back" goes there instead of the Orders list. Only Accounting pages and the
+  // Dashboard (with its filters, and its #recent-orders spot) are accepted.
+  const safeBack = back && !back.startsWith("//") ? back : null;
+  const backToMargin = safeBack?.startsWith("/accountance") ? safeBack : null;
+  const backToDashboard =
+    safeBack === "/" || safeBack?.startsWith("/?") || safeBack?.startsWith("/#") ? safeBack : null;
+  const backHref = backToMargin ?? backToDashboard ?? "/orders";
   const [invoice, brands] = await Promise.all([getInvoice(orderId), getBrands()]);
 
   if (!invoice) notFound();
@@ -40,8 +45,8 @@ export default async function OrderDetailPage({
   return (
     <main className="mx-auto max-w-3xl p-6">
       <div className="mb-4 flex items-center justify-between">
-        <Link href={backToMargin ?? "/orders"} className="text-sm text-muted-foreground hover:underline">
-          {backToMargin ? "← Back to Margin Report" : "← Back to Orders"}
+        <Link href={backHref} className="text-sm text-muted-foreground hover:underline">
+          {backToMargin ? "← Back to Margin Report" : backToDashboard ? "← Back to Dashboard" : "← Back to Orders"}
         </Link>
         <div className="flex items-center gap-4">
           <Link href={`/invoice/${order.id}`} className="text-sm text-brand hover:underline">

@@ -255,11 +255,12 @@ async function fetchInsightLines(from: string | null, to: string, brandId: strin
 // business.
 export async function getProductInsightAction(
   range: InsightRange,
-  brandId: string
+  brandId: string,
+  custom?: { from?: string; to?: string }
 ): Promise<{ insight: ProductInsight; from: string | null; to: string }> {
   await requireMarketingAccess();
 
-  const bounds = insightBounds(range, ppToday());
+  const bounds = insightBounds(range, ppToday(), custom);
 
   // Added up in the database (migration 0070), so only the summary comes back
   // instead of every sold line.

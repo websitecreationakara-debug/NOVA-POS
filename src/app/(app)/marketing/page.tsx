@@ -39,6 +39,8 @@ export default async function MarketingPage({
     bought_to?: string;
     customer?: string;
     range?: string;
+    from?: string;
+    to?: string;
     view?: string;
     year?: string;
     g?: string;
@@ -87,7 +89,7 @@ export default async function MarketingPage({
       );
     }
     const range = parseInsightRange(sp.range);
-    const [brandList, result] = await Promise.all([getBrands(), getProductInsightAction(range, brandId)]);
+    const [brandList, result] = await Promise.all([getBrands(), getProductInsightAction(range, brandId, { from: sp.from, to: sp.to })]);
     return (
       <ProductInsightClient
         insight={result.insight}

@@ -16,9 +16,10 @@ import {
 describe("periods", () => {
   const today = "2026-10-06"; // a Tuesday
 
-  it("defaults to all time and ignores junk", () => {
-    expect(parseGranularity(undefined)).toBe("all");
-    expect(parseGranularity("hour")).toBe("all");
+  it("defaults to the day and ignores junk", () => {
+    expect(parseGranularity(undefined)).toBe("day");
+    expect(parseGranularity("hour")).toBe("day");
+    expect(parseGranularity("all")).toBe("all");
     expect(parseGranularity("week")).toBe("week");
   });
 
