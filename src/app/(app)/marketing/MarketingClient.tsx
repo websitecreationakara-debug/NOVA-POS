@@ -175,8 +175,19 @@ export default function MarketingClient({
     : customers;
 
   // Customer list pagination is server-side (?page=&limit=); changing the page
-  // size drops back to page 1.
+  // size keeps the current page number (see the "Items per page" select).
   const customerPageCount = Math.max(1, Math.ceil(customerTotal / customerLimit));
+
+  // Show the effective page + limit in the address from the first visit (not
+  // only after clicking Next), so a reload or shared link lands on the same view.
+  // No refetch, no history entry.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("page") === String(customerPage) && params.get("limit") === String(customerLimit)) return;
+    params.set("page", String(customerPage));
+    params.set("limit", String(customerLimit));
+    window.history.replaceState(window.history.state, "", `${window.location.pathname}?${params.toString()}`);
+  }, [customerPage, customerLimit]);
 
   function goToCustomerPage(page: number, limit = customerLimit) {
     const params = new URLSearchParams(window.location.search);
@@ -879,7 +890,12 @@ export default function MarketingClient({
               Items per page
               <select
                 value={customerLimit}
-                onChange={(e) => goToCustomerPage(1, Number(e.target.value))}
+                onChange={(e) => {
+                  // Stay on the same page number, unless the bigger page size
+                  // leaves fewer pages than that -- then land on the last one.
+                  const limit = Number(e.target.value);
+                  goToCustomerPage(Math.min(customerPage, Math.max(1, Math.ceil(customerTotal / limit))), limit);
+                }}
                 className="rounded border border-black/[.15] bg-card px-2 py-1 text-xs text-foreground dark:border-white/[.2]"
               >
                 {PAGE_SIZE_OPTIONS.map((n) => (

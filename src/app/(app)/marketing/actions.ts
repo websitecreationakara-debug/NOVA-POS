@@ -53,6 +53,41 @@ async function requireCrmAccess() {
   if (caller?.role !== "sales") await requireMarketingAccess();
 }
 
+// Every row of a query, read in parallel pages of 1000 (the database's per-request
+// cap). The first 8 pages are asked for at once -- enough for most tables, so no
+// separate count round trip comes first (a page past the end comes back as
+// PostgREST's "range not satisfiable" error, which just means no more rows) -- and if the first page's exact count says
+// there are more, the rest are asked for together. The query needs a stable
+// .order() and { count: "exact" }, and is rebuilt per page (range() mutates it).
+async function readAllPages<T>(
+  makeQuery: () => {
+    range(
+      from: number,
+      to: number
+    ): PromiseLike<{ data: unknown[] | null; count: number | null; error: { message: string; code?: string } | null }>;
+  }
+): Promise<T[]> {
+  const PAGE = 1000;
+  const FIRST = 8;
+  const fetchPages = (from: number, to: number) =>
+    Promise.all(
+      Array.from({ length: to - from }, (_, i) => makeQuery().range((from + i) * PAGE, (from + i) * PAGE + PAGE - 1))
+    );
+  const out: T[] = [];
+  const take = (pages: Awaited<ReturnType<typeof fetchPages>>) => {
+    for (const page of pages) {
+      if (page.error?.code === "PGRST103") continue;
+      if (page.error) throw new Error(page.error.message);
+      out.push(...((page.data ?? []) as T[]));
+    }
+  };
+  const first = await fetchPages(0, FIRST);
+  take(first);
+  const total = Math.ceil((first[0].count ?? 0) / PAGE);
+  if (total > FIRST) take(await fetchPages(FIRST, total));
+  return out;
+}
+
 // Everything the CRM Charts page shows, for one period (a day, week, month, year
 // or all time) and optionally up to five more of the same kind to compare it
 // with, optionally for one province. Customers are read once, in parallel pages of 1000 (the
@@ -73,11 +108,6 @@ export async function getCrmChartDataAction(input: {
   const anchorA = normalizeAnchor(gran, input.anchor, today);
   const anchors = [anchorA, ...parseCompareAnchors(gran, input.compare, anchorA, today)];
 
-  const { count, error: countError } = await supabaseAdmin
-    .from("customers")
-    .select("id", { count: "exact", head: true });
-  if (countError) throw new Error(countError.message);
-
   type Row = {
     id: string;
     name: string;
@@ -91,46 +121,45 @@ export async function getCrmChartDataAction(input: {
     customer_since: string | null;
     created_at: string;
   };
-  const pages = await Promise.all(
-    Array.from({ length: Math.ceil((count ?? 0) / 1000) }, (_, i) =>
+  // The customers and every period's orders are independent, so read them all at
+  // the same time instead of one after another.
+  const [customerRows, orderSets] = await Promise.all([
+    readAllPages<Row>(() =>
       supabaseAdmin
         .from("customers")
-        .select("id, name, phone, second_phone, state, gender, age, nationality, capital, customer_since, created_at")
+        .select("id, name, phone, second_phone, state, gender, age, nationality, capital, customer_since, created_at", {
+          count: "exact",
+        })
         .order("id")
-        .range(i * 1000, i * 1000 + 999)
-    )
-  );
+    ),
+    Promise.all(
+      anchors.map((anchor) => {
+        const { from, to } = periodRange(gran, anchor, today);
+        return fetchPeriodOrders(from, to);
+      })
+    ),
+  ]);
   const customers: CustomerRow[] = [];
-  for (const page of pages) {
-    if (page.error) throw new Error(page.error.message);
-    for (const r of (page.data ?? []) as unknown as Row[]) {
-      customers.push({
-        id: r.id,
-        name: r.name,
-        phone: r.phone,
-        second_phone: r.second_phone,
-        state: r.state,
-        gender: r.gender,
-        age: r.age,
-        nationality: r.nationality,
-        capital: r.capital,
-        // A customer added at checkout has no customer-since date, so their
-        // creation date stands in for it.
-        since: r.customer_since ?? ppDay(r.created_at),
-      });
-    }
+  for (const r of customerRows) {
+    customers.push({
+      id: r.id,
+      name: r.name,
+      phone: r.phone,
+      second_phone: r.second_phone,
+      state: r.state,
+      gender: r.gender,
+      age: r.age,
+      nationality: r.nationality,
+      capital: r.capital,
+      // A customer added at checkout has no customer-since date, so their
+      // creation date stands in for it.
+      since: r.customer_since ?? ppDay(r.created_at),
+    });
   }
 
   // A province that isn't one of the customers' provinces is ignored.
   const provinces = tally(customers.map((c) => c.state)).filter((s) => s.name !== "Unknown");
   const province = provinces.some((p) => p.name === input.province) ? (input.province as string) : "";
-
-  const orderSets = await Promise.all(
-    anchors.map((anchor) => {
-      const { from, to } = periodRange(gran, anchor, today);
-      return fetchPeriodOrders(from, to);
-    })
-  );
 
   const firstYear = Number(
     customers.reduce((min, c) => (c.since < min ? c.since : min), today).slice(0, 4)
@@ -156,16 +185,6 @@ export async function getCrmChartDataAction(input: {
 // start) that count as a customer having bought: not cancelled, not voided. Dated
 // by the day the Orders list files them under.
 async function fetchPeriodOrders(from: string | null, to: string): Promise<PeriodOrder[]> {
-  const makeQuery = () => {
-    let q = supabaseAdmin
-      .from("orders")
-      .select("id, customer_id, customer_phone, subtotal, list_at, paid_at", { count: "exact" })
-      .neq("status", "voided")
-      .neq("fulfillment_status", "cancelled")
-      .lte("list_at", ppDayEnd(to));
-    if (from) q = q.gte("list_at", ppDayStart(from));
-    return q.order("id");
-  };
   type Row = {
     id: string;
     customer_id: string | null;
@@ -174,21 +193,16 @@ async function fetchPeriodOrders(from: string | null, to: string): Promise<Perio
     list_at: string | null;
     paid_at: string | null;
   };
-  const first = await makeQuery().range(0, 999);
-  if (first.error) throw new Error(first.error.message);
-  const rows: Row[] = [...((first.data ?? []) as unknown as Row[])];
-  const pageCount = Math.ceil((first.count ?? 0) / 1000);
-  for (let i = 1; i < pageCount; i += 6) {
-    const batch = await Promise.all(
-      Array.from({ length: Math.min(6, pageCount - i) }, (_, k) =>
-        makeQuery().range((i + k) * 1000, (i + k) * 1000 + 999)
-      )
-    );
-    for (const page of batch) {
-      if (page.error) throw new Error(page.error.message);
-      rows.push(...((page.data ?? []) as unknown as Row[]));
-    }
-  }
+  const rows = await readAllPages<Row>(() => {
+    let q = supabaseAdmin
+      .from("orders")
+      .select("id, customer_id, customer_phone, subtotal, list_at, paid_at", { count: "exact" })
+      .neq("status", "voided")
+      .neq("fulfillment_status", "cancelled")
+      .lte("list_at", ppDayEnd(to));
+    if (from) q = q.gte("list_at", ppDayStart(from));
+    return q.order("id");
+  });
   return rows.flatMap((r) => {
     const at = r.list_at ?? r.paid_at;
     if (!at) return [];
