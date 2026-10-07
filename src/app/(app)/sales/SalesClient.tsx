@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, useTransition } from "react";
+import { Suspense, use, useEffect, useMemo, useRef, useState, useTransition, type ComponentProps } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
@@ -35,10 +35,10 @@ const PAYMENT_METHOD_ICONS: Record<PaymentMethod, typeof Banknote> = {
 };
 import type { ProductWithStock } from "@/lib/supabase/queries";
 import type { WebsiteProduct, WebsiteProductVariation } from "@/lib/websiteProducts/types";
-import SalesWebsiteGrid from "./SalesWebsiteGrid";
+import SalesWebsiteGrid, { SalesGridPreview } from "./SalesWebsiteGrid";
 import TopBarSlot from "@/components/TopBarSlot";
 import NewCustomerPanel from "@/components/NewCustomerPanel";
-import type { SalesWebsiteCatalog } from "./page";
+import type { SalesWebsiteCatalog, SalesWebsiteMeta } from "./page";
 import {
   chargeOrder,
   searchCustomersByName,
@@ -142,12 +142,35 @@ function nameSimilarity(query: string, name: string): number {
   return best;
 }
 
+// The storefront grid once its streamed catalog has arrived.
+function WebsiteGridFromPromise({
+  promise,
+  ...gridProps
+}: { promise: Promise<SalesWebsiteCatalog | null> } & Omit<
+  ComponentProps<typeof SalesWebsiteGrid>,
+  "catalogId" | "initialProducts" | "initialError" | "categories"
+>) {
+  const catalog = use(promise);
+  if (!catalog) return null;
+  return (
+    <SalesWebsiteGrid
+      key={catalog.id}
+      catalogId={catalog.id}
+      initialProducts={catalog.products}
+      initialError={catalog.error}
+      categories={catalog.categories}
+      {...gridProps}
+    />
+  );
+}
+
 export default function SalesClient({
   brands,
   currentBrand,
   categories,
   products,
   websiteCatalog,
+  websiteCatalogPromise,
   initialSearch,
   editOrder = null,
 }: {
@@ -155,7 +178,11 @@ export default function SalesClient({
   currentBrand: Brand;
   categories: Category[];
   products: ProductWithStock[];
-  websiteCatalog: SalesWebsiteCatalog | null;
+  // Which storefront this brand sells from (known at once) ...
+  websiteCatalog: SalesWebsiteMeta | null;
+  // ... and its products + categories, which the server streams in once the live
+  // storefront answers, so the rest of the page doesn't wait for it.
+  websiteCatalogPromise: Promise<SalesWebsiteCatalog | null>;
   initialSearch: string;
   editOrder?: EditOrderSeed | null;
 }) {
@@ -1009,17 +1036,15 @@ export default function SalesClient({
 
       <div className="flex flex-1 flex-col overflow-y-auto lg:flex-row lg:overflow-hidden">
         {showWebsite && websiteCatalog ? (
-          <SalesWebsiteGrid
-            key={websiteCatalog.id}
-            catalogId={websiteCatalog.id}
-            initialProducts={websiteCatalog.products}
-            initialError={websiteCatalog.error}
-            categories={websiteCatalog.categories}
-            onSelect={addWebsiteProductToCart}
-            pendingEntryKey={linkingEntryKey}
-            cartQtyByEntryKey={cartQtyByEntryKey}
-            khmerNames={khmerNamesBySiteProduct}
-          />
+          <Suspense fallback={<SalesGridPreview catalogId={websiteCatalog.id} />}>
+            <WebsiteGridFromPromise
+              promise={websiteCatalogPromise}
+              onSelect={addWebsiteProductToCart}
+              pendingEntryKey={linkingEntryKey}
+              cartQtyByEntryKey={cartQtyByEntryKey}
+              khmerNames={khmerNamesBySiteProduct}
+            />
+          </Suspense>
         ) : (
         <main className="flex-none p-3 sm:p-6 lg:flex-1 lg:overflow-y-auto">
           {/* Category chips wrap onto a few rows -- no horizontal scrolling.
