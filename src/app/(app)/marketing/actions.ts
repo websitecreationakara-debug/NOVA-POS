@@ -324,8 +324,10 @@ export async function getProductMonthlyAction(
 
   const thisYear = Number(ppToday().slice(0, 4));
   const y = Number.isInteger(year) && year >= 2000 && year <= thisYear ? year : thisYear;
-  const [lines, earliest] = await Promise.all([
-    fetchInsightLines(`${y}-01-01`, `${y}-12-31`, brandId),
+  // Added up in the database (migration 0072); if that isn't applied yet, read the
+  // year's lines and add them up here (slower).
+  const [monthly, earliest] = await Promise.all([
+    supabaseAdmin.rpc("product_monthly", { p_year: y, p_brand: brandId || null }),
     supabaseAdmin
       .from("orders")
       .select("list_at")
@@ -334,9 +336,18 @@ export async function getProductMonthlyAction(
       .order("list_at", { ascending: true })
       .limit(1),
   ]);
+  let rows: MonthlyRow[];
+  if (!monthly.error && monthly.data) {
+    rows = (monthly.data as unknown as MonthlyRow[])
+      .map((r) => ({ ...r, qty: r.qty.map(Number), amount: r.amount.map(Number) }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  } else {
+    if (monthly.error && monthly.error.code !== "PGRST202") throw new Error(monthly.error.message);
+    rows = buildMonthlyTable(await fetchInsightLines(`${y}-01-01`, `${y}-12-31`, brandId));
+  }
   const firstYear = Number((earliest.data?.[0]?.list_at ?? `${thisYear}`).slice(0, 4)) || thisYear;
   const years = Array.from({ length: thisYear - firstYear + 1 }, (_, i) => thisYear - i);
-  return { rows: buildMonthlyTable(lines), year: y, years };
+  return { rows, year: y, years };
 }
 
 // The monthly table as an Excel file. The rows come from the screen (already
