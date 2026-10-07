@@ -36,7 +36,7 @@ import {
 } from "@/lib/supabase/queries";
 import { PAYMENT_METHOD_LABELS, type PaymentMethod } from "@/lib/paymentMethods";
 import { computeGrossMargin } from "@/lib/cogs";
-import { addExpenseAction, saveReconciliationAction, updateExpenseAction } from "./actions";
+import { addExpenseAction, getWasteItemsAction, saveReconciliationAction, updateExpenseAction } from "./actions";
 import { setMarginUnitCostAction, setProductPriceAction } from "../stock/actions";
 import { ppDay, ppHour, ppToday } from "@/lib/phnomPenhTime";
 import { exportAccountancePdf } from "@/lib/exportAccountancePdf";
@@ -553,7 +553,6 @@ export default function AccountanceClient({
   expenses,
   cogsSummary,
   marginReport,
-  wasteItems,
   wasteLog,
   previousPeriod,
 }: {
@@ -577,7 +576,6 @@ export default function AccountanceClient({
   expenses: Expense[];
   cogsSummary: CogsSummary;
   marginReport: MarginReportRow[];
-  wasteItems: StockPickerItem[];
   wasteLog: WasteLogEntry[];
   // Same shape as this period's own numbers, for the summary cards' small
   // vs-previous-period trend chips -- the immediately preceding period of
@@ -877,6 +875,20 @@ export default function AccountanceClient({
   const [editingMarginId, setEditingMarginId] = useState<string | null>(null);
   const [bulkCostModalOpen, setBulkCostModalOpen] = useState(false);
   const [wasteModalOpen, setWasteModalOpen] = useState(false);
+  // The "+ Add waste item" product list is fetched when the form is first wanted
+  // (hover / focus / click), per business -- not with the page.
+  const [wasteItems, setWasteItems] = useState<{ brandId: string; items: StockPickerItem[] } | null>(null);
+  const wasteItemsRequested = useRef<string | null>(null);
+  function loadWasteItems() {
+    const brandId = currentBrand.id;
+    if (brandId === ALL_BUSINESSES_ID || wasteItemsRequested.current === brandId) return;
+    wasteItemsRequested.current = brandId;
+    getWasteItemsAction(brandId)
+      .then((items) => setWasteItems({ brandId, items }))
+      .catch(() => {
+        wasteItemsRequested.current = null;
+      });
+  }
   const [wasteLogOpen, setWasteLogOpen] = useState(false);
   const [editingWaste, setEditingWaste] = useState<WasteLogEntry | null>(null);
   const [confirmDeleteWaste, setConfirmDeleteWaste] = useState<WasteLogEntry | null>(null);
@@ -1835,7 +1847,12 @@ export default function AccountanceClient({
               </div>
               <button
                 type="button"
-                onClick={() => setWasteModalOpen(true)}
+                onClick={() => {
+                  loadWasteItems();
+                  setWasteModalOpen(true);
+                }}
+                onMouseEnter={loadWasteItems}
+                onFocus={loadWasteItems}
                 disabled={currentBrand.id === ALL_BUSINESSES_ID}
                 className="shrink-0 rounded-full bg-brand px-3 py-1.5 text-sm font-medium text-white shadow-sm hover:brightness-95 disabled:opacity-40 disabled:shadow-none"
               >
@@ -2323,7 +2340,12 @@ export default function AccountanceClient({
       )}
 
       {wasteModalOpen && (
-        <AddWasteItemModal items={wasteItems} defaultDate={fromDate} onClose={() => setWasteModalOpen(false)} />
+        <AddWasteItemModal
+          items={wasteItems?.brandId === currentBrand.id ? wasteItems.items : []}
+          loading={wasteItems?.brandId !== currentBrand.id}
+          defaultDate={fromDate}
+          onClose={() => setWasteModalOpen(false)}
+        />
       )}
 
       {editingWaste && (

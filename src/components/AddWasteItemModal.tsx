@@ -19,10 +19,13 @@ import type { StockPickerItem } from "@/lib/supabase/queries";
 // item's first-ever edit here (see item.pos === null below).
 export default function AddWasteItemModal({
   items,
+  loading = false,
   defaultDate,
   onClose,
 }: {
   items: StockPickerItem[];
+  // The product list is still being fetched.
+  loading?: boolean;
   // Whichever day/range Accountance is currently viewing -- seeds the Date
   // field the same way the Expense form seeds its own from fromDate, so
   // logging waste "for today" while looking at a past day doesn't silently
@@ -203,7 +206,9 @@ export default function AddWasteItemModal({
                 </div>
                 <ul className="mt-1 max-h-40 overflow-y-auto rounded border border-black/[.1] dark:border-white/[.15]">
                   {matches.length === 0 && (
-                    <li className="px-3 py-2 text-sm text-zinc-400">No products match.</li>
+                    <li className="px-3 py-2 text-sm text-zinc-400">
+                      {loading ? "Loading products…" : "No products match."}
+                    </li>
                   )}
                   {matches.map((p) => (
                     <li key={p.key}>

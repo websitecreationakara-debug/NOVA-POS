@@ -6,9 +6,7 @@ import {
   getExpensesForDateRange,
   getMarginReport,
   getReconciliation,
-  getStockPickerItems,
   getWasteLog,
-  type StockPickerItem,
   type WasteLogEntry,
 } from "@/lib/supabase/queries";
 import type { Brand } from "@/types/database";
@@ -213,10 +211,8 @@ export default async function AccountancePage({
       : (brands.find((b) => b.id === brandIdParam) ?? brands[0]);
   const currentBrand = tab === "expenses" ? ALL_BUSINESSES_BRAND : selectedBrand;
 
-  // Only the COGS tab needs the waste picker/log -- skip the extra queries for
-  // every other tab. The "+ Add waste item" picker also needs one real
-  // brand's product list (waste is logged against one brand's actual stock),
-  // but the log itself reads fine for "All Businesses" too.
+  // Only the COGS tab needs the waste log -- skip the extra query for every other
+  // tab. (The "+ Add waste item" product list loads when that form is opened.)
   const { from: prevFromDate, to: prevToDate } = previousPeriodRange(fromDate, toDate);
   const currentDataPromise =
     optimisticDataPromise && currentBrand.id === dataBrandParam
@@ -228,15 +224,8 @@ export default async function AccountancePage({
           getCogsSummary(currentBrand.id, fromDate, toDate),
           marginReportFor(tab, currentBrand.id, fromDate, toDate),
         ]);
-  const wasteDataPromise: Promise<[StockPickerItem[], WasteLogEntry[]]> =
-    tab === "cogs"
-      ? Promise.all([
-          currentBrand.id !== ALL_BUSINESSES_ID
-            ? getStockPickerItems(currentBrand.id, currentBrand.slug)
-            : Promise.resolve([]),
-          getWasteLog(currentBrand.id, fromDate, toDate),
-        ])
-      : Promise.resolve([[], []]);
+  const wasteLogPromise: Promise<WasteLogEntry[]> =
+    tab === "cogs" ? getWasteLog(currentBrand.id, fromDate, toDate) : Promise.resolve([]);
   const previousPeriodPromise = Promise.all([
     getDailySales(currentBrand.id, prevFromDate, prevToDate),
     getExpensesForDateRange(currentBrand.id, prevFromDate, prevToDate),
@@ -246,9 +235,9 @@ export default async function AccountancePage({
   // All three at once (the previous period used to wait for the current one).
   const [
     [{ summary, orders }, reconciliation, expenses, cogsSummary, marginReport],
-    [wasteItems, wasteLog],
+    wasteLog,
     [{ summary: prevSummary }, prevExpenses, prevCogsSummary],
-  ] = await Promise.all([currentDataPromise, wasteDataPromise, previousPeriodPromise]);
+  ] = await Promise.all([currentDataPromise, wasteLogPromise, previousPeriodPromise]);
 
   const prevExpenseTotal = prevExpenses.reduce((sum, e) => sum + e.amount, 0);
   const prevGrossProfit = prevSummary.total - prevCogsSummary.totalCogs;
@@ -281,7 +270,6 @@ export default async function AccountancePage({
       expenses={expenses}
       cogsSummary={cogsSummary}
       marginReport={marginReport}
-      wasteItems={wasteItems}
       wasteLog={wasteLog}
       previousPeriod={previousPeriod}
     />
