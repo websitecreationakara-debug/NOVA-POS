@@ -3,9 +3,20 @@
 import { revalidatePath } from "next/cache";
 import { supabaseAdmin } from "@/lib/supabase/server";
 import { getSessionUser } from "@/lib/supabase/auth-server";
-import { requireFullStockAccess } from "@/lib/stockAccess";
+import { requireFullStockAccess, requireStockAccess } from "@/lib/stockAccess";
 import { adjustStockAction } from "@/app/(app)/stock/actions";
-import { ALL_BUSINESSES_ID } from "@/lib/supabase/queries";
+import { ALL_BUSINESSES_ID, getBrands, getStockPickerItems, type StockPickerItem } from "@/lib/supabase/queries";
+
+// The "+ Add waste item" product list (POS products plus the brand's live storefront
+// catalog). Loaded when the form is opened, not with the page: it reads the
+// storefront, which made every visit to the COGS tab wait about a second for a list
+// most visits never use.
+export async function getWasteItemsAction(brandId: string): Promise<StockPickerItem[]> {
+  await requireStockAccess();
+  const brand = (await getBrands()).find((b) => b.id === brandId);
+  if (!brand) return [];
+  return getStockPickerItems(brand.id, brand.slug);
+}
 
 export async function saveReconciliationAction(input: {
   brandId: string;
