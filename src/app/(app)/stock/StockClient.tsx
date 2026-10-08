@@ -72,12 +72,14 @@ export default function StockClient({
   categories,
   products,
   websiteCatalog,
+  recentStockUpdates,
 }: {
   brands: Brand[];
   currentBrand: Brand;
   categories: Category[];
   products: ProductWithStock[];
   websiteCatalog: WebsiteCatalogData | null;
+  recentStockUpdates: Record<string, string>;
 }) {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -672,6 +674,7 @@ export default function StockClient({
           addons={websiteCatalog.addons}
           initialCategories={websiteCatalog.categories}
           purchaseCosts={websiteCatalog.purchaseCosts}
+          recentStockUpdates={recentStockUpdates}
         />
       ) : (
       <>

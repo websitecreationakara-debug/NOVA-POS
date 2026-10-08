@@ -31,7 +31,47 @@ import type {
 } from "@/lib/websiteProducts/types";
 import type { ProductSiteLink, StockAdjustmentCategory } from "@/types/database";
 import { requireStockAccess } from "@/lib/stockAccess";
+import { isStockUntracked } from "@/lib/websiteProducts/stockTracking";
 import { adjustStockAction, setProductPriceAction } from "./actions";
+
+// A product whose website stock is blank ("—") is untracked, and the automatic stock pushes
+// (sales, cancellations) deliberately leave it alone. But a number typed on the Stock page is a
+// deliberate choice to start counting it, so that one is written to the website too -- otherwise
+// the POS count changes while the Stock page keeps showing "—", as if the edit hadn't worked.
+async function siteStockIsUntracked(
+  catalogId: WebsiteCatalogId,
+  siteProductId: string,
+  variationId: string
+): Promise<boolean> {
+  const site = await getWebsiteProduct(catalogId, siteProductId).catch(() => null);
+  return !!site && isStockUntracked(site, variationId);
+}
+
+// Setting a product back to "—" (unlimited) writes only the website, so the POS count stayed at
+// whatever had been added -- and Accounting's stock figures still counted that add. A stock
+// that's left over is taken back out here (and logged like any Stock page edit), which also
+// cancels the earlier add in Inventory Purchased. Only a positive count is cleared: an
+// unlimited product's POS count otherwise just drifts below 0 as it sells.
+async function clearPosStockForUnlimited(
+  productId: string,
+  options: { category?: StockAdjustmentCategory; reason?: string; createdAt?: string }
+): Promise<void> {
+  const { data: live } = await supabaseAdmin
+    .from("stock_levels")
+    .select("quantity")
+    .eq("product_id", productId)
+    .maybeSingle();
+  const quantity = live?.quantity ?? 0;
+  if (quantity > 0) {
+    await adjustStockAction({
+      productId,
+      delta: -quantity,
+      reason: options.reason ?? "Stock page edit",
+      category: options.category,
+      createdAt: options.createdAt,
+    });
+  }
+}
 
 // Upload an image chosen from the user's computer to the public product-images
 // bucket and hand back its URL, which then goes into a website product's
@@ -290,6 +330,7 @@ export async function setVariationStockAction(input: {
       .maybeSingle();
     const currentStock = live?.quantity ?? 0;
     const delta = input.stock - currentStock;
+    const untracked = await siteStockIsUntracked(input.catalogId, input.siteProductId, input.variationId);
     if (delta !== 0) {
       // adjustStockAction pushes the resulting POS quantity straight back out
       // to the storefront (see pushStockToSites -- POS is the source of
@@ -306,12 +347,21 @@ export async function setVariationStockAction(input: {
         createdAt: input.createdAt,
       });
     }
+    // That push skips an untracked ("—") size, so write the typed number to it directly.
+    if (untracked) {
+      await updateWebsiteProductVariation(input.catalogId, input.siteProductId, input.variationId, {
+        stock: input.stock,
+      });
+    }
     return;
   }
 
   // Not yet linked (nothing else pushes to the storefront for a brand-new
   // link) or left "unlimited" (null, no POS delta to compute) -- write it
   // directly here, the one and only time.
+  if (input.alreadyLinked && input.stock === null) {
+    await clearPosStockForUnlimited(linked.id, input);
+  }
   await updateWebsiteProductVariation(input.catalogId, input.siteProductId, input.variationId, {
     stock: input.stock,
   });
@@ -578,6 +628,7 @@ export async function setSimpleProductStockAction(input: {
       .maybeSingle();
     const currentStock = live?.quantity ?? 0;
     const delta = input.stock - currentStock;
+    const untracked = await siteStockIsUntracked(input.catalogId, input.siteProductId, "");
     if (delta !== 0) {
       // See setVariationStockAction's comment -- adjustStockAction's own
       // pushStockToSites is the single write to the storefront here; a
@@ -591,9 +642,16 @@ export async function setSimpleProductStockAction(input: {
         createdAt: input.createdAt,
       });
     }
+    // That push skips an untracked ("—") product, so write the typed number to it directly.
+    if (untracked) {
+      await updateWebsiteProduct(input.catalogId, input.siteProductId, { stock: input.stock });
+    }
     return;
   }
 
+  if (input.alreadyLinked && input.stock === null) {
+    await clearPosStockForUnlimited(linked.id, input);
+  }
   await updateWebsiteProduct(input.catalogId, input.siteProductId, { stock: input.stock });
 }
 

@@ -238,6 +238,30 @@ export async function getReconciliation(
   return data;
 }
 
+// When each of a business's products last had its stock changed by hand (a Stock page edit,
+// waste, ...) in the last `days` days -- product id -> ISO time of the latest change. Stock put
+// back by a cancelled/deleted order isn't an update someone made, so it's left out. Powers the
+// Stock page's "Recently updated" filter.
+export async function getRecentStockUpdates(brandId: string, days: number): Promise<Map<string, string>> {
+  const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+  const { data, error } = await selectAll(
+    supabaseAdmin
+      .from("stock_adjustments")
+      .select("product_id, reason, created_at, products!inner(brand_id)")
+      .eq("products.brand_id", brandId)
+      .gte("created_at", since)
+      .order("created_at", { ascending: false })
+      .order("id")
+  );
+  if (error) throw error;
+  const latest = new Map<string, string>();
+  for (const r of data as unknown as { product_id: string; reason: string | null; created_at: string }[]) {
+    if ((r.reason ?? "").startsWith("Order ")) continue;
+    if (!latest.has(r.product_id)) latest.set(r.product_id, r.created_at);
+  }
+  return latest;
+}
+
 // What the Stock page shows for a business that has a website: the website's own products
 // (and add-ons) and their stock. Returns the total units, the keys ("siteProductId::variationId")
 // of everything that is on the website (so POS products that aren't -- old test items, items
@@ -286,13 +310,16 @@ export type StockUnits = {
   // Units in stock at the start of the range: the stock now, with everything that moved
   // stock since then undone (restocks, waste, orders). Follows the date picker.
   beginning: number;
-  // Units added by hand (Stock page restocks) in the range -- order cancel/delete
-  // restocks are returns of stock already counted as sold, so they're left out.
+  // Units added by hand (Stock page restocks) in the range, net of any taken back out by hand
+  // -- order cancel/delete restocks are returns of stock already counted as sold, so they're left out.
   purchased: number;
   // Units sold to customers in the range (paid, counted fulfillment statuses).
   sold: number;
   // The units sold to customers in the range (same as `sold`).
   ending: number;
+  // The products behind `purchased`: each product's net stock added by hand in the range and when
+  // it was last changed (newest first). Products whose changes cancel out are left out.
+  purchasedItems: { productId: string; name: string; quantity: number; lastAt: string }[];
 };
 
 // Unit counts behind the COGS tab's inventory boxes, synced with the Stock page: for a business
@@ -321,8 +348,7 @@ export async function getStockUnits(
     .lte("orders.list_at", to);
   let addedQuery = supabaseAdmin
     .from("stock_adjustments")
-    .select("product_id, delta, reason, products!inner(brand_id)")
-    .gt("delta", 0)
+    .select("product_id, delta, reason, created_at, products!inner(brand_id, name)")
     .eq("category", "other")
     .gte("created_at", from)
     .lte("created_at", to);
@@ -415,9 +441,35 @@ export async function getStockUnits(
   const soldUnits = (sold.data as unknown as { product_id: string; quantity: number }[])
     .filter((r) => counted.has(r.product_id))
     .reduce((s, r) => s + Number(r.quantity), 0);
-  const purchased = (added.data as unknown as { product_id: string; delta: number; reason: string | null }[])
-    .filter((r) => counted.has(r.product_id) && !(r.reason ?? "").startsWith("Order "))
-    .reduce((s, r) => s + Number(r.delta), 0);
+  // Net of the stock added by hand and the stock taken back out by hand (a Stock page edit
+  // down, e.g. fixing a mistaken add), so an add that's undone doesn't stay counted.
+  const addedByProduct = new Map<string, { productId: string; name: string; quantity: number; lastAt: string }>();
+  for (const r of added.data as unknown as {
+    product_id: string;
+    delta: number;
+    reason: string | null;
+    created_at: string;
+    products: { name: string } | null;
+  }[]) {
+    if (!counted.has(r.product_id) || (r.reason ?? "").startsWith("Order ")) continue;
+    const item = addedByProduct.get(r.product_id) ?? {
+      productId: r.product_id,
+      name: r.products?.name ?? "—",
+      quantity: 0,
+      lastAt: r.created_at,
+    };
+    item.quantity += Number(r.delta);
+    if (r.created_at > item.lastAt) item.lastAt = r.created_at;
+    addedByProduct.set(r.product_id, item);
+  }
+  const purchased = Math.max(
+    0,
+    [...addedByProduct.values()].reduce((s, i) => s + i.quantity, 0)
+  );
+  const purchasedItems = [...addedByProduct.values()]
+    .map((i) => ({ ...i, quantity: round2(i.quantity) }))
+    .filter((i) => i.quantity !== 0)
+    .sort((a, b) => b.lastAt.localeCompare(a.lastAt));
 
   // Net stock change since the start of the range, for products whose stock is counted; stock
   // now minus that is the stock at the start.
@@ -437,6 +489,7 @@ export async function getStockUnits(
     purchased: round2(purchased),
     sold: round2(soldUnits),
     ending: round2(soldUnits),
+    purchasedItems,
   };
 }
 

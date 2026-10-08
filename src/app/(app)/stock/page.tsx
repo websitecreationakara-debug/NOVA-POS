@@ -1,4 +1,4 @@
-import { getBrands, getCatalogForBrand } from "@/lib/supabase/queries";
+import { getBrands, getCatalogForBrand, getRecentStockUpdates } from "@/lib/supabase/queries";
 import { catalogForBrandSlug } from "@/lib/websiteProducts/catalogs";
 import { listWebsiteAddons, listWebsiteCategories, listWebsiteProducts } from "@/lib/websiteProducts/client";
 import { getWebsitePurchaseCosts, type PurchaseCostFields } from "@/lib/websiteProducts/purchaseCosts";
@@ -89,6 +89,17 @@ export default async function StockPage({
 
   const websiteCatalog = await websiteCatalogPromise;
 
+  // When each product's stock was last changed by hand (last 7 days), keyed like the website
+  // panel's own lookup -- `${site_product_id}::${variation_id}` -- for its "Recently updated" filter.
+  const recentByProductId = await getRecentStockUpdates(currentBrand.id, 7);
+  const recentStockUpdates: Record<string, string> = {};
+  for (const p of products) {
+    const at = recentByProductId.get(p.id);
+    if (at && p.site_link) {
+      recentStockUpdates[`${p.site_link.site_product_id}::${p.site_link.variation_id}`] = at;
+    }
+  }
+
   return (
     <StockClient
       brands={brands}
@@ -96,6 +107,7 @@ export default async function StockPage({
       categories={categories}
       products={products}
       websiteCatalog={websiteCatalog}
+      recentStockUpdates={recentStockUpdates}
     />
   );
 }
