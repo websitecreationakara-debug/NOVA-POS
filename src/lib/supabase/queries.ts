@@ -1046,9 +1046,10 @@ async function getSiteWeightLabels(productIds: string[]): Promise<Map<string, st
   return out;
 }
 
-// The website listing's picture for POS products that have none of their own, found through
-// the product's website link (the size's own picture for a size of a variable product). Best
-// effort: a product with no link, or a website that can't be reached, just has no entry.
+// The website listing's picture for POS products, found through the product's website link (the
+// size's own picture for a size of a variable product) -- the website is where pictures are
+// managed, so it wins over the POS copy. Best effort: a product with no link, or a website that
+// can't be reached, just has no entry and keeps its POS picture.
 async function getWebsiteImagesForProducts(productIds: string[]): Promise<Map<string, string>> {
   const images = new Map<string, string>();
   if (productIds.length === 0) return images;
@@ -1120,9 +1121,9 @@ export async function getInvoice(orderId: string): Promise<InvoiceData | null> {
   }
 
   const weightLabels = await getSiteWeightLabels([...new Set(((items ?? []) as ItemRow[]).map((i) => i.product_id))]);
-  const websiteImages = await getWebsiteImagesForProducts(
-    [...new Set(((items ?? []) as ItemRow[]).filter((i) => !i.products?.image_url).map((i) => i.product_id))]
-  );
+  const websiteImages = await getWebsiteImagesForProducts([
+    ...new Set(((items ?? []) as ItemRow[]).map((i) => i.product_id)),
+  ]);
   const squash = (t: string) => t.toLowerCase().replace(/\s+/g, "");
 
   return {
@@ -1142,7 +1143,7 @@ export async function getInvoice(orderId: string): Promise<InvoiceData | null> {
       sizeLabel: i.size_label,
       nameKm: i.products?.name_km ?? null,
       unitKm: i.products?.unit_km ?? null,
-      imageUrl: i.products?.image_url ?? websiteImages.get(i.product_id) ?? null,
+      imageUrl: websiteImages.get(i.product_id) ?? i.products?.image_url ?? null,
       weightLabel: (() => {
         const label = weightLabels.get(i.product_id) ?? null;
         if (!label || i.size_label) return null;

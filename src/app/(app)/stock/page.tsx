@@ -2,6 +2,7 @@ import { getBrands, getCatalogForBrand, getRecentStockUpdates } from "@/lib/supa
 import { catalogForBrandSlug } from "@/lib/websiteProducts/catalogs";
 import { listWebsiteAddons, listWebsiteCategories, listWebsiteProducts } from "@/lib/websiteProducts/client";
 import { getWebsitePurchaseCosts, type PurchaseCostFields } from "@/lib/websiteProducts/purchaseCosts";
+import { syncWebsiteToPos } from "@/lib/websiteProducts/syncFromWebsite";
 import type {
   WebsiteAddon,
   WebsiteCatalogId,
@@ -54,9 +55,6 @@ export default async function StockPage({
   const currentBrand =
     brands.find((b) => b.id === brandIdParam) ?? brands[0];
 
-  const { categories, products } =
-    await getCatalogForBrand(currentBrand.id);
-
   const catalog = catalogForBrandSlug(currentBrand.slug);
 
   const websiteCatalogPromise: Promise<WebsiteCatalogData | null> =
@@ -87,7 +85,22 @@ export default async function StockPage({
           }))
       : Promise.resolve(null);
 
-  const websiteCatalog = await websiteCatalogPromise;
+  // The POS catalog and the website's load together; the website is then copied onto the POS.
+  const [initialCatalog, websiteCatalog] = await Promise.all([
+    getCatalogForBrand(currentBrand.id),
+    websiteCatalogPromise,
+  ]);
+  let { categories, products } = initialCatalog;
+
+  // Keep the POS products' pictures and prices in step with the website's (the website is where
+  // they're managed). If anything changed, reload the POS list so this very page shows it.
+  if (websiteCatalog?.products) {
+    const updated = await syncWebsiteToPos(currentBrand.slug, websiteCatalog.products).catch((e) => {
+      console.error("stock: couldn't sync website pictures/prices to the POS", e);
+      return 0;
+    });
+    if (updated > 0) ({ categories, products } = await getCatalogForBrand(currentBrand.id));
+  }
 
   // When each product's stock was last changed by hand (last 7 days), keyed like the website
   // panel's own lookup -- `${site_product_id}::${variation_id}` -- for its "Recently updated" filter.
