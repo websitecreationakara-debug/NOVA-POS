@@ -9,15 +9,15 @@ import {
   ChevronDown,
   ChevronLeft,
   ChevronRight,
+  Coins,
   CreditCard,
   Info,
   Pencil,
+  Package,
   Percent,
   PiggyBank,
   Receipt,
   SearchX,
-  ShoppingBag,
-  Tag,
   Trash2,
   TrendingDown,
   TrendingUp,
@@ -32,30 +32,39 @@ import {
   type DailySalesSummary,
   type MarginReportRow,
   type StockPickerItem,
+  type StockUnits,
   type WasteLogEntry,
 } from "@/lib/supabase/queries";
 import { PAYMENT_METHOD_LABELS, type PaymentMethod } from "@/lib/paymentMethods";
 import { computeGrossMargin } from "@/lib/cogs";
-import { addExpenseAction, getWasteItemsAction, saveReconciliationAction, updateExpenseAction } from "./actions";
+import { addExpenseAction, getWasteItemsAction, updateExpenseAction } from "./actions";
 import { setMarginUnitCostAction, setProductPriceAction } from "../stock/actions";
 import { ppDay, ppHour, ppToday } from "@/lib/phnomPenhTime";
 import { exportAccountancePdf } from "@/lib/exportAccountancePdf";
 import DeleteExpenseDialog from "@/components/DeleteExpenseDialog";
-import BulkAddCostPriceModal from "@/components/BulkAddCostPriceModal";
+import InventoryCogsBoxes from "./InventoryCogsBoxes";
 import AddWasteItemModal from "@/components/AddWasteItemModal";
+import BulkAddCostPriceModal from "@/components/BulkAddCostPriceModal";
 import EditWasteLogModal from "@/components/EditWasteLogModal";
 import DeleteWasteLogDialog from "@/components/DeleteWasteLogDialog";
 import type { AccountanceTab } from "./page";
-import { formatCount, formatUsd } from "@/lib/formatNumber";
+import { formatUsd } from "@/lib/formatNumber";
 
 type RangeMode = "day" | "week" | "month" | "quarter" | "year";
+
+// The fixed choices offered when logging an expense.
+const EXPENSE_CATEGORY_OPTIONS = [
+  "General Operational Expenses",
+  "Internal Inventory",
+  "Accounts Payable",
+  "Ads Spend",
+];
 
 // How many "N sold at $x" lines a Margin Report row shows; the rest are on the
 // product's own page, opened by clicking the row.
 const MARGIN_SOLD_AT_PREVIEW = 2;
 
 const TAB_LABELS: Record<AccountanceTab, string> = {
-  reconciliation: "Cash Reconciliation",
   expenses: "Expense & Accounts Payable",
   reports: "Financial Reporting & P&L",
   cogs: "COGS & Margin Tracking",
@@ -94,10 +103,6 @@ function TrendBadge({ tone, children }: { tone: "positive" | "negative"; childre
       {children}
     </span>
   );
-}
-
-function todayIso() {
-  return ppToday();
 }
 
 // Ring chart built from plain stroked-circle segments (no charting lib) --
@@ -549,12 +554,12 @@ export default function AccountanceClient({
   tab,
   summary,
   orders,
-  reconciliation,
   expenses,
   cogsSummary,
   marginReport,
   wasteLog,
   previousPeriod,
+  stockUnits,
 }: {
   brands: Brand[];
   currentBrand: Brand;
@@ -586,14 +591,13 @@ export default function AccountanceClient({
     orderCount: number;
     total: number;
     expenseTotal: number;
+    cogsTotal: number;
+    grossProfit: number;
     netProfit: number;
   };
+  stockUnits: StockUnits | null;
 }) {
   const router = useRouter();
-  const [countedCash, setCountedCash] = useState(
-    reconciliation ? String(reconciliation.counted_cash) : ""
-  );
-  const [notes, setNotes] = useState(reconciliation?.notes ?? "");
   const [expenseDesc, setExpenseDesc] = useState("");
   const [expenseAmount, setExpenseAmount] = useState("");
   const [expenseCategory, setExpenseCategory] = useState("");
@@ -703,8 +707,18 @@ export default function AccountanceClient({
     router.push(urlFor({ brand: brandId }), { scroll: false });
   }
 
+  // Picking a mode always starts at "now": Day is today, and Week/Month/Quarter/Year is the
+  // one containing today (the page defaults to it when no period is given). So the buttons
+  // are also the way back to today after browsing other dates.
   function switchMode(newMode: RangeMode) {
-    router.push(urlFor({ mode: newMode }), { scroll: false });
+    if (newMode === "day") {
+      const today = ppToday();
+      setShowRangeEnd(false);
+      router.push(urlFor({ mode: "day", from: today, to: today }), { scroll: false });
+      return;
+    }
+    const params = new URLSearchParams({ brand: selectedBrandId, mode: newMode, tab });
+    router.push(`/accountance?${params.toString()}`, { scroll: false });
   }
 
   function switchTab(newTab: AccountanceTab) {
@@ -778,11 +792,12 @@ export default function AccountanceClient({
   // confirmed decision on folding waste/promo into net profit.
   const grossProfit = summary.total - cogsSummary.totalCogs;
   const netProfit = grossProfit - expenseTotal - wastePromoTotal;
-  const grossMarginPct = summary.total === 0 ? null : (grossProfit / summary.total) * 100;
-  // Flags a card as "high" when waste/promo cost eats more than 5% of
-  // whichever base it's judged against -- COGS for waste, revenue for promo.
+  // The Net profit summary card is simply Total revenue - Total expenses; the
+  // Profit & Loss breakdown below keeps the full COGS/waste waterfall.
+  const cardNetProfit = summary.total - expenseTotal;
+  const netMarginPct = summary.total === 0 ? null : (cardNetProfit / summary.total) * 100;
+  // Flags the Waste card as "high" when waste cost eats more than 5% of COGS.
   const wasteRatio = cogsSummary.totalCogs > 0 ? cogsSummary.wasteCost / cogsSummary.totalCogs : 0;
-  const promoRatio = summary.total > 0 ? cogsSummary.promotionCost / summary.total : 0;
 
   const filteredExpenses = useMemo(() => {
     const q = expenseSearch.trim().toLowerCase();
@@ -794,7 +809,13 @@ export default function AccountanceClient({
   }, [expenses, expenseSearch, expenseCategoryFilter]);
   const filteredExpenseTotal = filteredExpenses.reduce((sum, e) => sum + e.amount, 0);
   const expenseCategories = useMemo(
-    () => Array.from(new Set(expenses.map((e) => e.category).filter((c): c is string => Boolean(c)))).sort(),
+    () =>
+      Array.from(
+        new Set([
+          ...EXPENSE_CATEGORY_OPTIONS,
+          ...expenses.map((e) => e.category).filter((c): c is string => Boolean(c)),
+        ])
+      ),
     [expenses]
   );
   const isExpenseFilterActive = expenseSearch.trim() !== "" || expenseCategoryFilter !== "";
@@ -962,30 +983,6 @@ export default function AccountanceClient({
     });
   }
 
-  function saveReconciliation() {
-    const counted = parseFloat(countedCash);
-    if (Number.isNaN(counted)) {
-      setError("Enter a counted cash amount");
-      return;
-    }
-    setError(null);
-    startTransition(async () => {
-      try {
-        await saveReconciliationAction({
-          brandId: currentBrand.id,
-          date: fromDate,
-          countedCash: counted,
-          expectedCash: summary.cashTotal,
-          expectedBankQr: summary.nonCashTotal,
-          notes: notes.trim() || undefined,
-        });
-        router.refresh();
-      } catch (e) {
-        setError(e instanceof Error ? e.message : "Failed to save reconciliation");
-      }
-    });
-  }
-
   function resetExpenseForm() {
     setEditingExpenseId(null);
     setExpenseDesc("");
@@ -1005,8 +1002,8 @@ export default function AccountanceClient({
 
   function saveExpense() {
     const amount = parseFloat(expenseAmount);
-    if (!expenseDesc.trim() || Number.isNaN(amount) || amount <= 0) {
-      setError("Enter a description and a positive amount");
+    if (Number.isNaN(amount) || amount <= 0) {
+      setError("Enter a positive amount");
       return;
     }
     setError(null);
@@ -1090,14 +1087,6 @@ export default function AccountanceClient({
     });
   }
 
-  const variance = reconciliation ? reconciliation.variance : null;
-  // Reconciling a till count, and logging a new expense, both need one
-  // specific business on one specific day -- "All Businesses" has no single
-  // cash drawer, addExpenseAction/saveReconciliationAction both take one
-  // brandId, and a multi-day range has no single day to file either against.
-  // Both actions are disabled (not hidden -- the combined stats/expense log
-  // still read fine) until a single business and a single day are picked.
-  const isAllBusinesses = currentBrand.id === ALL_BUSINESSES_ID;
   function brandNameFor(brandId: string | null) {
     if (brandId === null || brandId === ALL_BUSINESSES_ID) return "All Businesses";
     return brands.find((b) => b.id === brandId)?.name ?? "—";
@@ -1332,7 +1321,9 @@ export default function AccountanceClient({
         ))}
       </div>
 
-      <div className="grid grid-cols-2 gap-4 lg:grid-cols-6">
+      {/* The summary cards are for the other tabs; COGS & Margin Tracking has its own stock boxes. */}
+      {tab !== "cogs" && (
+      <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
         <div className="rounded-lg border border-black/[.08] bg-card p-4 shadow-sm dark:border-white/[.145]">
           <div className="flex items-center justify-between gap-2 text-xs font-medium text-zinc-600 dark:text-zinc-400">
             <span className="flex items-center gap-1.5">
@@ -1354,14 +1345,46 @@ export default function AccountanceClient({
           <div className="mt-1 text-xl font-semibold">{formatMoney(summary.nonCashTotal)}</div>
         </div>
         <div className="rounded-lg border border-black/[.08] bg-card p-4 shadow-sm dark:border-white/[.145]">
+          <div className="flex items-center justify-between gap-1 text-xs font-medium text-zinc-600 dark:text-zinc-400">
+            <span className="flex items-center gap-1 whitespace-nowrap">
+              <Coins className="size-3.5 shrink-0" />
+              Cash + KHQR
+            </span>
+            <TrendChip
+              pct={pctChange(
+                summary.cashTotal + summary.nonCashTotal,
+                previousPeriod.cashTotal + previousPeriod.nonCashTotal
+              )}
+            />
+          </div>
+          <div className="mt-1 text-xl font-semibold">
+            {formatMoney(summary.cashTotal + summary.nonCashTotal)}
+          </div>
+        </div>
+        <div className="rounded-lg border border-black/[.08] bg-card p-4 shadow-sm dark:border-white/[.145]">
           <div className="flex items-center justify-between gap-2 text-xs font-medium text-zinc-600 dark:text-zinc-400">
             <span className="flex items-center gap-1.5">
-              <ShoppingBag className="size-3.5" />
-              Orders
+              <Package className="size-3.5" />
+              Total COGS
             </span>
-            <TrendChip pct={pctChange(orders.length, previousPeriod.orderCount)} />
+            <TrendChip pct={pctChange(cogsSummary.totalCogs, previousPeriod.cogsTotal)} higherIsBetter={false} />
           </div>
-          <div className="mt-1 text-xl font-semibold">{formatCount(orders.length)}</div>
+          <div className="mt-1 text-xl font-semibold">{formatMoney(cogsSummary.totalCogs)}</div>
+        </div>
+        <div className="rounded-lg border border-black/[.08] bg-card p-4 shadow-sm dark:border-white/[.145]">
+          <div className="flex items-center justify-between gap-2 text-xs font-medium text-zinc-600 dark:text-zinc-400">
+            <span className="flex items-center gap-1.5">
+              <BarChart3 className="size-3.5" />
+              Gross profit
+            </span>
+            <TrendChip pct={pctChange(grossProfit, previousPeriod.grossProfit)} />
+          </div>
+          {/* Cash + KHQR minus Total COGS. */}
+          <div
+            className={`mt-1 text-xl font-semibold ${grossProfit < 0 ? "text-rose-600 dark:text-rose-400" : ""}`}
+          >
+            {formatMoney(grossProfit)}
+          </div>
         </div>
         <div className="rounded-lg border border-black/[.08] bg-card p-4 shadow-sm dark:border-white/[.145]">
           <div className="flex items-center justify-between gap-2 text-xs font-medium text-zinc-600 dark:text-zinc-400">
@@ -1387,105 +1410,40 @@ export default function AccountanceClient({
           <div className="flex items-center justify-between gap-2 text-xs font-medium text-zinc-600 dark:text-zinc-400">
             <span className="flex items-center gap-1.5">
               <PiggyBank className="size-3.5" />
-              {netProfit < 0 ? "Net Loss" : "Net profit"}
+              {cardNetProfit < 0 ? "Net Loss" : "Net profit"}
             </span>
             {/* A "+X%" badge here means the *loss shrank* (or profit grew) vs
                 the previous period -- still worth showing, but never on its
                 own next to a negative number without the red "Net Loss"
                 label above making clear the period itself was a loss. */}
-            <TrendChip pct={pctChange(netProfit, previousPeriod.netProfit)} />
+            <TrendChip pct={pctChange(cardNetProfit, previousPeriod.netProfit)} />
           </div>
           <div
-            className={`mt-1 text-xl font-semibold ${netProfit < 0 ? "text-rose-600 dark:text-rose-400" : ""}`}
+            className={`mt-1 text-xl font-semibold ${cardNetProfit < 0 ? "text-rose-600 dark:text-rose-400" : ""}`}
           >
-            {formatMoney(netProfit)}
+            {formatMoney(cardNetProfit)}
+          </div>
+        </div>
+        <div className="rounded-lg border border-black/[.08] bg-card p-4 shadow-sm dark:border-white/[.145]">
+          <div className="flex items-center justify-between gap-2 text-xs font-medium text-zinc-600 dark:text-zinc-400">
+            <span className="flex items-center gap-1.5">
+              <Percent className="size-3.5" />
+              Net profit margin
+            </span>
+          </div>
+          {/* Net profit as a share of Total revenue. */}
+          <div
+            className={`mt-1 text-xl font-semibold ${netMarginPct !== null && netMarginPct < 0 ? "text-rose-600 dark:text-rose-400" : ""}`}
+          >
+            {netMarginPct === null ? "—" : `${netMarginPct.toFixed(1)}%`}
           </div>
         </div>
       </div>
+      )}
 
       {error && <p className="mt-4 text-sm text-red-500">{error}</p>}
 
       <div className="mt-6 space-y-6">
-        {tab === "reconciliation" && (
-        <section className="rounded-lg border border-black/[.08] p-4 dark:border-white/[.145]">
-          <h2 className="font-medium">Cash reconciliation</h2>
-          {isAllBusinesses ? (
-            <>
-              <p className="mt-1 text-xs text-zinc-500">
-                There&apos;s no single cash drawer across all 3 businesses -- pick one to reconcile:
-              </p>
-              <div className="mt-2 flex flex-wrap gap-1.5">
-                {brands.map((b) => (
-                  <button
-                    key={b.id}
-                    type="button"
-                    onClick={() => switchBrand(b.id)}
-                    className="rounded-full border border-black/[.15] px-3 py-1 text-xs font-medium hover:bg-black/[.04] dark:border-white/[.2] dark:hover:bg-white/[.08]"
-                  >
-                    {b.name}
-                  </button>
-                ))}
-              </div>
-            </>
-          ) : !isSingleDay ? (
-            <div className="mt-1 flex flex-wrap items-center gap-2">
-              <p className="text-xs text-zinc-500">
-                Cash is counted once per day -- narrow the date range above to a single day to
-                reconcile it, or
-              </p>
-              <button
-                type="button"
-                onClick={() => switchDates(todayIso(), todayIso())}
-                className="text-xs font-medium text-brand hover:underline"
-              >
-                jump to today
-              </button>
-            </div>
-          ) : (
-            <>
-              <p className="mt-1 text-xs text-zinc-500">
-                Expected cash from sales: {formatMoney(summary.cashTotal)}
-              </p>
-              <div className="mt-3 flex flex-col gap-2">
-                <label className="text-xs text-zinc-500">Counted cash</label>
-                <input
-                  type="number"
-                  step="0.01"
-                  value={countedCash}
-                  onChange={(e) => setCountedCash(e.target.value)}
-                  className="rounded border border-black/[.15] bg-transparent px-3 py-1.5 text-sm dark:border-white/[.2]"
-                />
-                <label className="text-xs text-zinc-500">Notes (optional)</label>
-                <input
-                  type="text"
-                  value={notes}
-                  onChange={(e) => setNotes(e.target.value)}
-                  className="rounded border border-black/[.15] bg-transparent px-3 py-1.5 text-sm dark:border-white/[.2]"
-                />
-                <button
-                  disabled={isPending}
-                  onClick={saveReconciliation}
-                  className="mt-1 self-start rounded-full bg-black px-4 py-1.5 text-sm text-white disabled:opacity-40 dark:bg-white dark:text-black"
-                >
-                  Save reconciliation
-                </button>
-              </div>
-              {variance !== null && (
-                <p
-                  className={`mt-3 text-sm font-medium ${
-                    variance === 0 ? "text-green-600" : "text-red-500"
-                  }`}
-                >
-                  Variance: {variance > 0 ? "+" : ""}
-                  {formatMoney(variance)}{" "}
-                  {variance === 0 ? "(balanced)" : variance > 0 ? "(over)" : "(short)"}
-                </p>
-              )}
-            </>
-          )}
-        </section>
-        )}
-
         {tab === "expenses" && (
         <section className="rounded-lg border border-black/[.08] p-4 dark:border-white/[.145]">
           <h2 className="font-medium">Expense log</h2>
@@ -1529,18 +1487,34 @@ export default function AccountanceClient({
             <input
               ref={expenseDescRef}
               type="text"
-              placeholder="Description"
+              placeholder="Description (Optional)"
               value={expenseDesc}
               onChange={(e) => setExpenseDesc(e.target.value)}
               className="min-w-[10rem] flex-1 rounded border border-black/[.15] bg-transparent px-3 py-1.5 text-sm dark:border-white/[.2]"
             />
-            <input
-              type="text"
-              placeholder="Category (optional)"
+            <select
               value={expenseCategory}
               onChange={(e) => setExpenseCategory(e.target.value)}
-              className="w-36 rounded border border-black/[.15] bg-transparent px-3 py-1.5 text-sm dark:border-white/[.2]"
-            />
+              className="rounded border border-black/[.15] bg-transparent px-3 py-1.5 text-sm dark:border-white/[.2]"
+            >
+              {/* The select is transparent, so its popup would otherwise paint
+                  white with light text in dark mode -- give options a theme bg. */}
+              <option value="" className="bg-card text-foreground">
+                Category
+              </option>
+              {/* An older expense may carry a free-typed category; keep it
+                  selectable so editing doesn't silently blank it. */}
+              {expenseCategory && !EXPENSE_CATEGORY_OPTIONS.includes(expenseCategory) && (
+                <option value={expenseCategory} className="bg-card text-foreground">
+                  {expenseCategory}
+                </option>
+              )}
+              {EXPENSE_CATEGORY_OPTIONS.map((c) => (
+                <option key={c} value={c} className="bg-card text-foreground">
+                  {c}
+                </option>
+              ))}
+            </select>
             <input
               type="number"
               step="0.01"
@@ -1584,9 +1558,11 @@ export default function AccountanceClient({
               onChange={(e) => setExpenseCategoryFilter(e.target.value)}
               className="rounded border border-black/[.15] bg-transparent px-3 py-1.5 text-sm dark:border-white/[.2]"
             >
-              <option value="">All categories</option>
+              <option value="" className="bg-card text-foreground">
+                All categories
+              </option>
               {expenseCategories.map((c) => (
-                <option key={c} value={c}>
+                <option key={c} value={c} className="bg-card text-foreground">
                   {c}
                 </option>
               ))}
@@ -1613,7 +1589,7 @@ export default function AccountanceClient({
                     <td className="py-2 pr-3 text-center whitespace-nowrap text-zinc-500">{e.expense_date}</td>
                     <td className="py-2 pr-3 whitespace-nowrap">{brandNameFor(e.brand_id)}</td>
                     <td className="py-2 pr-3 text-zinc-500">{e.category || "—"}</td>
-                    <td className="py-2 pr-3">{e.description}</td>
+                    <td className="py-2 pr-3">{e.description || "—"}</td>
                     <td className="py-2 pr-3 text-right font-medium tabular-nums">{formatMoney(e.amount)}</td>
                     <td className="py-2 text-right whitespace-nowrap">
                       <button
@@ -1832,65 +1808,8 @@ export default function AccountanceClient({
                 complete them.
               </p>
             )}
-            <div className="flex items-center justify-between gap-3">
-              <div className="flex items-center gap-1.5">
-                <h2 className="text-sm font-medium text-foreground">Waste tracking</h2>
-                <span
-                  title={
-                    currentBrand.id === ALL_BUSINESSES_ID
-                      ? "Switch to a single business to log waste."
-                      : "Spoiled, damaged, or expired stock -- logs a stock adjustment and counts toward Waste below."
-                  }
-                >
-                  <Info className="size-3.5 text-zinc-400" />
-                </span>
-              </div>
-              <button
-                type="button"
-                onClick={() => {
-                  loadWasteItems();
-                  setWasteModalOpen(true);
-                }}
-                onMouseEnter={loadWasteItems}
-                onFocus={loadWasteItems}
-                disabled={currentBrand.id === ALL_BUSINESSES_ID}
-                className="shrink-0 rounded-full bg-brand px-3 py-1.5 text-sm font-medium text-white shadow-sm hover:brightness-95 disabled:opacity-40 disabled:shadow-none"
-              >
-                + Add waste item
-              </button>
-            </div>
-            <div className="grid grid-cols-2 gap-4 lg:grid-cols-5">
-              <div className="rounded-lg border border-black/[.08] bg-card p-4 shadow-sm dark:border-white/[.145]">
-                <div className="flex items-center gap-1.5 text-xs text-zinc-500">
-                  <Receipt className="size-3.5" />
-                  Total COGS
-                </div>
-                <div className="mt-1 text-xl font-semibold">{formatMoney(cogsSummary.totalCogs)}</div>
-              </div>
-              <div className="rounded-lg border border-black/[.08] bg-card p-4 shadow-sm dark:border-white/[.145]">
-                <div className="flex items-center gap-1.5 text-xs text-zinc-500">
-                  <TrendingUp className="size-3.5" />
-                  Gross profit
-                </div>
-                <div className="mt-1 text-xl font-semibold">{formatMoney(grossProfit)}</div>
-              </div>
-              <div className="rounded-lg border border-black/[.08] bg-card p-4 shadow-sm dark:border-white/[.145]">
-                <div className="flex items-center justify-between gap-2 text-xs text-zinc-500">
-                  <span className="flex items-center gap-1.5">
-                    <Percent className="size-3.5" />
-                    Gross margin %
-                  </span>
-                  {grossMarginPct !== null &&
-                    (grossMarginPct >= 40 ? (
-                      <TrendBadge tone="positive">Healthy</TrendBadge>
-                    ) : grossMarginPct < 15 ? (
-                      <TrendBadge tone="negative">Low</TrendBadge>
-                    ) : null)}
-                </div>
-                <div className="mt-1 text-xl font-semibold">
-                  {grossMarginPct === null ? "—" : `${grossMarginPct.toFixed(1)}%`}
-                </div>
-              </div>
+            <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+              <InventoryCogsBoxes units={stockUnits} />
               <button
                 type="button"
                 onClick={() => setWasteLogOpen((v) => !v)}
@@ -1912,24 +1831,34 @@ export default function AccountanceClient({
                   )}
                 </div>
               </button>
-              <div className="rounded-lg border border-black/[.08] bg-card p-4 shadow-sm dark:border-white/[.145]">
-                <div className="flex items-center justify-between gap-2 text-xs text-zinc-500">
-                  <span className="flex items-center gap-1.5">
-                    <Tag className="size-3.5" />
-                    Promotions
-                  </span>
-                  {cogsSummary.promotionCost > 0 && promoRatio > 0.05 && (
-                    <TrendBadge tone="negative">High</TrendBadge>
-                  )}
-                </div>
-                <div className="mt-1 text-xl font-semibold">{formatMoney(cogsSummary.promotionCost)}</div>
-              </div>
             </div>
 
             {wasteLogOpen && (
               <section className="rounded-lg border border-black/[.08] p-4 dark:border-white/[.145]">
-                <h2 className="font-medium">Waste log</h2>
-                <p className="mt-1 text-xs text-zinc-500">{rangeLabel}</p>
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <h2 className="font-medium">Waste log</h2>
+                    <p className="mt-1 text-xs text-zinc-500">{rangeLabel}</p>
+                  </div>
+                  <button
+                    type="button"
+                    title={
+                      currentBrand.id === ALL_BUSINESSES_ID
+                        ? "Switch to a single business to log waste."
+                        : "Spoiled, damaged, or expired stock -- logs a stock adjustment and counts toward Waste."
+                    }
+                    onClick={() => {
+                      loadWasteItems();
+                      setWasteModalOpen(true);
+                    }}
+                    onMouseEnter={loadWasteItems}
+                    onFocus={loadWasteItems}
+                    disabled={currentBrand.id === ALL_BUSINESSES_ID}
+                    className="shrink-0 rounded-full bg-brand px-3 py-1.5 text-sm font-medium text-white shadow-sm hover:brightness-95 disabled:opacity-40 disabled:shadow-none"
+                  >
+                    + Add waste item
+                  </button>
+                </div>
                 <div className="mt-4 overflow-x-auto">
                   <table className="w-full text-sm">
                     <thead>

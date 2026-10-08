@@ -6,6 +6,7 @@ import {
   getExpensesForDateRange,
   getMarginReport,
   getReconciliation,
+  getStockUnits,
   getWasteLog,
   type WasteLogEntry,
 } from "@/lib/supabase/queries";
@@ -88,7 +89,7 @@ function quarterOf(dateStr: string): string {
   return `${y}-Q${Math.floor((m - 1) / 3) + 1}`;
 }
 
-const ACCOUNTANCE_TABS = ["reconciliation", "expenses", "reports", "cogs"] as const;
+const ACCOUNTANCE_TABS = ["expenses", "reports", "cogs"] as const;
 export type AccountanceTab = (typeof ACCOUNTANCE_TABS)[number];
 
 // A pseudo-brand for the "All Businesses" option in the brand dropdown --
@@ -158,7 +159,7 @@ export default async function AccountancePage({
   const month = monthParam || today.slice(0, 7);
   const quarter = quarterParam || quarterOf(today);
   const year = yearParam || today.slice(0, 4);
-  const tab = ACCOUNTANCE_TABS.includes(tabParam as AccountanceTab) ? (tabParam as AccountanceTab) : "reconciliation";
+  const tab = ACCOUNTANCE_TABS.includes(tabParam as AccountanceTab) ? (tabParam as AccountanceTab) : "expenses";
 
   // `date` is kept as a fallback so any old bookmarked/shared link (before
   // this page had a range) still resolves to that single day.
@@ -226,6 +227,9 @@ export default async function AccountancePage({
         ]);
   const wasteLogPromise: Promise<WasteLogEntry[]> =
     tab === "cogs" ? getWasteLog(currentBrand.id, fromDate, toDate) : Promise.resolve([]);
+  // The stock-unit boxes only exist on the COGS tab.
+  const stockUnitsPromise =
+    tab === "cogs" ? getStockUnits(currentBrand.id, fromDate, toDate) : Promise.resolve(null);
   const previousPeriodPromise = Promise.all([
     getDailySales(currentBrand.id, prevFromDate, prevToDate),
     getExpensesForDateRange(currentBrand.id, prevFromDate, prevToDate),
@@ -237,17 +241,21 @@ export default async function AccountancePage({
     [{ summary, orders }, reconciliation, expenses, cogsSummary, marginReport],
     wasteLog,
     [{ summary: prevSummary }, prevExpenses, prevCogsSummary],
-  ] = await Promise.all([currentDataPromise, wasteLogPromise, previousPeriodPromise]);
+    stockUnits,
+  ] = await Promise.all([currentDataPromise, wasteLogPromise, previousPeriodPromise, stockUnitsPromise]);
 
   const prevExpenseTotal = prevExpenses.reduce((sum, e) => sum + e.amount, 0);
   const prevGrossProfit = prevSummary.total - prevCogsSummary.totalCogs;
-  const prevNetProfit = prevGrossProfit - prevExpenseTotal - prevCogsSummary.wasteCost - prevCogsSummary.promotionCost;
+  // Net profit summary card = total revenue - total expenses.
+  const prevNetProfit = prevSummary.total - prevExpenseTotal;
   const previousPeriod = {
     cashTotal: prevSummary.cashTotal,
     nonCashTotal: prevSummary.nonCashTotal,
     orderCount: prevSummary.orderCount,
     total: prevSummary.total,
     expenseTotal: prevExpenseTotal,
+    cogsTotal: prevCogsSummary.totalCogs,
+    grossProfit: prevGrossProfit,
     netProfit: prevNetProfit,
   };
 
@@ -271,6 +279,7 @@ export default async function AccountancePage({
       cogsSummary={cogsSummary}
       marginReport={marginReport}
       wasteLog={wasteLog}
+      stockUnits={stockUnits}
       previousPeriod={previousPeriod}
     />
   );

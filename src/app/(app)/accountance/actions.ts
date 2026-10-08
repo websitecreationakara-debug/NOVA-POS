@@ -56,7 +56,6 @@ export async function addExpenseAction(input: {
   date: string;
 }): Promise<void> {
   const { brandId, description, amount, category, date } = input;
-  if (!description.trim()) throw new Error("Description is required");
   if (amount <= 0) throw new Error("Amount must be greater than 0");
   const user = await getSessionUser();
 
@@ -85,7 +84,6 @@ export async function updateExpenseAction(
   }
 ): Promise<void> {
   const { brandId, description, amount, category, date } = input;
-  if (!description.trim()) throw new Error("Description is required");
   if (amount <= 0) throw new Error("Amount must be greater than 0");
 
   const { error } = await supabaseAdmin
