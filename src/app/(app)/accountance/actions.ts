@@ -18,6 +18,22 @@ export async function getWasteItemsAction(brandId: string): Promise<StockPickerI
   return getStockPickerItems(brand.id, brand.slug);
 }
 
+// Takes a mistaken Stock page add back out: lowers the product's stock by `quantity` (never
+// below what's actually left) and logs it, so the add no longer counts in Inventory Purchased.
+export async function undoStockAddAction(input: { productId: string; quantity: number }): Promise<void> {
+  await requireStockAccess();
+  if (!(input.quantity > 0)) throw new Error("Nothing to undo");
+  const { data: live } = await supabaseAdmin
+    .from("stock_levels")
+    .select("quantity")
+    .eq("product_id", input.productId)
+    .maybeSingle();
+  const delta = -Math.min(input.quantity, live?.quantity ?? 0);
+  if (delta === 0) throw new Error("This product has no stock left to take back out");
+  await adjustStockAction({ productId: input.productId, delta, reason: "Stock add undone" });
+  revalidatePath("/accountance");
+}
+
 export async function saveReconciliationAction(input: {
   brandId: string;
   date: string;

@@ -164,6 +164,7 @@ export default function WebsiteProductsPanel({
   addons,
   initialCategories,
   purchaseCosts,
+  recentStockUpdates,
 }: {
   catalogId: WebsiteCatalogId;
   initialProducts: WebsiteProduct[] | null;
@@ -187,6 +188,9 @@ export default function WebsiteProductsPanel({
   // purchasing record (see lib/websiteProducts/purchaseCosts.ts), keyed by
   // purchaseCostKey(siteProductId, variationId).
   purchaseCosts?: Record<string, PurchaseCostFields>;
+  // When each entry's stock was last changed by hand in the last 7 days (ISO time), keyed like
+  // posEntryKey -- drives the "Recently updated" filter.
+  recentStockUpdates?: Record<string, string>;
 }) {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -198,6 +202,8 @@ export default function WebsiteProductsPanel({
   const [search, setSearch] = useState("");
   const [categoryFilter, setCategoryFilter] = useState<string>("");
   const [outOfStockOnly, setOutOfStockOnly] = useState(false);
+  // Only the products whose stock was changed in the last 7 days, newest change first.
+  const [recentOnly, setRecentOnly] = useState(false);
   // Pre-checked when linked in from the Dashboard's "Low Stock Items" card
   // (/stock?filter=low) -- read once at mount; later manual toggling doesn't
   // touch the URL.
@@ -948,6 +954,9 @@ export default function WebsiteProductsPanel({
     const s = v ? v.stock : p.stock;
     return s !== null && s <= 0;
   }).length;
+  const recentKeyOf = ({ product: p, variation: v }: { product: WebsiteProduct; variation: WebsiteProductVariation | null }) =>
+    posEntryKey(p.id, v ? v.id : "");
+  const recentCount = allEntries.filter((e) => !!recentStockUpdates?.[recentKeyOf(e)]).length;
 
   const filtered = allEntries.filter(({ product: p, variation: v }) => {
     const weight = v?.weight ?? p.weight;
@@ -962,9 +971,15 @@ export default function WebsiteProductsPanel({
           ? !p.category_id
           : !!p.category_id && !!categoryFilterIds?.has(p.category_id))) &&
       (!outOfStockOnly || (stock !== null && stock <= 0)) &&
-      (!lowStockOnly || (stock !== null && stock > 0 && stock <= 5))
+      (!lowStockOnly || (stock !== null && stock > 0 && stock <= 5)) &&
+      (!recentOnly || !!recentStockUpdates?.[posEntryKey(p.id, v ? v.id : "")])
     );
   });
+  if (recentOnly) {
+    filtered.sort((a, b) =>
+      (recentStockUpdates?.[recentKeyOf(b)] ?? "").localeCompare(recentStockUpdates?.[recentKeyOf(a)] ?? "")
+    );
+  }
   // Same search box, applied to the Addons tab too -- title/description match.
   const filteredAddons = (addons ?? []).filter(
     (a) => !q || a.title.toLowerCase().includes(q) || (a.description ?? "").toLowerCase().includes(q)
@@ -973,7 +988,7 @@ export default function WebsiteProductsPanel({
   // products) -- they live in their own table, so without this a search for an
   // addon only worked after switching to the Addons chip.
   const showAddonMatches =
-    !categoryFilter && !!q && !outOfStockOnly && !lowStockOnly && filteredAddons.length > 0;
+    !categoryFilter && !!q && !outOfStockOnly && !lowStockOnly && !recentOnly && filteredAddons.length > 0;
   // Linked POS product's cost_price per addon -- the Total box's fallback -- and
   // its Khmer name / scale, for the addon Edit box.
   const addonFallbackCosts: Record<string, number> = {};
@@ -991,7 +1006,7 @@ export default function WebsiteProductsPanel({
   }
   const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize));
   // Snap back to page 1 whenever the result set changes under the current page.
-  const filterKey = `${q}|${categoryFilter}|${outOfStockOnly}|${lowStockOnly}|${pageSize}|${pageCount}`;
+  const filterKey = `${q}|${categoryFilter}|${outOfStockOnly}|${lowStockOnly}|${recentOnly}|${pageSize}|${pageCount}`;
   const [prevFilterKey, setPrevFilterKey] = useState(filterKey);
   if (filterKey !== prevFilterKey) {
     setPrevFilterKey(filterKey);
@@ -1185,6 +1200,24 @@ export default function WebsiteProductsPanel({
             }`}
           >
             {outOfStockCount}
+          </span>
+        </button>
+        <button
+          onClick={() => setRecentOnly((v) => !v)}
+          title="Products whose stock was changed in the last 7 days, newest first"
+          className={`flex shrink-0 items-center gap-1.5 rounded-full border px-3 py-1.5 text-sm ${
+            recentOnly
+              ? "border-brand bg-brand text-white"
+              : "border-black/[.15] dark:border-white/[.2]"
+          }`}
+        >
+          Recently updated
+          <span
+            className={`rounded-full px-1.5 text-xs font-semibold ${
+              recentOnly ? "bg-white/25" : "bg-brand/15 text-brand"
+            }`}
+          >
+            {recentCount}
           </span>
         </button>
       </div>
