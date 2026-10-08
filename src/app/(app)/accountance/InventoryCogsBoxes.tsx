@@ -1,14 +1,13 @@
 "use client";
 
-import { useState, useTransition, type ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { Calculator, ChevronDown, PackageCheck, PackagePlus, Warehouse } from "lucide-react";
 import { formatCount } from "@/lib/formatNumber";
 import { ppDay } from "@/lib/phnomPenhTime";
 import { STOCK_TRACKING_START } from "@/lib/stockTracking";
 import type { StockUnits } from "@/lib/supabase/queries";
-import { undoStockAddAction } from "./actions";
+import UndoStockAddDialog from "@/components/UndoStockAddDialog";
 
 const cardClass = "rounded-lg border border-black/[.08] bg-card p-4 shadow-sm dark:border-white/[.145]";
 const labelClass = "flex items-center gap-1.5 text-xs font-medium text-zinc-600 dark:text-zinc-400";
@@ -58,22 +57,8 @@ function box(
 // customers in the range (ending), and the fourth box works out beginning + purchased - ending.
 export default function InventoryCogsBoxes({ units }: { units: StockUnits | null }) {
   const [purchasedOpen, setPurchasedOpen] = useState(false);
-  const router = useRouter();
-  const [isPending, startTransition] = useTransition();
-  const [undoError, setUndoError] = useState<string | null>(null);
-
-  function undoAdd(productId: string, name: string, quantity: number) {
-    if (!window.confirm(`Take ${formatCount(quantity)} unit(s) of "${name}" back out of stock?`)) return;
-    setUndoError(null);
-    startTransition(async () => {
-      try {
-        await undoStockAddAction({ productId, quantity });
-        router.refresh();
-      } catch (e) {
-        setUndoError(e instanceof Error ? e.message : "Couldn't undo");
-      }
-    });
-  }
+  // The product whose Undo was clicked, waiting for confirmation in the dialog.
+  const [confirmUndo, setConfirmUndo] = useState<{ productId: string; name: string; quantity: number } | null>(null);
 
   if (!units) {
     const note = `stock tracking starts ${STOCK_TRACKING_START}`;
@@ -124,7 +109,6 @@ export default function InventoryCogsBoxes({ units }: { units: StockUnits | null
               Update stock
             </Link>
           </div>
-          {undoError && <p className="mt-3 text-sm text-red-500">{undoError}</p>}
           <div className="mt-4 overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
@@ -153,10 +137,9 @@ export default function InventoryCogsBoxes({ units }: { units: StockUnits | null
                       {i.quantity > 0 && (
                         <button
                           type="button"
-                          disabled={isPending}
-                          onClick={() => undoAdd(i.productId, i.name, i.quantity)}
+                          onClick={() => setConfirmUndo({ productId: i.productId, name: i.name, quantity: i.quantity })}
                           title="Added to the wrong product? Take this stock back out."
-                          className="rounded-full border border-black/[.15] px-3 py-1 text-xs font-medium hover:bg-black/[.04] disabled:opacity-40 dark:border-white/[.2] dark:hover:bg-white/[.08]"
+                          className="rounded-full border border-black/[.15] px-3 py-1 text-xs font-medium hover:bg-black/[.04] dark:border-white/[.2] dark:hover:bg-white/[.08]"
                         >
                           Undo
                         </button>
@@ -175,6 +158,15 @@ export default function InventoryCogsBoxes({ units }: { units: StockUnits | null
             </table>
           </div>
         </section>
+      )}
+
+      {confirmUndo && (
+        <UndoStockAddDialog
+          productId={confirmUndo.productId}
+          productName={confirmUndo.name}
+          quantity={confirmUndo.quantity}
+          onClose={() => setConfirmUndo(null)}
+        />
       )}
     </>
   );
