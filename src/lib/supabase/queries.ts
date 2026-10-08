@@ -1003,6 +1003,8 @@ export type InvoiceData = {
     // Stock ("1pc (125g)"), printed after the name. null when the product has
     // none, the name already says it, or the line is a custom size.
     weightLabel: string | null;
+    // The product's picture, shown in a pop-up when its row on the order page is clicked.
+    imageUrl: string | null;
   }[];
 };
 
@@ -1044,6 +1046,30 @@ async function getSiteWeightLabels(productIds: string[]): Promise<Map<string, st
   return out;
 }
 
+// The website listing's picture for POS products that have none of their own, found through
+// the product's website link (the size's own picture for a size of a variable product). Best
+// effort: a product with no link, or a website that can't be reached, just has no entry.
+async function getWebsiteImagesForProducts(productIds: string[]): Promise<Map<string, string>> {
+  const images = new Map<string, string>();
+  if (productIds.length === 0) return images;
+  const { data: links } = await supabaseAdmin
+    .from("product_site_links")
+    .select("product_id, site, site_product_id, variation_id")
+    .in("product_id", productIds);
+  await Promise.all(
+    (links ?? []).map(async (l) => {
+      const catalog = catalogForBrandSlug(l.site);
+      if (!catalog) return;
+      const site = await getWebsiteProduct(catalog.id, l.site_product_id).catch(() => null);
+      if (!site) return;
+      const variation = l.variation_id ? site.variations?.find((v) => v.id === l.variation_id) : null;
+      const url = variation?.image_url ?? site.image_url;
+      if (url) images.set(l.product_id, url);
+    })
+  );
+  return images;
+}
+
 export async function getInvoice(orderId: string): Promise<InvoiceData | null> {
   const { data: order, error: orderError } = await supabaseAdmin
     .from("orders")
@@ -1056,7 +1082,7 @@ export async function getInvoice(orderId: string): Promise<InvoiceData | null> {
 
   const { data: items, error: itemsError } = await supabaseAdmin
     .from("order_items")
-    .select("product_id, quantity, unit_price, line_total, size_label, products(name, unit, name_km, unit_km)")
+    .select("product_id, quantity, unit_price, line_total, size_label, products(name, unit, name_km, unit_km, image_url)")
     .eq("order_id", orderId);
 
   if (itemsError) throw itemsError;
@@ -1067,7 +1093,13 @@ export async function getInvoice(orderId: string): Promise<InvoiceData | null> {
     unit_price: number;
     line_total: number;
     size_label: string | null;
-    products: { name: string; unit: string; name_km: string | null; unit_km: string | null } | null;
+    products: {
+      name: string;
+      unit: string;
+      name_km: string | null;
+      unit_km: string | null;
+      image_url: string | null;
+    } | null;
   };
   const { brands, customers, ...orderFields } = order as Order & {
     brands: { name: string; slug: string; logo_url: string | null } | null;
@@ -1088,6 +1120,9 @@ export async function getInvoice(orderId: string): Promise<InvoiceData | null> {
   }
 
   const weightLabels = await getSiteWeightLabels([...new Set(((items ?? []) as ItemRow[]).map((i) => i.product_id))]);
+  const websiteImages = await getWebsiteImagesForProducts(
+    [...new Set(((items ?? []) as ItemRow[]).filter((i) => !i.products?.image_url).map((i) => i.product_id))]
+  );
   const squash = (t: string) => t.toLowerCase().replace(/\s+/g, "");
 
   return {
@@ -1107,6 +1142,7 @@ export async function getInvoice(orderId: string): Promise<InvoiceData | null> {
       sizeLabel: i.size_label,
       nameKm: i.products?.name_km ?? null,
       unitKm: i.products?.unit_km ?? null,
+      imageUrl: i.products?.image_url ?? websiteImages.get(i.product_id) ?? null,
       weightLabel: (() => {
         const label = weightLabels.get(i.product_id) ?? null;
         if (!label || i.size_label) return null;
