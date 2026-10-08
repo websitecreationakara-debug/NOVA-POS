@@ -92,6 +92,7 @@ export default async function OrderDetailPage({
             nameKm: i.nameKm,
             unitKm: i.unitKm,
             weightLabel: i.weightLabel,
+            imageUrl: i.imageUrl,
           }))}
         />
       </div>

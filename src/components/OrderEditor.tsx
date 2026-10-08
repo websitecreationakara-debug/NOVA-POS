@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Check, Pencil, Plus, RefreshCw, Trash2, X } from "lucide-react";
@@ -34,6 +34,7 @@ type Row = {
   nameKm?: string | null;
   unitKm?: string | null;
   weightLabel?: string | null;
+  imageUrl?: string | null;
 };
 
 export type OrderEditorItem = {
@@ -49,6 +50,8 @@ export type OrderEditorItem = {
   unitKm?: string | null;
   // The product's weight text from its website listing ("1pc (125g)").
   weightLabel?: string | null;
+  // The product's picture, for the pop-up opened by clicking its row.
+  imageUrl?: string | null;
 };
 
 let rowSeq = 0;
@@ -89,6 +92,8 @@ export default function OrderEditor({
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // The product whose row was clicked -- shown in a pop-up with its picture and name.
+  const [preview, setPreview] = useState<{ name: string; imageUrl: string | null } | null>(null);
 
   // Draft fields, only meaningful while editing.
   const [draft, setDraft] = useState<Row[]>([]);
@@ -102,6 +107,16 @@ export default function OrderEditor({
   const [dDeliveryAt, setDDeliveryAt] = useState("");
   const [dPaymentMethod, setDPaymentMethod] = useState<PaymentMethod | "">("");
   const [dNote, setDNote] = useState("");
+
+  // Escape closes the product pop-up.
+  useEffect(() => {
+    if (!preview) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setPreview(null);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [preview]);
 
   const viewRows = useMemo(() => toRows(items), [items]);
   const rows = editing ? draft : viewRows;
@@ -369,7 +384,19 @@ export default function OrderEditor({
             </thead>
             <tbody>
               {rows.map((r) => (
-                <tr key={r.key} className="border-b border-border">
+                <tr
+                  key={r.key}
+                  onClick={
+                    editing
+                      ? undefined
+                      : () =>
+                          setPreview({
+                            name: `${r.nameKm?.trim() || r.name}${r.sizeLabel ? ` — ${r.sizeLabel}` : ""}`,
+                            imageUrl: r.imageUrl ?? null,
+                          })
+                  }
+                  className={`border-b border-border ${editing ? "" : "cursor-pointer hover:bg-black/[.03] dark:hover:bg-white/[.05]"}`}
+                >
                   <td className="py-2 pr-2">
                     {r.nameKm?.trim() || r.name}
                     {r.sizeLabel ? ` — ${r.sizeLabel}` : ""}
@@ -533,6 +560,42 @@ export default function OrderEditor({
       </div>
 
       {error && <p className="mt-3 text-right text-sm text-red-500">{error}</p>}
+
+      {preview && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+          onClick={() => setPreview(null)}
+        >
+          <div
+            role="dialog"
+            aria-label={preview.name}
+            className="relative w-full max-w-md rounded-2xl bg-card p-4 shadow-xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <button
+              type="button"
+              onClick={() => setPreview(null)}
+              aria-label="Close"
+              className="absolute top-3 right-3 rounded-full bg-black/50 p-1 text-white hover:bg-black/70"
+            >
+              <X className="size-4" />
+            </button>
+            {preview.imageUrl ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={preview.imageUrl}
+                alt={preview.name}
+                className="max-h-[70vh] w-full rounded-xl object-contain"
+              />
+            ) : (
+              <div className="flex h-48 w-full items-center justify-center rounded-xl bg-muted text-sm text-muted-foreground">
+                No image for this product
+              </div>
+            )}
+            <p className="mt-3 text-center text-base font-semibold">{preview.name}</p>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
