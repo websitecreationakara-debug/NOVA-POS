@@ -87,7 +87,11 @@ export async function exportAccountancePdf(
   } else {
     for (const e of data.expenses) {
       ensureRoom(7);
-      const label = e.category ? `${e.description} (${e.category})` : e.description;
+      const label = e.description
+        ? e.category
+          ? `${e.description} (${e.category})`
+          : e.description
+        : e.category || "Expense";
       pdf.text(label, marginX, y, { maxWidth: pageW - marginX * 2 - 30 });
       pdf.text(money(e.amount), pageW - marginX, y, { align: "right" });
       y += 7;

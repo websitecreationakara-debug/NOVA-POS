@@ -690,6 +690,11 @@ export type Database = {
         Args: { p_statuses: string[]; p_brand_id: string | null; p_from: string; p_to: string };
         Returns: Json;
       };
+      // Units on hand at the start and end of a range, from the stock history (migration 0074).
+      stock_units_between: {
+        Args: { p_brand_id: string | null; p_from: string; p_to: string };
+        Returns: Json;
+      };
       // Insight by Quantity / Price: one row per product with its 12 months (migration 0072).
       product_monthly: {
         Args: { p_year: number; p_brand?: string | null };

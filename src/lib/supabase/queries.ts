@@ -6,6 +6,7 @@ import { countLowStock } from "@/lib/websiteProducts/stock";
 import type { WebsiteCatalogId } from "@/lib/websiteProducts/types";
 import { formatInvoiceNumber, invoiceMonthStamp, invoiceMonthStartIso } from "@/lib/invoiceNumber";
 import { ppDayEnd, ppDayStart } from "@/lib/phnomPenhTime";
+import { STOCK_TRACKING_START } from "@/lib/stockTracking";
 import { COUNTED_FULFILLMENT_STATUSES } from "@/lib/orderStatus";
 import { orderForBrandShare } from "@/lib/orderBrandShare";
 import { ALL_PAYMENT_METHODS, type PaymentMethod } from "@/lib/paymentMethods";
@@ -235,6 +236,208 @@ export async function getReconciliation(
 
   if (error) throw error;
   return data;
+}
+
+// What the Stock page shows for a business that has a website: the website's own products
+// (and add-ons) and their stock. Returns the total units, the keys ("siteProductId::variationId")
+// of everything that is on the website (so POS products that aren't -- old test items, items
+// taken off the site -- can be left out), and the subset of keys whose stock is actually counted
+// (add-ons and some products have no stock number, i.e. unlimited). null for a business with no
+// website or one that can't be reached -- the caller then falls back to the POS stock.
+async function websiteStock(
+  brandSlug: string
+): Promise<{ units: number; keys: Set<string>; trackedKeys: Set<string> } | null> {
+  const catalog = catalogForBrandSlug(brandSlug);
+  if (!catalog) return null;
+  try {
+    const siteProducts = await listWebsiteProducts(catalog.id);
+    let units = 0;
+    const keys = new Set<string>();
+    const trackedKeys = new Set<string>();
+    const add = (key: string, stock: number | null | undefined) => {
+      keys.add(key);
+      if (stock !== null && stock !== undefined) {
+        units += Number(stock);
+        trackedKeys.add(key);
+      }
+    };
+    for (const wp of siteProducts) {
+      const isVariable = (wp.type === "variable" || wp.type === "variant") && (wp.variations?.length ?? 0) > 0;
+      if (isVariable) {
+        for (const v of wp.variations!) add(`${wp.id}::${v.id ?? ""}`, v.stock);
+      } else {
+        add(`${wp.id}::`, wp.stock);
+      }
+    }
+    // The storefront's add-ons (rice, sauce, ...) are sold and restocked like products, so
+    // they count too. A missing add-ons list just leaves them out.
+    try {
+      for (const a of await listWebsiteAddons(catalog.id)) add(`${a.id}::`, a.stock);
+    } catch {
+      // add-ons unreachable -- products alone still count
+    }
+    return { units, keys, trackedKeys };
+  } catch {
+    return null;
+  }
+}
+
+export type StockUnits = {
+  // Units in stock at the start of the range: the stock now, with everything that moved
+  // stock since then undone (restocks, waste, orders). Follows the date picker.
+  beginning: number;
+  // Units added by hand (Stock page restocks) in the range -- order cancel/delete
+  // restocks are returns of stock already counted as sold, so they're left out.
+  purchased: number;
+  // Units sold to customers in the range (paid, counted fulfillment statuses).
+  sold: number;
+  // The units sold to customers in the range (same as `sold`).
+  ending: number;
+};
+
+// Unit counts behind the COGS tab's inventory boxes, synced with the Stock page: for a business
+// with a website, only products that are on the website count (their stock, the stock added
+// to them, and the sales of them) -- not old test items that were never on it. Beginning is the
+// stock at the start of the range, Purchased is the stock added in the range, Ending is the
+// stock sold to customers in the range. Only from the tracking start day on; a range wholly
+// before it has no figures.
+export async function getStockUnits(
+  brandId: string,
+  requestedFromDate: string,
+  toDate: string
+): Promise<StockUnits | null> {
+  if (toDate < STOCK_TRACKING_START) return null;
+  const fromDate = requestedFromDate < STOCK_TRACKING_START ? STOCK_TRACKING_START : requestedFromDate;
+  const scoped = brandId !== ALL_BUSINESSES_ID;
+  const from = ppDayStart(fromDate);
+  const to = ppDayEnd(toDate);
+
+  let soldQuery = supabaseAdmin
+    .from("order_items")
+    .select("product_id, quantity, products!inner(brand_id), orders!inner(status, list_at)")
+    .eq("orders.status", "paid")
+    .in("orders.fulfillment_status", COUNTED_FULFILLMENT_STATUSES)
+    .gte("orders.list_at", from)
+    .lte("orders.list_at", to);
+  let addedQuery = supabaseAdmin
+    .from("stock_adjustments")
+    .select("product_id, delta, reason, products!inner(brand_id)")
+    .gt("delta", 0)
+    .eq("category", "other")
+    .gte("created_at", from)
+    .lte("created_at", to);
+  // Everything that moved stock from the start of the range until now, to wind today's stock
+  // back to the start: every logged adjustment, every order line (an order takes its stock out
+  // when it's created; a cancel/delete puts it back as a logged adjustment), and the ingredients
+  // a recipe line used.
+  let movedAdjustmentsQuery = supabaseAdmin
+    .from("stock_adjustments")
+    .select("product_id, delta, products!inner(brand_id)")
+    .gte("created_at", from);
+  let movedLinesQuery = supabaseAdmin
+    .from("order_items")
+    .select("product_id, quantity, products!inner(brand_id), orders!inner(created_at)")
+    .gte("orders.created_at", from);
+  const movedIngredientsQuery = supabaseAdmin
+    .from("order_item_ingredients")
+    .select("ingredient_product_id, quantity")
+    .gte("created_at", from);
+  let productsQuery = supabaseAdmin
+    .from("products")
+    .select("id, brand_id, stock_levels(quantity), product_site_links(site_product_id, variation_id)")
+    .eq("is_active", true);
+  if (scoped) {
+    soldQuery = soldQuery.eq("products.brand_id", brandId);
+    addedQuery = addedQuery.eq("products.brand_id", brandId);
+    movedAdjustmentsQuery = movedAdjustmentsQuery.eq("products.brand_id", brandId);
+    movedLinesQuery = movedLinesQuery.eq("products.brand_id", brandId);
+    productsQuery = productsQuery.eq("brand_id", brandId);
+  }
+
+  const [sold, added, movedAdjustments, movedLines, movedIngredients, products, brandList] = await Promise.all([
+    selectAll(soldQuery.order("id")),
+    selectAll(addedQuery.order("id")),
+    selectAll(movedAdjustmentsQuery.order("id")),
+    selectAll(movedLinesQuery.order("id")),
+    selectAll(movedIngredientsQuery.order("id")),
+    selectAll(productsQuery.order("id")),
+    getBrands(),
+  ]);
+  if (sold.error) throw sold.error;
+  if (added.error) throw added.error;
+  if (movedAdjustments.error) throw movedAdjustments.error;
+  if (movedLines.error) throw movedLines.error;
+  if (movedIngredients.error) throw movedIngredients.error;
+  if (products.error) throw products.error;
+
+  type SiteLink = { site_product_id: string; variation_id: string | null };
+  const posProducts = products.data as unknown as {
+    id: string;
+    brand_id: string;
+    stock_levels: { quantity: number } | { quantity: number }[] | null;
+    product_site_links: SiteLink | SiteLink[] | null;
+  }[];
+
+  // Per business: the website's stock and product keys, or (no website / unreachable) the POS stock.
+  const brands = brandList.filter((b) => !scoped || b.id === brandId);
+  const websites = new Map(
+    await Promise.all(brands.map(async (b) => [b.id, await websiteStock(b.slug)] as const))
+  );
+
+  let stockNow = 0;
+  const counted = new Set<string>(); // POS products that are part of the Stock page's list
+  const tracked = new Set<string>(); // ...of which the stock is a real number (not unlimited)
+  for (const b of brands) {
+    const site = websites.get(b.id) ?? null;
+    const brandProducts = posProducts.filter((p) => p.brand_id === b.id);
+    if (!site) {
+      for (const p of brandProducts) {
+        const level = Array.isArray(p.stock_levels) ? p.stock_levels[0] : p.stock_levels;
+        stockNow += Number(level?.quantity ?? 0);
+        counted.add(p.id);
+        tracked.add(p.id);
+      }
+      continue;
+    }
+    stockNow += site.units;
+    for (const p of brandProducts) {
+      const links = Array.isArray(p.product_site_links)
+        ? p.product_site_links
+        : p.product_site_links
+          ? [p.product_site_links]
+          : [];
+      const keys = links.map((l) => `${l.site_product_id}::${l.variation_id ?? ""}`);
+      if (keys.some((k) => site.keys.has(k))) counted.add(p.id);
+      if (keys.some((k) => site.trackedKeys.has(k))) tracked.add(p.id);
+    }
+  }
+
+  const soldUnits = (sold.data as unknown as { product_id: string; quantity: number }[])
+    .filter((r) => counted.has(r.product_id))
+    .reduce((s, r) => s + Number(r.quantity), 0);
+  const purchased = (added.data as unknown as { product_id: string; delta: number; reason: string | null }[])
+    .filter((r) => counted.has(r.product_id) && !(r.reason ?? "").startsWith("Order "))
+    .reduce((s, r) => s + Number(r.delta), 0);
+
+  // Net stock change since the start of the range, for products whose stock is counted; stock
+  // now minus that is the stock at the start.
+  const netChange =
+    (movedAdjustments.data as unknown as { product_id: string; delta: number }[])
+      .filter((r) => tracked.has(r.product_id))
+      .reduce((s, r) => s + Number(r.delta), 0) -
+    (movedLines.data as unknown as { product_id: string; quantity: number }[])
+      .filter((r) => tracked.has(r.product_id))
+      .reduce((s, r) => s + Number(r.quantity), 0) -
+    (movedIngredients.data as unknown as { ingredient_product_id: string; quantity: number }[])
+      .filter((r) => tracked.has(r.ingredient_product_id))
+      .reduce((s, r) => s + Number(r.quantity), 0);
+
+  return {
+    beginning: round2(stockNow - netChange),
+    purchased: round2(purchased),
+    sold: round2(soldUnits),
+    ending: round2(soldUnits),
+  };
 }
 
 // Dashboard "Top Products" only counts items sold at a unit price above this ($).
