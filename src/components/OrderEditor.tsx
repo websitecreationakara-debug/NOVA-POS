@@ -93,7 +93,15 @@ export default function OrderEditor({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // The product whose row was clicked -- shown in a pop-up with its picture and name.
-  const [preview, setPreview] = useState<{ name: string; imageUrl: string | null } | null>(null);
+  const [preview, setPreview] = useState<{
+    name: string;
+    imageUrl: string | null;
+    englishName: string;
+    khmerName: string;
+    scale: string;
+    unitPrice: number;
+    detail: string;
+  } | null>(null);
 
   // Draft fields, only meaningful while editing.
   const [draft, setDraft] = useState<Row[]>([]);
@@ -393,6 +401,11 @@ export default function OrderEditor({
                           setPreview({
                             name: `${r.nameKm?.trim() || r.name}${r.sizeLabel ? ` — ${r.sizeLabel}` : ""}`,
                             imageUrl: r.imageUrl ?? null,
+                            englishName: r.name,
+                            khmerName: r.nameKm?.trim() ?? "",
+                            scale: r.unitKm?.trim() || r.unit,
+                            unitPrice: r.unitPrice,
+                            detail: r.sizeLabel || r.weightLabel || "",
                           })
                   }
                   className={`border-b border-border ${editing ? "" : "cursor-pointer hover:bg-black/[.03] dark:hover:bg-white/[.05]"}`}
@@ -401,7 +414,7 @@ export default function OrderEditor({
                     {r.nameKm?.trim() || r.name}
                     {r.sizeLabel ? ` — ${r.sizeLabel}` : ""}
                     {(r.nameKm?.trim() ? khmerNameWeight(r) : r.weightLabel) && (
-                      <span className="ml-1.5 text-xs text-muted-foreground">
+                      <span className="ml-1.5 text-sm font-semibold text-foreground/80">
                         {r.nameKm?.trim() ? khmerNameWeight(r) : r.weightLabel}
                       </span>
                     )}
@@ -592,7 +605,18 @@ export default function OrderEditor({
                 No image for this product
               </div>
             )}
-            <p className="mt-3 text-center text-base font-semibold">{preview.name}</p>
+            <dl className="mt-4 grid grid-cols-[8rem_1fr] gap-x-4 gap-y-4 px-2 pb-2 text-sm">
+              <dt className="text-muted-foreground">English Name</dt>
+              <dd>{preview.englishName || "—"}</dd>
+              <dt className="text-muted-foreground">Khmer Name</dt>
+              <dd>{preview.khmerName || "—"}</dd>
+              <dt className="text-muted-foreground">Scale</dt>
+              <dd>{preview.scale || "—"}</dd>
+              <dt className="text-muted-foreground">Unit Price</dt>
+              <dd>{formatMoney(preview.unitPrice)}</dd>
+              <dt className="text-muted-foreground">Product Detail</dt>
+              <dd>{preview.detail || "—"}</dd>
+            </dl>
           </div>
         </div>
       )}
