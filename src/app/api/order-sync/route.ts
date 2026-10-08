@@ -3,6 +3,7 @@ import { revalidatePath } from "next/cache";
 import { supabaseAdmin } from "@/lib/supabase/server";
 import type { ProductSiteLink } from "@/types/database";
 import { ALL_PAYMENT_METHODS, type PaymentMethod } from "@/lib/paymentMethods";
+import { ppDay } from "@/lib/phnomPenhTime";
 
 const VALID_SITES: ProductSiteLink["site"][] = [
   "bosba-premium-foods",
@@ -15,10 +16,15 @@ const VALID_PAYMENT_METHODS = ALL_PAYMENT_METHODS;
 // "012-345-678" and "012345678" resolve to ONE customer. Anything that isn't
 // then 8-15 digits (optional leading +) is treated as no phone at all, rather
 // than saved as junk or rejecting a paid order over a bad contact field.
+// A Cambodian number typed with its local leading 0 ("0968581842") is saved the way the
+// POS and the customer list keep them, with the country code: "855968581842".
 function normalizePhone(raw: unknown): string | null {
   if (typeof raw !== "string") return null;
   const cleaned = raw.replace(/[\s\-().]/g, "");
-  return /^\+?\d{8,15}$/.test(cleaned) ? cleaned : null;
+  if (!/^\+?\d{8,15}$/.test(cleaned)) return null;
+  // "00855…" is the same number with the international call prefix.
+  if (cleaned.startsWith("00")) return cleaned.slice(2);
+  return /^0\d/.test(cleaned) ? `855${cleaned.slice(1)}` : cleaned;
 }
 
 const round2 = (n: number) => Math.round((n + Number.EPSILON) * 100) / 100;
@@ -224,6 +230,29 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Invalid payload" }, { status: 400 });
     }
     return NextResponse.json({ error: rpcError.message }, { status: 500 });
+  }
+
+  // A customer this order just created has no "customer since" date, so the CRM counted them in
+  // "New customers" (by the day they were created) but its customer list, which filters on that
+  // date, left them out. Fill it in with the same day the count uses. Best effort -- it must
+  // never fail an order that's already been taken.
+  try {
+    const { data: placed } = await supabaseAdmin.from("orders").select("customer_id").eq("id", orderId).maybeSingle();
+    if (placed?.customer_id) {
+      const { data: customer } = await supabaseAdmin
+        .from("customers")
+        .select("created_at, customer_since")
+        .eq("id", placed.customer_id)
+        .maybeSingle();
+      if (customer && !customer.customer_since) {
+        await supabaseAdmin
+          .from("customers")
+          .update({ customer_since: ppDay(customer.created_at) })
+          .eq("id", placed.customer_id);
+      }
+    }
+  } catch (e) {
+    console.error("order-sync: couldn't set customer_since", e);
   }
 
   // Without this, a brand-new online order's stock decrement is correct in
