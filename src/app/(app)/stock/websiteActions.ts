@@ -420,12 +420,19 @@ export async function setProductDetailsAction(input: {
   unit: string;
   // The scale written in Khmer (e.g. "ចំណែក" for pcs).
   unitKm: string;
+  // Grams one unit of this product (as sold) weighs -- lets Sales offer
+  // selling it by gram (see packGramsFor in SalesClient.tsx). null/undefined
+  // = leave unknown; kg/g selling stays unavailable until it's set.
+  weightGrams?: number | null;
 }): Promise<void> {
   await requireStockAccess();
   const unit = input.unit.trim().toLowerCase();
   if (!unit) throw new Error("Pick a scale (pcs, kg or g)");
   const posName = input.posName.trim();
   if (!posName) throw new Error("Name is required");
+  if (input.weightGrams != null && !(input.weightGrams > 0)) {
+    throw new Error("Weight must be greater than zero");
+  }
 
   const linked = await ensurePosProductForSiteProduct({
     catalogId: input.catalogId,
@@ -443,6 +450,7 @@ export async function setProductDetailsAction(input: {
       name_km: input.nameKm.trim() || null,
       unit,
       unit_km: input.unitKm.trim() || null,
+      weight_grams: input.weightGrams ?? null,
     })
     .eq("id", linked.id);
   if (error) throw new Error(error.message);

@@ -238,7 +238,13 @@ export default function WebsiteProductsPanel({
   const [pendingId, setPendingId] = useState<string | null>(null);
   // The row whose Edit box is open (name / Khmer name / scale), and its draft.
   const [editRowKey, setEditRowKey] = useState<string | null>(null);
-  const [editDraft, setEditDraft] = useState({ title: "", nameKm: "", unit: "pcs", unitKm: "" });
+  const [editDraft, setEditDraft] = useState({
+    title: "",
+    nameKm: "",
+    unit: "pcs",
+    unitKm: "",
+    weightGrams: "",
+  });
   const [refreshing, setRefreshing] = useState(false);
   // Set when a row's thumbnail is clicked, so a full-size preview can be shown.
   const [previewImage, setPreviewImage] = useState<{ url: string; title: string } | null>(null);
@@ -573,6 +579,7 @@ export default function WebsiteProductsPanel({
       nameKm: linked?.name_km ?? "",
       unit: linked?.unit ?? "pcs",
       unitKm: linked?.unit_km ?? "",
+      weightGrams: linked?.weight_grams != null ? String(linked.weight_grams) : "",
     });
     setEditImage(null);
     setEditImageError(null);
@@ -616,6 +623,12 @@ export default function WebsiteProductsPanel({
       notify("Name is required", "err");
       return;
     }
+    const weightGramsRaw = editDraft.weightGrams.trim();
+    const weightGrams = weightGramsRaw === "" ? null : Number(weightGramsRaw);
+    if (weightGrams !== null && (Number.isNaN(weightGrams) || weightGrams <= 0)) {
+      notify("Weight must be greater than zero", "err");
+      return;
+    }
     // Same title Sales uses for this row: a size is "<name> (<weight>)".
     const posName = v?.weight ? `${title} (${v.weight})` : title;
     setPendingId(p.id);
@@ -634,6 +647,7 @@ export default function WebsiteProductsPanel({
           nameKm: editDraft.nameKm,
           unit: editDraft.unit,
           unitKm: editDraft.unitKm,
+          weightGrams,
         });
         if (editImage !== null) {
           await setProductImageAction({
@@ -1724,6 +1738,18 @@ export default function WebsiteProductsPanel({
                                 </option>
                               ))}
                             </select>
+                          </label>
+                          <label className="block text-xs text-zinc-500">
+                            Weight (grams) — lets Sales offer selling this by gram
+                            <input
+                              type="number"
+                              min={0}
+                              step="0.01"
+                              placeholder="e.g. 1000 for 1kg"
+                              value={editDraft.weightGrams}
+                              onChange={(e) => setEditDraft((d) => ({ ...d, weightGrams: e.target.value }))}
+                              className="mt-0.5 w-full rounded border border-black/[.15] bg-transparent px-2 py-1 text-sm text-foreground dark:border-white/[.2]"
+                            />
                           </label>
                           <div className="block text-xs text-zinc-500">
                             Image
