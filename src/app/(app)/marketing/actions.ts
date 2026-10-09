@@ -594,6 +594,7 @@ export async function updateCustomerAction(
     name: string;
     phone?: string;
     secondPhone?: string;
+    pageUid?: string;
     email?: string;
     address?: string;
     label?: string;
@@ -615,6 +616,7 @@ export async function updateCustomerAction(
       name: input.name.trim(),
       phone: input.phone?.trim() || null,
       second_phone: input.secondPhone?.trim() || null,
+      page_uid: input.pageUid?.trim() || null,
       email: input.email?.trim() || null,
       address: input.address?.trim() || null,
       label: input.label?.trim() || null,

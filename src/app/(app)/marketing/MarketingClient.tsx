@@ -323,6 +323,7 @@ export default function MarketingClient({
       name: customer.name,
       phone: customer.phone ?? "",
       secondPhone: customer.second_phone ?? "",
+      pageUid: customer.page_uid ?? "",
       email: customer.email ?? "",
       address: customer.address ?? "",
       label: customer.label ?? "",
@@ -347,6 +348,7 @@ export default function MarketingClient({
           name: editFields.name,
           phone: editFields.phone,
           secondPhone: editFields.secondPhone,
+          pageUid: editFields.pageUid,
           email: editFields.email,
           address: editFields.address,
           label: editFields.label,
@@ -716,7 +718,7 @@ export default function MarketingClient({
               <th>Customer Since</th>
               <th>First Name</th>
               <th>Last Name</th>
-              <th>Page UID</th>
+              <th>PSID</th>
               <th>Capital</th>
               <th>State</th>
               <th>Age</th>
@@ -801,6 +803,12 @@ export default function MarketingClient({
                           placeholder="Second phone"
                           value={editFields.secondPhone ?? ""}
                           onChange={(e) => setEditFields({ ...editFields, secondPhone: e.target.value })}
+                          className={inputClass}
+                        />
+                        <input
+                          placeholder="PSID"
+                          value={editFields.pageUid ?? ""}
+                          onChange={(e) => setEditFields({ ...editFields, pageUid: e.target.value })}
                           className={inputClass}
                         />
                         <input
