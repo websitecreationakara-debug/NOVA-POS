@@ -57,6 +57,7 @@ const HEADER_ALIASES: Record<string, keyof Omit<CustomerImportRow, "row">> = {
   firstname: "firstName",
   lastname: "lastName",
   pageuid: "pageUid",
+  psid: "pageUid",
   uid: "pageUid",
   source: "source",
   label: "label",
@@ -91,7 +92,7 @@ export const CUSTOMER_CSV_HEADERS = [
   "Customer Since",
   "First Name",
   "Last Name",
-  "Page UID",
+  "PSID",
   "Source",
   "Label",
   "Capital",
@@ -378,7 +379,7 @@ export function parseCustomerTable(table: string[][]): ParsedCustomerCsv {
     // Same Excel scientific-notation damage as phones -- a UID isn't worth keeping half-lost.
     let pageUid = get("pageUid");
     if (isDamagedNumber(pageUid)) {
-      warnings.push({ row: rowNo, message: `Page UID "${pageUid}" was damaged by Excel — left blank` });
+      warnings.push({ row: rowNo, message: `PSID "${pageUid}" was damaged by Excel — left blank` });
       pageUid = "";
     }
 
