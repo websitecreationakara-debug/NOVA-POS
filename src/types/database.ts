@@ -45,6 +45,8 @@ export type Profile = {
   id: string;
   full_name: string;
   role: StaffRole;
+  // Staff photo (migration 0077). Optional so code written before it still compiles.
+  avatar_url?: string | null;
   created_at: string;
 };
 

@@ -8,7 +8,15 @@ import LiveOrdersWatcher from "@/components/LiveOrdersWatcher";
 import { staffRoleLabel } from "@/types/database";
 import { toggleMobileNav } from "@/lib/mobileNav";
 
-export default function TopBar({ fullName, role }: { fullName: string; role: string }) {
+export default function TopBar({
+  fullName,
+  role,
+  avatarUrl,
+}: {
+  fullName: string;
+  role: string;
+  avatarUrl?: string | null;
+}) {
   const initials =
     fullName
       .split(/\s+/)
@@ -36,8 +44,13 @@ export default function TopBar({ fullName, role }: { fullName: string; role: str
         <DeliveryAlertBell />
         <ThemeToggle />
         <div className="flex items-center gap-2.5 rounded-full border border-border bg-muted/60 py-1 pl-1 sm:pr-3">
-          <span className="grid size-7 shrink-0 place-items-center rounded-full bg-brand/20 text-xs font-bold text-brand">
-            {initials}
+          <span className="grid size-7 shrink-0 place-items-center overflow-hidden rounded-full bg-brand/20 text-xs font-bold text-brand">
+            {avatarUrl ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={avatarUrl} alt="" className="size-full object-cover" />
+            ) : (
+              initials
+            )}
           </span>
           <div className="hidden leading-tight sm:block">
             <div className="text-sm font-medium">{fullName}</div>

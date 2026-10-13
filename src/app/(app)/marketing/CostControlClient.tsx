@@ -156,20 +156,22 @@ export default function CostControlClient({
     : sets;
 
   return (
-    <div className="min-h-screen p-6">
+    <div className="min-h-screen p-4 sm:p-6">
       <div className="flex flex-wrap items-center gap-3">
         <h1 className="text-lg font-medium">Cost Control</h1>
+        {/* Phones: the search drops to its own full-width row under the title and
+            business picker (order-last); from sm up it sits in the header row. */}
         {!isBuilderOpen && (
           <input
             type="text"
             placeholder="Search sets..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            className={`ml-auto w-72 ${inputClass}`}
+            className={`order-last w-full sm:order-none sm:ml-auto sm:w-72 ${inputClass}`}
           />
         )}
         <select
-          className={`${isBuilderOpen ? "ml-auto" : ""} ${selectClass}`}
+          className={`ml-auto min-w-0 max-w-full ${isBuilderOpen ? "" : "sm:ml-0"} ${selectClass}`}
           value={currentBrand.id}
           onChange={(e) => switchBrand(e.target.value)}
         >

@@ -72,12 +72,12 @@ function PeriodPicker({
   const arrow =
     "inline-flex size-8 items-center justify-center rounded-lg border border-border text-muted-foreground transition-colors hover:text-foreground";
   return (
-    <div className="flex items-center gap-1">
+    <div className="flex flex-wrap items-center gap-1">
       <button type="button" aria-label="Previous" onClick={() => onChange(shiftAnchor(gran, value, -1))} className={arrow}>
         <ChevronLeft className="size-4" />
       </button>
       {gran === "range" ? (
-        <div className="flex items-center gap-1.5">
+        <div className="flex flex-wrap items-center gap-1.5">
           <input
             type="date"
             aria-label="From"
@@ -279,7 +279,7 @@ export default function CrmChartsClient({ data }: { data: CrmChartsResult }) {
   ];
 
   return (
-    <div className="min-h-screen space-y-6 p-6">
+    <div className="min-h-screen space-y-6 p-4 sm:p-6">
       <div>
         <h1 className="text-lg font-medium">CRM Charts</h1>
         <p className="mt-0.5 text-sm text-muted-foreground">
@@ -290,14 +290,15 @@ export default function CrmChartsClient({ data }: { data: CrmChartsResult }) {
       {/* Period bar: Day / Week / Month / Year, other periods to compare, and a province. */}
       <div className="space-y-3 rounded-2xl border border-border bg-card p-4 shadow-sm">
         <div className="flex flex-wrap items-center gap-3">
-          <div className="inline-flex gap-1 rounded-xl border border-border bg-muted/50 p-1">
+          {/* Six tabs don't fit one row on a phone: a 3x2 grid there, one row from sm up. */}
+          <div className="grid w-full grid-cols-3 gap-1 rounded-xl border border-border bg-muted/50 p-1 sm:inline-flex sm:w-auto">
             {(Object.keys(GRANULARITY_LABELS) as Granularity[]).map((g) => (
               <button
                 key={g}
                 type="button"
                 aria-pressed={gran === g}
                 onClick={() => go({ g, a: null, b: null })}
-                className={`rounded-lg px-3.5 py-1.5 text-sm font-medium transition-colors ${
+                className={`rounded-lg px-2 py-1.5 text-sm font-medium transition-colors sm:px-3.5 ${
                   gran === g ? "bg-card text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
                 }`}
               >
@@ -332,7 +333,7 @@ export default function CrmChartsClient({ data }: { data: CrmChartsResult }) {
             aria-label="Province"
             value={data.province}
             onChange={(e) => go({ province: e.target.value || null })}
-            className="ml-auto rounded-lg border border-border bg-card px-2.5 py-1.5 text-sm text-foreground"
+            className="ml-auto min-w-0 max-w-full rounded-lg border border-border bg-card px-2.5 py-1.5 text-sm text-foreground"
           >
             <option value="">All provinces</option>
             {data.provinces.map((p) => (
@@ -359,7 +360,7 @@ export default function CrmChartsClient({ data }: { data: CrmChartsResult }) {
           <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-border pt-3">
             <span className="text-sm text-muted-foreground">with</span>
             {compareAnchors.map((anchor, i) => (
-              <div key={anchor} className="flex items-center gap-1.5 rounded-xl border border-border py-1 pr-1 pl-2.5">
+              <div key={anchor} className="flex max-w-full flex-wrap items-center gap-1.5 rounded-xl border border-border py-1 pr-1 pl-2.5">
                 <span className="size-2.5 rounded-full" style={{ background: colorOf(i + 1) }} aria-hidden />
                 <PeriodPicker
                   gran={gran}

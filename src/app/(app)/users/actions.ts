@@ -105,16 +105,26 @@ export async function deleteStaffAccountAction(userId: string): Promise<void> {
 }
 
 export async function listStaffAction(): Promise<
-  { id: string; fullName: string; role: string; email: string | null; createdAt: string }[]
+  {
+    id: string;
+    fullName: string;
+    role: string;
+    email: string | null;
+    avatarUrl: string | null;
+    createdAt: string;
+  }[]
 > {
   const caller = await getSessionUser();
   if (caller?.role !== "admin") {
     throw new Error("Only admins can view staff accounts");
   }
 
+  // `*` rather than an explicit column list so the page still loads if the
+  // 0077 avatar_url migration hasn't been applied yet (p.avatar_url is just
+  // undefined until then).
   const { data: profiles, error } = await supabaseAdmin
     .from("profiles")
-    .select("id, full_name, role, created_at")
+    .select("*")
     .order("created_at", { ascending: false });
 
   if (error) throw new Error(error.message);
@@ -127,6 +137,93 @@ export async function listStaffAction(): Promise<
     fullName: p.full_name,
     role: p.role,
     email: emailById.get(p.id) ?? null,
+    avatarUrl: p.avatar_url ?? null,
     createdAt: p.created_at,
   }));
+}
+
+const AVATAR_BUCKET = "staff-avatars";
+const AVATAR_TYPES = ["image/png", "image/jpeg", "image/webp", "image/gif"];
+const AVATAR_MAX_BYTES = 2 * 1024 * 1024;
+
+// The storage path of an avatar from its public URL, so an old photo can be removed.
+function avatarPath(url: string | null | undefined): string | null {
+  return url?.split(`/${AVATAR_BUCKET}/`)[1] ?? null;
+}
+
+export async function uploadStaffAvatarAction(formData: FormData): Promise<void> {
+  const caller = await getSessionUser();
+  if (caller?.role !== "admin") {
+    throw new Error("Only admins can change staff photos");
+  }
+
+  const userId = formData.get("userId");
+  const file = formData.get("file");
+  if (typeof userId !== "string" || !userId) throw new Error("Missing staff member");
+  if (!(file instanceof File) || file.size === 0) throw new Error("Choose an image file");
+  if (!AVATAR_TYPES.includes(file.type)) throw new Error("Photo must be a PNG, JPG, WEBP or GIF");
+  if (file.size > AVATAR_MAX_BYTES) throw new Error("Photo must be under 2MB");
+
+  const { data: before, error: fetchError } = await supabaseAdmin
+    .from("profiles")
+    .select("*")
+    .eq("id", userId)
+    .maybeSingle();
+  if (fetchError) throw new Error(fetchError.message);
+  if (!before) throw new Error("Staff member not found");
+
+  const ext = file.name.split(".").pop()?.toLowerCase() || "jpg";
+  const path = `${userId}-${Date.now()}.${ext}`;
+  const { error: uploadError } = await supabaseAdmin.storage
+    .from(AVATAR_BUCKET)
+    .upload(path, file, { contentType: file.type, upsert: true });
+  if (uploadError) throw new Error(uploadError.message);
+
+  const {
+    data: { publicUrl },
+  } = supabaseAdmin.storage.from(AVATAR_BUCKET).getPublicUrl(path);
+
+  const { error: updateError } = await supabaseAdmin
+    .from("profiles")
+    .update({ avatar_url: publicUrl })
+    .eq("id", userId);
+  if (updateError) {
+    await supabaseAdmin.storage.from(AVATAR_BUCKET).remove([path]);
+    // 42703 = undefined column, PGRST204 = column missing from PostgREST's schema cache.
+    if (updateError.code === "42703" || updateError.code === "PGRST204") {
+      throw new Error("Staff photos need migration 0077 to be applied first");
+    }
+    throw new Error(updateError.message);
+  }
+
+  // Best-effort: don't fail the upload if the old photo is already gone.
+  const oldPath = avatarPath(before.avatar_url);
+  if (oldPath) await supabaseAdmin.storage.from(AVATAR_BUCKET).remove([oldPath]);
+
+  revalidatePath("/users");
+}
+
+export async function removeStaffAvatarAction(userId: string): Promise<void> {
+  const caller = await getSessionUser();
+  if (caller?.role !== "admin") {
+    throw new Error("Only admins can change staff photos");
+  }
+
+  const { data: before, error: fetchError } = await supabaseAdmin
+    .from("profiles")
+    .select("*")
+    .eq("id", userId)
+    .maybeSingle();
+  if (fetchError) throw new Error(fetchError.message);
+
+  const { error: updateError } = await supabaseAdmin
+    .from("profiles")
+    .update({ avatar_url: null })
+    .eq("id", userId);
+  if (updateError) throw new Error(updateError.message);
+
+  const oldPath = avatarPath(before?.avatar_url);
+  if (oldPath) await supabaseAdmin.storage.from(AVATAR_BUCKET).remove([oldPath]);
+
+  revalidatePath("/users");
 }
