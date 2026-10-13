@@ -939,7 +939,7 @@ export default function AccountanceClient({
 
   // Saves whichever of Unit Cost / Selling Price the row's drafts actually
   // changed. A unit cost re-prices only this report's sold lines for the
-  // product and updates the product's cost in Stock (see setMarginUnitCostAction). A selling-price
+  // product (see setMarginUnitCostAction); the product's cost in Stock is left alone. A selling-price
   // change only applies going forward -- past lines' revenue was already
   // recorded at sale time and isn't rewritten.
   function saveMarginRow(r: MarginReportRow) {
@@ -2143,10 +2143,15 @@ export default function AccountanceClient({
                                 <button
                                   type="button"
                                   onClick={() => startMarginEdit(r.productId)}
-                                  className="rounded px-1 py-0.5 hover:bg-black/[.05] dark:hover:bg-white/[.08]"
-                                  title={r.unitCost === null ? "From Stock -- click to save it as this sale's recorded cost" : undefined}
+                                  title={
+                                    r.unitCost === null
+                                      ? "From Stock -- click to save it as this sale's recorded cost"
+                                      : "Edit unit cost"
+                                  }
+                                  className="inline-flex items-center gap-1 rounded px-1 py-0.5 hover:bg-black/[.05] dark:hover:bg-white/[.08]"
                                 >
                                   {formatMoney(effectiveUnitCost)}
+                                  <Pencil className="size-3 text-zinc-400" />
                                 </button>
                               )}
                               {r.soldAt.length > 0 && (

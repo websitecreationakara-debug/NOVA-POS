@@ -68,12 +68,15 @@ async function backfillOrderItemCogs(productId: string): Promise<void> {
   );
 }
 
-// The Margin Report's Unit Cost is the product's current cost (see
-// getMarginReport), so a cost typed there is saved as the product's cost in
-// Stock too (setProductCostAction) -- otherwise the report would show the old
-// cost again on refresh. It also overwrites the recorded cost on the lines the
-// report is showing (the backfill above only touches lines with no cost at
-// all); sales outside the brand/date range keep their recorded cost.
+// The Margin Report's Unit Cost is the cost recorded on the sold lines (see
+// getMarginReport), so a cost typed there overwrites the recorded cost on the
+// lines the report is showing (the backfill above only touches lines with no cost
+// at all); sales outside the brand/date range keep their recorded cost. Lines are
+// the ones the report reads (dated by list_at, scoped by the product's business).
+// It corrects what those sales cost -- it never changes the product's cost or Total
+// in Stock, which is edited on the Stock page (or Cost Control for a Set). The lines
+// are marked cost_source "report" (migration 0079) so the report shows the typed cost
+// as the Unit Cost instead of Stock's.
 export async function setMarginUnitCostAction(input: {
   productId: string;
   unitCost: number;
@@ -87,39 +90,42 @@ export async function setMarginUnitCostAction(input: {
     throw new Error("Unit cost cannot be negative");
   }
 
-  // A Cost Control Set's cost always comes from its own ingredients (see
-  // getEffectiveProductCost), so a cost typed here could never stick.
-  const { data: set } = await supabaseAdmin.from("sets").select("id").eq("linked_product_id", productId).maybeSingle();
-  if (set) throw new Error("This product is a Cost Control Set -- change its cost in Marketing > Cost Control.");
-
-  let query = supabaseAdmin
-    .from("order_items")
-    .select("id, quantity, orders!inner(status, paid_at, brand_id)")
-    .eq("product_id", productId)
-    .eq("orders.status", "paid")
-    .in("orders.fulfillment_status", COUNTED_FULFILLMENT_STATUSES)
-    .gte("orders.paid_at", ppDayStart(range.fromDate))
-    .lte("orders.paid_at", ppDayEnd(range.toDate));
-  if (range.brandId !== ALL_BUSINESSES_ID) query = query.eq("orders.brand_id", range.brandId);
-
-  const { data: items, error } = await query;
-  if (error) throw error;
-  if (!items || items.length === 0) return;
+  const items: { id: string; quantity: number }[] = [];
+  const PAGE = 1000;
+  for (let from = 0; ; from += PAGE) {
+    let query = supabaseAdmin
+      .from("order_items")
+      .select("id, quantity, products!inner(brand_id), orders!inner(status, list_at, fulfillment_status)")
+      .eq("product_id", productId)
+      .eq("orders.status", "paid")
+      .in("orders.fulfillment_status", COUNTED_FULFILLMENT_STATUSES)
+      .gte("orders.list_at", ppDayStart(range.fromDate))
+      .lte("orders.list_at", ppDayEnd(range.toDate));
+    if (range.brandId !== ALL_BUSINESSES_ID) query = query.eq("products.brand_id", range.brandId);
+    const { data, error } = await query.order("id").range(from, from + PAGE - 1);
+    if (error) throw error;
+    for (const item of data ?? []) items.push({ id: item.id, quantity: Number(item.quantity) });
+    if (!data || data.length < PAGE) break;
+  }
 
   const results = await Promise.all(
     items.map((item) =>
       supabaseAdmin
         .from("order_items")
-        .update({ unit_cost: unitCost, cogs: computeLineCogs(unitCost, item.quantity), cost_source: "direct" })
+        .update({ unit_cost: unitCost, cogs: computeLineCogs(unitCost, item.quantity), cost_source: "report" })
         .eq("id", item.id)
     )
   );
   const failed = results.find((r) => r.error);
-  if (failed?.error) throw failed.error;
-
-  await setProductCostAction({ productId, costPrice: unitCost });
+  if (failed?.error) {
+    if (failed.error.code === "23514") {
+      throw new Error("Apply migration 0079_margin_report_unit_cost_override.sql in Supabase first, then try again.");
+    }
+    throw failed.error;
+  }
 
   revalidatePath("/accountance");
+  revalidatePath(`/accountance/margin/${productId}`);
 }
 
 // Edits one "N sold at $X" group of the Margin Report: the product's sold lines

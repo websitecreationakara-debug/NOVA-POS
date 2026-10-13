@@ -1611,6 +1611,7 @@ export async function getMarginReport(
         cogs: number | string | null;
         unit_cost: number | string | null;
         paid_at: string | null;
+        cost_overridden?: boolean;
       }[];
     }[];
     for (const r of rows) {
@@ -1628,6 +1629,7 @@ export async function getMarginReport(
           cogs: l.cogs === null ? null : Number(l.cogs),
           unitCost: l.unit_cost === null ? null : Number(l.unit_cost),
           paidAt: l.paid_at,
+          costOverridden: l.cost_overridden === true,
         }))
       );
     }
@@ -1642,12 +1644,13 @@ export async function getMarginReport(
       line_total: number;
       cogs: number | null;
       unit_cost: number | null;
+      cost_source?: string | null;
       orders: { list_at: string | null; paid_at: string | null } | null;
     }>((withCount) => {
       let query = supabaseAdmin
         .from("order_items")
         .select(
-          "product_id, quantity, line_total, cogs, unit_cost, products!inner(brand_id), orders!inner(status, list_at, paid_at)",
+          "product_id, quantity, line_total, cogs, unit_cost, cost_source, products!inner(brand_id), orders!inner(status, list_at, paid_at)",
           { count: withCount ? "exact" : undefined }
         )
         .eq("orders.status", "paid")
@@ -1664,6 +1667,7 @@ export async function getMarginReport(
         lineTotal: item.line_total,
         cogs: item.cogs,
         unitCost: item.unit_cost,
+        costOverridden: item.cost_source === "report",
         paidAt: (item.orders as unknown as { list_at: string | null; paid_at: string | null } | null)?.list_at ?? (item.orders as unknown as { paid_at: string | null } | null)?.paid_at ?? null,
       });
       byProduct.set(item.product_id, lines);
