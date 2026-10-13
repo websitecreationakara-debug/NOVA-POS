@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, useTransition } from "react";
+import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { ChevronLeft, ChevronRight, Copy, Pencil, Plus, Trash2 } from "lucide-react";
@@ -128,32 +128,62 @@ function baseProductName(name: string): string {
 
 const PAGE_SIZE_OPTIONS = [10, 25, 50];
 
+// The Sets list's address: its page, page size and search live in the URL, and the
+// server reads just that page of sets (see listSetsAction).
+function setsListHref(brandId: string, opts: { q: string; page: number; limit: number }): string {
+  return `/marketing?${new URLSearchParams({
+    tab: "cost-control",
+    brand: brandId,
+    ...(opts.q ? { q: opts.q } : {}),
+    page: String(opts.page),
+    limit: String(opts.limit),
+  })}`;
+}
+
 export default function CostControlClient({
   brands,
   currentBrand,
   sets,
+  setsTotal,
+  setsPage,
+  setsLimit,
+  setsQuery,
   items,
   activeSet,
   isBuilderOpen,
 }: {
   brands: Brand[];
   currentBrand: Brand;
+  // Only the current page of sets (the server pages them), and how many match in all.
   sets: SetSummary[];
+  setsTotal: number;
+  setsPage: number;
+  setsLimit: number;
+  setsQuery: string;
   items: StockPickerItem[];
   activeSet: SetDetail | null;
   isBuilderOpen: boolean;
 }) {
   const router = useRouter();
-  const [search, setSearch] = useState("");
+  const [search, setSearch] = useState(setsQuery);
+  const searchTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  useEffect(() => () => clearTimeout(searchTimer.current), []);
 
   function switchBrand(brandId: string) {
+    clearTimeout(searchTimer.current);
+    setSearch("");
     router.push(`/marketing?tab=cost-control&brand=${brandId}`);
   }
 
-  const q = search.trim().toLowerCase();
-  const filteredSets = q
-    ? sets.filter((s) => s.name.toLowerCase().includes(q) || s.code.toLowerCase().includes(q))
-    : sets;
+  // Typing searches all of the business's sets (not just the page showing): the
+  // search goes into the URL a moment after the last keystroke, back on page 1.
+  function onSearchChange(value: string) {
+    setSearch(value);
+    clearTimeout(searchTimer.current);
+    searchTimer.current = setTimeout(() => {
+      router.replace(setsListHref(currentBrand.id, { q: value.trim(), page: 1, limit: setsLimit }));
+    }, 300);
+  }
 
   return (
     <div className="min-h-screen p-4 sm:p-6">
@@ -166,7 +196,7 @@ export default function CostControlClient({
             type="text"
             placeholder="Search sets..."
             value={search}
-            onChange={(e) => setSearch(e.target.value)}
+            onChange={(e) => onSearchChange(e.target.value)}
             className={`order-last w-full sm:order-none sm:ml-auto sm:w-72 ${inputClass}`}
           />
         )}
@@ -186,7 +216,14 @@ export default function CostControlClient({
       {isBuilderOpen ? (
         <SetBuilder brandId={currentBrand.id} items={items} activeSet={activeSet} />
       ) : (
-        <SetsOverview brandId={currentBrand.id} sets={filteredSets} />
+        <SetsOverview
+          brandId={currentBrand.id}
+          sets={sets}
+          total={setsTotal}
+          page={setsPage}
+          limit={setsLimit}
+          q={setsQuery}
+        />
       )}
     </div>
   );
@@ -201,25 +238,31 @@ type SetRowDraft = {
   competitorBasePrice?: string;
 };
 
-function SetsOverview({ brandId, sets }: { brandId: string; sets: SetSummary[] }) {
+function SetsOverview({
+  brandId,
+  sets,
+  total,
+  page,
+  limit,
+  q,
+}: {
+  brandId: string;
+  sets: SetSummary[];
+  total: number;
+  page: number;
+  limit: number;
+  q: string;
+}) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<SetSummary | null>(null);
   const [duplicating, setDuplicating] = useState<SetSummary | null>(null);
 
-  const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState(25);
-  const pageCount = Math.max(1, Math.ceil(sets.length / pageSize));
-  // Snap back to page 1 whenever the result set changes under the current page.
-  const filterKey = `${brandId}|${sets.length}|${pageSize}`;
-  const [prevFilterKey, setPrevFilterKey] = useState(filterKey);
-  if (filterKey !== prevFilterKey) {
-    setPrevFilterKey(filterKey);
-    setPage(1);
-  }
-  const currentPage = Math.min(page, pageCount);
-  const paged = sets.slice((currentPage - 1) * pageSize, currentPage * pageSize);
+  // `sets` is already just this page -- the page and page size are in the address.
+  const pageCount = Math.max(1, Math.ceil(total / limit));
+  const goTo = (next: { page?: number; limit?: number }) =>
+    router.push(setsListHref(brandId, { q, page: next.page ?? page, limit: next.limit ?? limit }));
 
   // Pricing model manual inputs are edited inline, right in this table --
   // same save-on-blur pattern as the set detail page's other fields.
@@ -302,13 +345,16 @@ function SetsOverview({ brandId, sets }: { brandId: string; sets: SetSummary[] }
   }
 
   return (
-    <section className="mt-6 rounded-lg border border-black/[.08] p-4 dark:border-white/[.145]">
-      <div className="flex flex-wrap items-center gap-3">
+    <section className="mt-6 w-max min-w-full rounded-lg border border-black/[.08] p-4 dark:border-white/[.145]">
+      {/* The title row and the column headings below stay pinned under the top bar
+          while the page scrolls, like the top bar itself (h-12 here is where the
+          headings' top-12 picks up). */}
+      <div className="sticky top-0 z-20 flex h-12 items-center gap-3 bg-background">
         <h2 className="font-medium">Sets</h2>
         <button
           type="button"
           onClick={newSet}
-          className="ml-auto flex items-center gap-1.5 rounded bg-brand px-3 py-1.5 text-sm font-medium text-white hover:brightness-95"
+          className="flex items-center gap-1.5 rounded bg-brand px-3 py-1.5 text-sm font-medium text-white hover:brightness-95"
         >
           <Plus className="size-3.5" />
           New Set
@@ -317,33 +363,36 @@ function SetsOverview({ brandId, sets }: { brandId: string; sets: SetSummary[] }
 
       {error && <p className="mt-3 text-sm text-red-500">{error}</p>}
 
-      <div className="mt-4 overflow-x-auto">
+      {/* No overflow wrapper here: one would become the scroller the headings stick to
+          instead of the page. The card widens to fit the many columns instead, and the
+          page's own horizontal scrollbar scrolls them. */}
+      <div>
         <table className="w-full text-left text-sm">
           <thead>
-            <tr className="border-b border-black/[.08] text-xs whitespace-nowrap text-zinc-500 dark:border-white/[.145]">
-              <th className="py-2.5 pr-5 font-medium">Set ID</th>
-              <th className="py-2.5 pr-5 font-medium">Name</th>
-              <th className="py-2.5 pr-5 text-right font-medium">Items</th>
-              <th className="py-2.5 pr-5 text-right font-medium">Set Cost</th>
-              <th className="py-2.5 pr-5 text-right font-medium">Target MU%</th>
-              <th className="py-2.5 pr-5 text-right font-medium">After MU$</th>
-              <th className="py-2.5 pr-5 text-right font-medium">Cost/Purchase</th>
-              <th className="py-2.5 pr-5 text-right font-medium">Labor Cost</th>
-              <th className="py-2.5 pr-5 text-right font-medium">Total Cost</th>
-              <th className="py-2.5 pr-5 text-right font-medium">Recommend</th>
-              <th className="py-2.5 pr-5 font-medium">Competitor</th>
-              <th className="py-2.5 pr-5 text-right font-medium">Base Price</th>
-              <th className="py-2.5 pr-5 text-right font-medium">%Off</th>
-              <th className="py-2.5 pr-5 text-right font-medium">Sale Price</th>
-              <th className="py-2.5 pr-5 text-right font-medium">Mark Up%</th>
-              <th className="py-2.5 pr-5 text-right font-medium">Gross Profit</th>
-              <th className="py-2.5 pr-5 font-medium">Profit Status</th>
-              <th className="py-2.5 pr-5 font-medium">Status</th>
-              <th className="py-2.5 text-right font-medium">Actions</th>
+            <tr className="text-xs whitespace-nowrap text-zinc-500">
+              <th className="sticky top-12 z-10 bg-background shadow-[inset_0_-1px_0_var(--border)] py-2.5 pr-5 font-medium">Set ID</th>
+              <th className="sticky top-12 z-10 bg-background shadow-[inset_0_-1px_0_var(--border)] py-2.5 pr-5 font-medium">Name</th>
+              <th className="sticky top-12 z-10 bg-background shadow-[inset_0_-1px_0_var(--border)] py-2.5 pr-5 text-right font-medium">Items</th>
+              <th className="sticky top-12 z-10 bg-background shadow-[inset_0_-1px_0_var(--border)] py-2.5 pr-5 text-right font-medium">Set Cost</th>
+              <th className="sticky top-12 z-10 bg-background shadow-[inset_0_-1px_0_var(--border)] py-2.5 pr-5 text-right font-medium">Target MU%</th>
+              <th className="sticky top-12 z-10 bg-background shadow-[inset_0_-1px_0_var(--border)] py-2.5 pr-5 text-right font-medium">After MU$</th>
+              <th className="sticky top-12 z-10 bg-background shadow-[inset_0_-1px_0_var(--border)] py-2.5 pr-5 text-right font-medium">Cost/Purchase</th>
+              <th className="sticky top-12 z-10 bg-background shadow-[inset_0_-1px_0_var(--border)] py-2.5 pr-5 text-right font-medium">Labor Cost</th>
+              <th className="sticky top-12 z-10 bg-background shadow-[inset_0_-1px_0_var(--border)] py-2.5 pr-5 text-right font-medium">Total Cost</th>
+              <th className="sticky top-12 z-10 bg-background shadow-[inset_0_-1px_0_var(--border)] py-2.5 pr-5 text-right font-medium">Recommend</th>
+              <th className="sticky top-12 z-10 bg-background shadow-[inset_0_-1px_0_var(--border)] py-2.5 pr-5 font-medium">Competitor</th>
+              <th className="sticky top-12 z-10 bg-background shadow-[inset_0_-1px_0_var(--border)] py-2.5 pr-5 text-right font-medium">Base Price</th>
+              <th className="sticky top-12 z-10 bg-background shadow-[inset_0_-1px_0_var(--border)] py-2.5 pr-5 text-right font-medium">%Off</th>
+              <th className="sticky top-12 z-10 bg-background shadow-[inset_0_-1px_0_var(--border)] py-2.5 pr-5 text-right font-medium">Sale Price</th>
+              <th className="sticky top-12 z-10 bg-background shadow-[inset_0_-1px_0_var(--border)] py-2.5 pr-5 text-right font-medium">Mark Up%</th>
+              <th className="sticky top-12 z-10 bg-background shadow-[inset_0_-1px_0_var(--border)] py-2.5 pr-5 text-right font-medium">Gross Profit</th>
+              <th className="sticky top-12 z-10 bg-background shadow-[inset_0_-1px_0_var(--border)] py-2.5 pr-5 font-medium">Profit Status</th>
+              <th className="sticky top-12 z-10 bg-background shadow-[inset_0_-1px_0_var(--border)] py-2.5 pr-5 font-medium">Status</th>
+              <th className="sticky top-12 z-10 bg-background shadow-[inset_0_-1px_0_var(--border)] py-2.5 text-right font-medium">Actions</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-black/[.06] dark:divide-white/[.08]">
-            {paged.map((s) => (
+            {sets.map((s) => (
               <tr
                 key={s.id}
                 onClick={() => openSet(s.id)}
@@ -457,7 +506,7 @@ function SetsOverview({ brandId, sets }: { brandId: string; sets: SetSummary[] }
             {sets.length === 0 && (
               <tr>
                 <td colSpan={19} className="py-8 text-center text-sm text-zinc-500">
-                  No sets yet for this business.
+                  {q ? `No sets match "${q}".` : "No sets yet for this business."}
                 </td>
               </tr>
             )}
@@ -466,15 +515,15 @@ function SetsOverview({ brandId, sets }: { brandId: string; sets: SetSummary[] }
       </div>
 
       {sets.length > 0 && (
-        <div className="mt-3 flex flex-wrap items-center justify-between gap-3 border-t border-black/[.08] pt-3 text-sm dark:border-white/[.145]">
+        <div className="mt-3 flex items-center gap-6 border-t border-black/[.08] pt-3 text-sm dark:border-white/[.145]">
           <label className="flex items-center gap-2 text-xs text-zinc-500">
             Items per page
             <select
-              value={pageSize}
-              onChange={(e) => setPageSize(Number(e.target.value))}
+              value={limit}
+              onChange={(e) => goTo({ limit: Number(e.target.value), page: 1 })}
               className="rounded border border-black/[.15] bg-transparent px-2 py-1 text-xs dark:border-white/[.2]"
             >
-              {PAGE_SIZE_OPTIONS.map((n) => (
+              {(PAGE_SIZE_OPTIONS.includes(limit) ? PAGE_SIZE_OPTIONS : [...PAGE_SIZE_OPTIONS, limit].sort((a, b) => a - b)).map((n) => (
                 <option key={n} value={n}>
                   {n}
                 </option>
@@ -484,20 +533,20 @@ function SetsOverview({ brandId, sets }: { brandId: string; sets: SetSummary[] }
           <div className="flex items-center gap-2">
             <button
               type="button"
-              onClick={() => setPage(currentPage - 1)}
-              disabled={currentPage <= 1}
+              onClick={() => goTo({ page: page - 1 })}
+              disabled={page <= 1}
               className="flex items-center gap-1 rounded border border-black/[.15] px-2.5 py-1 text-xs disabled:opacity-30 dark:border-white/[.2]"
             >
               <ChevronLeft className="size-3.5" />
               Prev
             </button>
             <span className="tabular-nums text-zinc-500">
-              Page {currentPage} of {pageCount}
+              Page {page} of {pageCount}
             </span>
             <button
               type="button"
-              onClick={() => setPage(currentPage + 1)}
-              disabled={currentPage >= pageCount}
+              onClick={() => goTo({ page: page + 1 })}
+              disabled={page >= pageCount}
               className="flex items-center gap-1 rounded border border-black/[.15] px-2.5 py-1 text-xs disabled:opacity-30 dark:border-white/[.2]"
             >
               Next
@@ -1359,11 +1408,11 @@ function SetEditor({
                         </td>
                         <td data-label="Unit Cost" className={`${MOBILE_LABEL} py-0 tabular-nums md:py-2 md:pr-3 md:text-right`}>
                           {weightGramsForRow !== null && item.baseCostPerUnit !== null ? (
-                            <span className="text-zinc-500" title="Purchase Cost in Stock, per pack weight">
+                            <span className="text-zinc-500" title="Total in Stock, per pack weight">
                               {formatMoney(item.baseCostPerUnit)} / {weightGramsForRow}g
                             </span>
                           ) : item.priceFromStock && item.baseCostPerUnit !== null ? (
-                            <span className="text-zinc-500" title="Purchase Cost in Stock -- change it there">
+                            <span className="text-zinc-500" title="Total in Stock -- change it there">
                               {formatMoney(item.baseCostPerUnit)}
                             </span>
                           ) : (

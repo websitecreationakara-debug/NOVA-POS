@@ -38,7 +38,7 @@ import {
 import { PAYMENT_METHOD_LABELS, type PaymentMethod } from "@/lib/paymentMethods";
 import { computeGrossMargin } from "@/lib/cogs";
 import { addExpenseAction, getWasteItemsAction, updateExpenseAction } from "./actions";
-import { setMarginUnitCostAction, setProductPriceAction } from "../stock/actions";
+import { setMarginSoldAtCostAction, setMarginUnitCostAction, setProductPriceAction } from "../stock/actions";
 import { ppDay, ppHour, ppToday } from "@/lib/phnomPenhTime";
 import { exportAccountancePdf } from "@/lib/exportAccountancePdf";
 import DeleteExpenseDialog from "@/components/DeleteExpenseDialog";
@@ -894,6 +894,10 @@ export default function AccountanceClient({
   // one at a time, everything else stays a compact chip/value so the table
   // reads cleanly instead of every row carrying two empty boxes.
   const [editingMarginId, setEditingMarginId] = useState<string | null>(null);
+  // The "N sold at $X" line being edited (one at a time): which product and which
+  // cost group, plus the new cost typed so far.
+  const [editingSoldAt, setEditingSoldAt] = useState<{ productId: string; cost: number } | null>(null);
+  const [soldAtDraft, setSoldAtDraft] = useState("");
   const [bulkCostModalOpen, setBulkCostModalOpen] = useState(false);
   const [wasteModalOpen, setWasteModalOpen] = useState(false);
   // The "+ Add waste item" product list is fetched when the form is first wanted
@@ -979,6 +983,41 @@ export default function AccountanceClient({
         setError(e instanceof Error ? e.message : "Failed to save");
       } finally {
         cancelMarginEdit(r.productId);
+      }
+    });
+  }
+
+  // Re-prices just the sold lines in one "N sold at $X" group (see
+  // setMarginSoldAtCostAction); the product's other groups and its current cost
+  // in Stock stay as they are.
+  function saveSoldAt() {
+    if (!editingSoldAt) return;
+    const { productId, cost } = editingSoldAt;
+    const next = parseFloat(soldAtDraft);
+    if (Number.isNaN(next) || next < 0) {
+      setError("Cost cannot be negative");
+      return;
+    }
+    setError(null);
+    if (Math.round(next * 100) / 100 === cost) {
+      setEditingSoldAt(null);
+      return;
+    }
+    startTransition(async () => {
+      try {
+        await setMarginSoldAtCostAction({
+          productId,
+          fromCost: cost,
+          toCost: next,
+          brandId: currentBrand.id,
+          fromDate,
+          toDate,
+        });
+        router.refresh();
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Failed to save");
+      } finally {
+        setEditingSoldAt(null);
       }
     });
   }
@@ -2115,11 +2154,59 @@ export default function AccountanceClient({
                                   className="text-xs text-zinc-500"
                                   title="Units sold at each cost in this period; each sale keeps its own cost in Total COGS"
                                 >
-                                  {r.soldAt.slice(0, MARGIN_SOLD_AT_PREVIEW).map((s) => (
-                                    <div key={s.unitCost}>
-                                      {s.units} sold at {formatMoney(s.unitCost)}
-                                    </div>
-                                  ))}
+                                  {r.soldAt.slice(0, MARGIN_SOLD_AT_PREVIEW).map((s) =>
+                                    editingSoldAt?.productId === r.productId && editingSoldAt.cost === s.unitCost ? (
+                                      <div key={s.unitCost} className="flex items-center justify-end gap-1">
+                                        <span>{s.units} sold at $</span>
+                                        <input
+                                          autoFocus
+                                          type="number"
+                                          min={0}
+                                          step="0.01"
+                                          value={soldAtDraft}
+                                          onChange={(e) => setSoldAtDraft(e.target.value)}
+                                          onKeyDown={(e) => {
+                                            if (e.key === "Enter") saveSoldAt();
+                                            if (e.key === "Escape") setEditingSoldAt(null);
+                                          }}
+                                          disabled={isPending}
+                                          className="w-20 rounded border border-black/[.15] bg-transparent px-2 py-0.5 text-right text-xs text-foreground dark:border-white/[.2]"
+                                        />
+                                        <button
+                                          type="button"
+                                          title="Save"
+                                          disabled={isPending}
+                                          onClick={saveSoldAt}
+                                          className="rounded p-1 text-green-600 hover:bg-green-100 dark:hover:bg-green-900/40"
+                                        >
+                                          <Check className="size-3.5" />
+                                        </button>
+                                        <button
+                                          type="button"
+                                          title="Cancel"
+                                          onClick={() => setEditingSoldAt(null)}
+                                          className="rounded p-1 text-zinc-500 hover:bg-black/[.06] dark:hover:bg-white/[.1]"
+                                        >
+                                          <X className="size-3.5" />
+                                        </button>
+                                      </div>
+                                    ) : (
+                                      <div key={s.unitCost}>
+                                        <button
+                                          type="button"
+                                          title="Edit the cost these units were sold at"
+                                          onClick={() => {
+                                            setSoldAtDraft(String(s.unitCost));
+                                            setEditingSoldAt({ productId: r.productId, cost: s.unitCost });
+                                          }}
+                                          className="inline-flex items-center gap-1 rounded px-1 hover:bg-black/[.05] hover:text-foreground dark:hover:bg-white/[.08]"
+                                        >
+                                          {s.units} sold at {formatMoney(s.unitCost)}
+                                          <Pencil className="size-3" />
+                                        </button>
+                                      </div>
+                                    )
+                                  )}
                                   {r.soldAt.length > MARGIN_SOLD_AT_PREVIEW && (
                                     <div className="font-medium text-brand">
                                       +{r.soldAt.length - MARGIN_SOLD_AT_PREVIEW} more -- click the row to see all

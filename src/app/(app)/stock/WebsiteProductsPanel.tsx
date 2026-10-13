@@ -1243,7 +1243,7 @@ export default function WebsiteProductsPanel({
           onClick={() => setCategoryFilter("")}
           className={`rounded-full border px-3 py-1 text-xs ${
             categoryFilter === ""
-              ? "border-black bg-black text-white dark:border-white dark:bg-white dark:text-black"
+              ? "border-brand bg-brand text-white"
               : "border-black/[.15] dark:border-white/[.2]"
           }`}
         >
@@ -1256,7 +1256,7 @@ export default function WebsiteProductsPanel({
             onClick={() => setCategoryFilter(c.id)}
             className={`rounded-full border px-3 py-1 text-xs ${
               categoryFilter === c.id
-                ? "border-black bg-black text-white dark:border-white dark:bg-white dark:text-black"
+                ? "border-brand bg-brand text-white"
                 : "border-black/[.15] dark:border-white/[.2]"
             }`}
           >
@@ -1268,7 +1268,7 @@ export default function WebsiteProductsPanel({
           onClick={() => setCategoryFilter("__none__")}
           className={`rounded-full border px-3 py-1 text-xs ${
             categoryFilter === "__none__"
-              ? "border-black bg-black text-white dark:border-white dark:bg-white dark:text-black"
+              ? "border-brand bg-brand text-white"
               : "border-black/[.15] dark:border-white/[.2]"
           }`}
         >
@@ -1280,7 +1280,7 @@ export default function WebsiteProductsPanel({
             onClick={() => setCategoryFilter(ADDONS_FILTER_ID)}
             className={`rounded-full border px-3 py-1 text-xs ${
               categoryFilter === ADDONS_FILTER_ID
-                ? "border-black bg-black text-white dark:border-white dark:bg-white dark:text-black"
+                ? "border-brand bg-brand text-white"
                 : "border-black/[.15] dark:border-white/[.2]"
             }`}
           >
@@ -1502,7 +1502,7 @@ export default function WebsiteProductsPanel({
           <div className="mt-4 flex gap-2">
             <button
               onClick={submitCreate}
-              className="rounded border border-black bg-black px-4 py-1.5 text-sm font-medium text-white dark:border-white dark:bg-white dark:text-black"
+              className="rounded border border-brand bg-brand px-4 py-1.5 text-sm font-medium text-white hover:brightness-95"
             >
               Create product
             </button>

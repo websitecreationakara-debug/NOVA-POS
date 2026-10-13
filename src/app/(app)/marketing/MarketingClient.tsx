@@ -459,7 +459,7 @@ export default function MarketingClient({
           <button
             disabled={isPending}
             onClick={createPromotion}
-            className="rounded-full bg-black px-4 py-1.5 text-sm text-white disabled:opacity-40 dark:bg-white dark:text-black"
+            className="rounded-full bg-brand px-4 py-1.5 text-sm font-medium text-white hover:brightness-95 disabled:opacity-40"
           >
             Add promotion
           </button>
@@ -656,8 +656,8 @@ export default function MarketingClient({
                 aria-expanded={showBoughtRange}
                 className={`rounded border px-2.5 py-1.5 text-sm transition-colors ${
                   showBoughtRange
-                    ? "border-brand text-brand"
-                    : "border-black/[.15] text-foreground hover:bg-black/[.04] dark:border-white/[.2] dark:hover:bg-white/[.06]"
+                    ? "border-brand bg-brand text-white"
+                    : "border-brand/60 text-brand hover:bg-brand/10"
                 }`}
               >
                 Range

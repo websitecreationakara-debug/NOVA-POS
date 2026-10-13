@@ -10,6 +10,7 @@ import {
   computeSetTotalCost,
   computeUnitCostForScale,
   countItemsMissingCost,
+  productWeightGrams,
   type SetPricing,
 } from "@/lib/costControl";
 import {
@@ -63,22 +64,49 @@ export type SetSummary = {
 
 type SetItemCostRow = { amount: number; unit_cost: number | null };
 
-export async function listSetsAction(brandId: string): Promise<SetSummary[]> {
+// One page of a business's sets (optionally only those whose Set ID or name
+// matches `q`), plus how many sets match in all -- so the page only loads and
+// prices the sets it shows, not every set and every one of its items. `page` is
+// clamped to the last page, and the page actually returned comes back too.
+export async function listSetsAction(
+  brandId: string,
+  opts: { page?: number; limit?: number; q?: string } = {}
+): Promise<{ sets: SetSummary[]; total: number; page: number }> {
   await requireMarketingAccess();
-  const { data, error } = await supabaseAdmin
-    .from("sets")
-    .select("*, set_items(amount, unit_cost)")
-    .eq("brand_id", brandId);
-  if (error) throw new Error(error.message);
+  const limit = Math.min(Math.max(Math.floor(opts.limit ?? 25) || 25, 1), 100);
+  const q = opts.q?.trim() ?? "";
+
+  // First just each set's id, code and name (cheap) to find the order and the
+  // total; the sets' items are only read for the page being shown.
+  let idsQuery = supabaseAdmin.from("sets").select("id, code, name").eq("brand_id", brandId);
+  if (q) {
+    // Quoted so a comma/parenthesis in the search isn't parsed as filter syntax.
+    const pattern = `"%${q.replace(/[\\"]/g, "\\$&")}%"`;
+    idsQuery = idsQuery.or(`name.ilike.${pattern},code.ilike.${pattern}`);
+  }
+  const { data: idRows, error: idsError } = await idsQuery;
+  if (idsError) throw new Error(idsError.message);
 
   // Set ID smaller-to-bigger (A1, A1.1, A2, A7.1, A8.1, A8.2, B1, ...) --
   // `numeric: true` makes the digit runs compare by value instead of
   // lexically, so "A2" sorts before "A10" instead of after it.
-  const sorted = [...(data ?? [])].sort((a, b) =>
+  const ordered = [...(idRows ?? [])].sort((a, b) =>
     a.code.localeCompare(b.code, undefined, { numeric: true, sensitivity: "base" })
   );
+  const total = ordered.length;
+  const page = Math.min(Math.max(Math.floor(opts.page ?? 1) || 1, 1), Math.max(1, Math.ceil(total / limit)));
+  const pageIds = ordered.slice((page - 1) * limit, page * limit).map((r) => r.id);
+  if (pageIds.length === 0) return { sets: [], total, page };
 
-  return sorted.map((s) => {
+  const { data, error } = await supabaseAdmin
+    .from("sets")
+    .select("*, set_items(amount, unit_cost)")
+    .in("id", pageIds);
+  if (error) throw new Error(error.message);
+  const byId = new Map((data ?? []).map((s) => [s.id, s]));
+  const sorted = pageIds.map((id) => byId.get(id)).filter((s): s is NonNullable<typeof s> => !!s);
+
+  const sets = sorted.map((s) => {
     const items = (s.set_items as SetItemCostRow[] | null) ?? [];
     const itemCosts = items.map((i) => ({ amount: i.amount, unitCost: i.unit_cost }));
     const totalCost = computeSetTotalCost(itemCosts);
@@ -107,6 +135,7 @@ export async function listSetsAction(brandId: string): Promise<SetSummary[]> {
       pricing,
     };
   });
+  return { sets, total, page };
 }
 
 export type SetItemDetail = {
@@ -123,7 +152,7 @@ export type SetItemDetail = {
   // The product's explicit Stock weight (grams per unit), if set -- takes
   // priority over guessing from productUnit/productName.
   productWeightGrams: number | null;
-  // The product's Set price for one native pack/unit -- its Purchase Cost in
+  // The product's Set price for one native pack/unit -- its Total in
   // Stock for a Stock product (see getSetItemPricing) -- fetched fresh each read (not
   // the possibly stale/rescaled unit_cost below) -- the reference
   // computeUnitCostForScale rescales from when Scale changes.
@@ -167,6 +196,17 @@ type SetItemDetailRow = {
 
 export async function getSetAction(setId: string): Promise<SetDetail | null> {
   await requireMarketingAccess();
+  const first = await loadSet(setId);
+  if (!first || first.staleProductIds.length === 0) return first?.detail ?? null;
+  // Some lines' stored Unit Cost no longer matches the product's Total in Stock
+  // (e.g. they were priced before Cost Control followed the Total): bring them in
+  // step, then read the set again so Line Total and Total Cost are right on this
+  // very load. Best-effort -- a hiccup just leaves them as they were.
+  await Promise.all(first.staleProductIds.map((id) => syncSetItemCostsForProduct(id).catch(() => undefined)));
+  return (await loadSet(setId))?.detail ?? first.detail;
+}
+
+async function loadSet(setId: string): Promise<{ detail: SetDetail; staleProductIds: string[] } | null> {
   const { data: set, error } = await supabaseAdmin
     .from("sets")
     .select(
@@ -181,6 +221,28 @@ export async function getSetAction(setId: string): Promise<SetDetail | null> {
     .slice()
     .sort((a, b) => a.sort_order - b.sort_order);
   const pricings = await Promise.all(rawItems.map((i) => getSetItemPricing(i.product_id)));
+
+  // Products whose lines are priced from Stock but whose stored Unit Cost isn't
+  // what Stock's Total gives for the line's Scale. A kg/g line whose pack weight
+  // can't be worked out from the product alone is skipped here (the sync can still
+  // use the website listing's weight, but it can't be told apart cheaply).
+  const isWeightScale = (unit: string) => ["kg", "g"].includes(unit.trim().toLowerCase());
+  const staleProductIds = [
+    ...new Set(
+      rawItems.flatMap((i, idx) => {
+        const { base, fromStock } = pricings[idx];
+        if (!fromStock || base === null) return [];
+        const weight = isWeightScale(i.unit)
+          ? productWeightGrams(i.products?.unit ?? "", i.products?.name ?? "", i.products?.weight_grams)
+          : null;
+        if (isWeightScale(i.unit) && weight === null) return [];
+        const expected = computeUnitCostForScale(base, weight, i.unit);
+        const stale = expected !== null && (i.unit_cost === null || Math.abs(i.unit_cost - expected) > 0.00005);
+        return stale ? [i.product_id] : [];
+      })
+    ),
+  ];
+
   const items: SetItemDetail[] = rawItems.map((i, idx) => ({
     id: i.id,
     productId: i.product_id,
@@ -206,21 +268,24 @@ export async function getSetAction(setId: string): Promise<SetDetail | null> {
   });
 
   return {
-    id: set.id,
-    brandId: set.brand_id,
-    code: set.code,
-    name: set.name,
-    status: set.status,
-    suggestedSellPrice: set.suggested_sell_price,
-    items,
-    totalCost,
-    itemsMissingCost: countItemsMissingCost(itemCosts),
-    marginPct,
-    targetMarkupPct: set.target_markup_pct,
-    laborCost: set.labor_cost,
-    competitorName: set.competitor_name,
-    competitorBasePrice: set.competitor_base_price,
-    pricing,
+    staleProductIds,
+    detail: {
+      id: set.id,
+      brandId: set.brand_id,
+      code: set.code,
+      name: set.name,
+      status: set.status,
+      suggestedSellPrice: set.suggested_sell_price,
+      items,
+      totalCost,
+      itemsMissingCost: countItemsMissingCost(itemCosts),
+      marginPct,
+      targetMarkupPct: set.target_markup_pct,
+      laborCost: set.labor_cost,
+      competitorName: set.competitor_name,
+      competitorBasePrice: set.competitor_base_price,
+      pricing,
+    },
   };
 }
 
@@ -576,7 +641,7 @@ export async function duplicateSetAction(
 
 // Adding a product auto-fills unit/unit_cost from Stock right now -- the
 // core UX point of the Set Builder (no re-typing a product's own price).
-// unit_cost is the product's Purchase Cost in Stock -- see getSetItemPricing.
+// unit_cost is the product's Total in Stock -- see getSetItemPricing.
 export async function addSetItemAction(input: {
   setId: string;
   productId: string;

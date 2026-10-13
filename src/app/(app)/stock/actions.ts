@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { supabaseAdmin } from "@/lib/supabase/server";
 import { pushStockToSites, searchSiteProducts, linkProductToSite, type SiteProductCandidate } from "@/lib/site-sync";
-import { requireStockAccess } from "@/lib/stockAccess";
+import { requireFullStockAccess, requireStockAccess } from "@/lib/stockAccess";
 import { computeLineCogs, computeRecipeUnitCost } from "@/lib/cogs";
 import { ALL_BUSINESSES_ID } from "@/lib/supabase/queries";
 import { COUNTED_FULFILLMENT_STATUSES } from "@/lib/orderStatus";
@@ -120,6 +120,78 @@ export async function setMarginUnitCostAction(input: {
   await setProductCostAction({ productId, costPrice: unitCost });
 
   revalidatePath("/accountance");
+}
+
+// Edits one "N sold at $X" group of the Margin Report: the product's sold lines
+// that the report shows as sold at `fromCost` are re-priced at `toCost`; its other
+// groups, and sales outside the business/date range, keep the cost they were made
+// at. Lines are matched the way the report groups them (the recorded unit cost, else
+// cogs / quantity, to the cent) over the same lines it reads (paid, counted
+// statuses, dated by list_at, scoped by the product's business). Unlike
+// setMarginUnitCostAction this leaves the product's current cost in Stock alone --
+// it corrects what past sales cost, not what the product costs now.
+export async function setMarginSoldAtCostAction(input: {
+  productId: string;
+  fromCost: number;
+  toCost: number;
+  brandId: string;
+  fromDate: string;
+  toDate: string;
+}): Promise<{ updated: number }> {
+  await requireFullStockAccess();
+  const { productId, brandId, fromDate, toDate } = input;
+  const round2 = (n: number) => Math.round(n * 100) / 100;
+  const fromCost = round2(input.fromCost);
+  const toCost = round2(input.toCost);
+  if (Number.isNaN(fromCost) || Number.isNaN(toCost) || toCost < 0) {
+    throw new Error("Cost cannot be negative");
+  }
+  if (fromCost === toCost) return { updated: 0 };
+
+  const matching: { id: string; quantity: number }[] = [];
+  const PAGE = 1000;
+  for (let from = 0; ; from += PAGE) {
+    let query = supabaseAdmin
+      .from("order_items")
+      .select("id, quantity, cogs, unit_cost, products!inner(brand_id), orders!inner(status, list_at, paid_at, fulfillment_status)")
+      .eq("product_id", productId)
+      .eq("orders.status", "paid")
+      .in("orders.fulfillment_status", COUNTED_FULFILLMENT_STATUSES)
+      .gte("orders.list_at", ppDayStart(fromDate))
+      .lte("orders.list_at", ppDayEnd(toDate));
+    if (brandId !== ALL_BUSINESSES_ID) query = query.eq("products.brand_id", brandId);
+    const { data, error } = await query.order("id").range(from, from + PAGE - 1);
+    if (error) throw error;
+    for (const item of data ?? []) {
+      const quantity = Number(item.quantity);
+      const lineCost =
+        item.unit_cost !== null
+          ? round2(Number(item.unit_cost))
+          : item.cogs !== null && quantity
+            ? round2(Number(item.cogs) / quantity)
+            : null;
+      if (lineCost === fromCost) matching.push({ id: item.id, quantity });
+    }
+    if (!data || data.length < PAGE) break;
+  }
+  if (matching.length === 0) {
+    throw new Error("Those sales changed since the page loaded -- refresh and try again.");
+  }
+
+  const results = await Promise.all(
+    matching.map((item) =>
+      supabaseAdmin
+        .from("order_items")
+        .update({ unit_cost: toCost, cogs: computeLineCogs(toCost, item.quantity), cost_source: "direct" })
+        .eq("id", item.id)
+    )
+  );
+  const failed = results.find((r) => r.error);
+  if (failed?.error) throw failed.error;
+
+  revalidatePath("/accountance");
+  revalidatePath(`/accountance/margin/${productId}`);
+  return { updated: matching.length };
 }
 
 export async function adjustStockAction(input: {

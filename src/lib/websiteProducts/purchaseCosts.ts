@@ -254,14 +254,15 @@ export async function getEffectiveProductCosts(productIds: string[]): Promise<Ma
   return out;
 }
 
-// What a Set line is priced at, per native pack/unit: the product's Purchase
-// Cost in Stock (the average of Original Cost and Total Cost 10%). When a
-// product has no Purchase Cost entered, it falls back to its Total (a typed
-// Total, or Purchase Cost + Extra Cost), then its own cost_price -- so it
-// isn't left blank. A product with no website listing (a manual Set extra:
-// Sauce, Fried Garlic, ...) just uses its cost_price. `fromStock` says
-// whether the price comes from a Stock listing -- such a line isn't
-// hand-editable in the Set builder, since the cost lives in Stock.
+// What a Set line is priced at, per native pack/unit: the product's Total in
+// Stock (a typed Total, or Purchase Cost + Extra Cost) -- the same figure
+// getEffectiveProductCost uses, so a line's Line Total matches the Total Stock
+// shows for the product. When no Total can be worked out it falls back to the
+// product's own cost_price, so it isn't left blank. A product with no website
+// listing (a manual Set extra: Sauce, Fried Garlic, ...) just uses its
+// cost_price. `fromStock` says whether the price comes from a Stock listing --
+// such a line isn't hand-editable in the Set builder, since the cost lives in
+// Stock.
 export async function getSetItemPricing(
   productId: string
 ): Promise<{ base: number | null; fromStock: boolean }> {
@@ -287,13 +288,13 @@ export async function getSetItemPricing(
     .eq("site_product_id", link.site_product_id)
     .eq("variation_id", link.variation_id)
     .maybeSingle();
-  const { purchaseCost, total } = derivePurchaseCost({
+  const { total } = derivePurchaseCost({
     originalCost: costRow?.original_cost ?? null,
     totalCost10pct: costRow?.total_cost_10pct ?? null,
     extraMoney: costRow?.extra_money ?? null,
     totalOverride: costRow?.total_override ?? null,
   });
-  return { base: purchaseCost ?? total ?? product.cost_price, fromStock: true };
+  return { base: total ?? product.cost_price, fromStock: true };
 }
 
 // Pushes a product's current Set price (see getSetItemPricing) into every Set

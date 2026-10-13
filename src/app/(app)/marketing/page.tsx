@@ -1,5 +1,5 @@
 import { redirect } from "next/navigation";
-import { getBrands, getStockPickerItems } from "@/lib/supabase/queries";
+import { getBrands, getStockPickerItems, type StockPickerItem } from "@/lib/supabase/queries";
 import { getSessionUser } from "@/lib/supabase/auth-server";
 import {
   getCrmChartDataAction,
@@ -11,7 +11,7 @@ import {
 } from "./actions";
 import { parseCustomerFilters } from "@/lib/customerFilters";
 import { ppToday } from "@/lib/phnomPenhTime";
-import { getSetAction, listSetsAction } from "./costControlActions";
+import { getSetAction, listSetsAction, type SetSummary } from "./costControlActions";
 import MarketingClient from "./MarketingClient";
 import CrmChartsClient from "./CrmChartsClient";
 import ProductInsightClient from "./ProductInsightClient";
@@ -117,9 +117,32 @@ export default async function MarketingPage({
     const currentBrand = brands.find((b) => b.id === brandId) ?? brands[0];
     const activeSetId = setParam && setParam !== "new" ? setParam : null;
 
-    const [sets, pickerItems, activeSet] = await Promise.all([
-      listSetsAction(currentBrand.id),
-      getStockPickerItems(currentBrand.id, currentBrand.slug, { includeAddons: true }),
+    // The sets list is paged in the database: ?page=N&limit=M (and ?q= for its
+    // search box). Land on explicit values so the address always shows them.
+    const setsLimit = Math.min(Math.max(parseInt(limitParam ?? "", 10) || 25, 1), 100);
+    const setsPage = Math.max(parseInt(pageParam ?? "", 10) || 1, 1);
+    if (!setParam && (!pageParam || !limitParam)) {
+      redirect(
+        `/marketing?${new URLSearchParams({
+          tab: "cost-control",
+          ...(brandId ? { brand: brandId } : {}),
+          ...(q ? { q } : {}),
+          page: String(setsPage),
+          limit: String(setsLimit),
+        })}`
+      );
+    }
+
+    // Each view only loads what it shows: the list needs the page of sets; the set
+    // builder needs the product picker (which reads the storefront catalogs) and the
+    // open set -- so opening the list no longer waits on the storefronts.
+    const [setsPageResult, pickerItems, activeSet] = await Promise.all([
+      setParam
+        ? Promise.resolve({ sets: [] as SetSummary[], total: 0, page: 1 })
+        : listSetsAction(currentBrand.id, { page: setsPage, limit: setsLimit, q }),
+      setParam
+        ? getStockPickerItems(currentBrand.id, currentBrand.slug, { includeAddons: true })
+        : Promise.resolve([] as StockPickerItem[]),
       activeSetId ? getSetAction(activeSetId) : Promise.resolve(null),
     ]);
 
@@ -127,7 +150,11 @@ export default async function MarketingPage({
       <CostControlClient
         brands={brands}
         currentBrand={currentBrand}
-        sets={sets}
+        sets={setsPageResult.sets}
+        setsTotal={setsPageResult.total}
+        setsPage={setsPageResult.page}
+        setsLimit={setsLimit}
+        setsQuery={q}
         items={pickerItems}
         activeSet={activeSet}
         isBuilderOpen={!!setParam}
