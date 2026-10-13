@@ -1316,6 +1316,8 @@ function SetEditor({
                 <th className="py-2 pr-3 font-medium">Scale</th>
                 <th className="py-2 pr-3 text-right font-medium">Unit Cost</th>
                 <th className="py-2 pr-3 text-right font-medium">Line Total</th>
+                <th className="py-2 pr-3 text-right font-medium">Cost 10%</th>
+                <th className="py-2 pr-3 text-right font-medium">Total Cost 10%</th>
                 <th className="w-16 py-2 text-right font-medium">Actions</th>
               </tr>
             </thead>
@@ -1335,6 +1337,13 @@ function SetEditor({
                   !Number.isNaN(liveAmount) && (liveUnitCost === null || !Number.isNaN(liveUnitCost))
                     ? computeLineTotal({ amount: liveAmount, unitCost: liveUnitCost })
                     : item.lineTotal;
+                // Cost 10% is Stock's "Total Cost 10%"; its total is Amount x Cost 10%,
+                // rescaled for the line's Scale the same way Unit Cost is.
+                const liveCost10Unit =
+                  item.cost10pct === null ? null : computeUnitCostForScale(item.cost10pct, weightGramsForRow, unitValue);
+                const liveCost10Total = Number.isNaN(liveAmount)
+                  ? null
+                  : computeLineTotal({ amount: liveAmount, unitCost: liveCost10Unit });
                 return (
                   <tr key={item.id} className="relative grid grid-cols-2 gap-x-3 gap-y-2 py-3 md:table-row md:py-0">
                     <td className="col-span-2 py-0 pr-10 md:py-2 md:pr-3">
@@ -1353,7 +1362,7 @@ function SetEditor({
                       </div>
                     </td>
                     {confirming ? (
-                      <td colSpan={5} className="col-span-2 py-0 md:py-2">
+                      <td colSpan={7} className="col-span-2 py-0 md:py-2">
                         <div className="flex flex-wrap items-center justify-end gap-2">
                           <span className="text-xs text-zinc-500">Remove &quot;{item.productName}&quot;?</span>
                           <button
@@ -1439,6 +1448,14 @@ function SetEditor({
                         <td data-label="Line Total" className={`${MOBILE_LABEL} py-0 font-medium tabular-nums md:py-2 md:pr-3 md:text-right md:font-normal`}>
                           {formatMoney(liveLineTotal)}
                         </td>
+                        <td data-label="Cost 10%" className={`${MOBILE_LABEL} py-0 tabular-nums md:py-2 md:pr-3 md:text-right`}>
+                          <span className="text-zinc-500" title="Total Cost 10% in Stock -- change it there">
+                            {item.cost10pct === null ? "—" : formatMoney(item.cost10pct)}
+                          </span>
+                        </td>
+                        <td data-label="Total Cost 10%" className={`${MOBILE_LABEL} py-0 font-medium tabular-nums md:py-2 md:pr-3 md:text-right md:font-normal`}>
+                          {liveCost10Total === null ? "—" : formatMoney(liveCost10Total)}
+                        </td>
                         <td className="absolute top-3 right-0 py-0 md:static md:py-2 md:text-right">
                           <button
                             type="button"
@@ -1456,7 +1473,7 @@ function SetEditor({
               })}
               {set.items.length === 0 && (
                 <tr className="block md:table-row">
-                  <td colSpan={6} className="block py-8 text-center text-sm text-zinc-500 md:table-cell">
+                  <td colSpan={8} className="block py-8 text-center text-sm text-zinc-500 md:table-cell">
                     No products in this set yet -- search above to add one.
                   </td>
                 </tr>

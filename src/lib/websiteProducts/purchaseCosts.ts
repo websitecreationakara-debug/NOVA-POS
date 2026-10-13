@@ -265,13 +265,13 @@ export async function getEffectiveProductCosts(productIds: string[]): Promise<Ma
 // Stock.
 export async function getSetItemPricing(
   productId: string
-): Promise<{ base: number | null; fromStock: boolean }> {
+): Promise<{ base: number | null; fromStock: boolean; cost10: number | null }> {
   const { data: product } = await supabaseAdmin
     .from("products")
     .select("cost_price")
     .eq("id", productId)
     .maybeSingle();
-  if (!product) return { base: null, fromStock: false };
+  if (!product) return { base: null, fromStock: false, cost10: null };
 
   const { data: link } = await supabaseAdmin
     .from("product_site_links")
@@ -279,7 +279,7 @@ export async function getSetItemPricing(
     .eq("product_id", productId)
     .limit(1)
     .maybeSingle();
-  if (!link) return { base: product.cost_price, fromStock: false };
+  if (!link) return { base: product.cost_price, fromStock: false, cost10: null };
 
   const { data: costRow } = await supabaseAdmin
     .from("website_product_purchase_costs")
@@ -294,7 +294,7 @@ export async function getSetItemPricing(
     extraMoney: costRow?.extra_money ?? null,
     totalOverride: costRow?.total_override ?? null,
   });
-  return { base: total ?? product.cost_price, fromStock: true };
+  return { base: total ?? product.cost_price, fromStock: true, cost10: costRow?.total_cost_10pct ?? null };
 }
 
 // Pushes a product's current Set price (see getSetItemPricing) into every Set
