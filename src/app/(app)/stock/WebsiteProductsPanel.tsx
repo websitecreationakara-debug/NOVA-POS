@@ -1588,7 +1588,7 @@ export default function WebsiteProductsPanel({
                   />
                 </th>
                 <th className="w-14 px-3 py-2 font-medium">Image</th>
-                <th className="w-[17rem] max-w-[17rem] min-w-[14rem] px-3 py-2 font-medium">Product</th>
+                <th className="w-[14rem] max-w-[14rem] min-w-[12rem] px-3 py-2 font-medium">Product</th>
                 <th className="w-20 bg-black/[.015] px-2 py-2 text-right font-medium dark:bg-white/[.02]">
                   Original Cost
                 </th>
@@ -1601,14 +1601,14 @@ export default function WebsiteProductsPanel({
                 <th className="w-20 bg-black/[.015] px-2 py-2 text-right font-medium dark:bg-white/[.02]">
                   Extra Cost
                 </th>
-                <th className="w-20 border-r border-black/[.08] bg-black/[.015] px-2 py-2 text-right font-medium dark:border-white/[.145] dark:bg-white/[.02]">
+                <th className="w-[6.5rem] border-r border-black/[.08] bg-black/[.015] px-2 py-2 text-right font-medium dark:border-white/[.145] dark:bg-white/[.02]">
                   Total
                 </th>
                 <th className="w-24 px-2 py-2 text-right font-medium">Price</th>
                 <th className="w-20 px-2 py-2 text-right font-medium">Stock</th>
                 <th className="w-20 px-2 py-2 text-right font-medium">Add Stock</th>
                 <th className="w-32 px-3 py-2 font-medium">Status</th>
-                <th className="w-16 px-3 py-2 text-right font-medium">Actions</th>
+                <th className="w-16 px-2 py-2 text-right font-medium">Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -1682,7 +1682,7 @@ export default function WebsiteProductsPanel({
                         </div>
                       )}
                     </td>
-                    <td className="w-[17rem] max-w-[17rem] min-w-[14rem] px-3 py-2">
+                    <td className="w-[14rem] max-w-[14rem] min-w-[12rem] px-3 py-2">
                       {/* Editable name. Keyed by p.id (not editId) so the sibling
                           size-rows of a "variable" product share one draft and
                           rename the parent together. */}
@@ -1872,7 +1872,7 @@ export default function WebsiteProductsPanel({
                       )}
                     </td>
                     <td className="bg-black/[.015] px-2 py-2 text-right dark:bg-white/[.02]">
-                      <label className="inline-flex w-24 items-center gap-1 rounded border border-black/[.15] px-2 py-1 text-sm tabular-nums focus-within:border-black/40 dark:border-white/[.2] dark:focus-within:border-white/50">
+                      <label className="inline-flex w-16 items-center gap-1 rounded border border-black/[.15] px-2 py-1 text-sm tabular-nums focus-within:border-black/40 dark:border-white/[.2] dark:focus-within:border-white/50">
                         <span className="select-none text-zinc-400">$</span>
                         <input
                           type="number"
@@ -1897,7 +1897,7 @@ export default function WebsiteProductsPanel({
                       </label>
                     </td>
                     <td className="bg-black/[.015] px-2 py-2 text-right dark:bg-white/[.02]">
-                      <label className="inline-flex w-24 items-center gap-1 rounded border border-black/[.15] px-2 py-1 text-sm tabular-nums focus-within:border-black/40 dark:border-white/[.2] dark:focus-within:border-white/50">
+                      <label className="inline-flex w-16 items-center gap-1 rounded border border-black/[.15] px-2 py-1 text-sm tabular-nums focus-within:border-black/40 dark:border-white/[.2] dark:focus-within:border-white/50">
                         <span className="select-none text-zinc-400">$</span>
                         <input
                           type="number"
@@ -1925,7 +1925,7 @@ export default function WebsiteProductsPanel({
                       {purchaseCost === null ? "—" : formatMoney(purchaseCost)}
                     </td>
                     <td className="bg-black/[.015] px-2 py-2 text-right dark:bg-white/[.02]">
-                      <label className="inline-flex w-24 items-center gap-1 rounded border border-black/[.15] px-2 py-1 text-sm tabular-nums focus-within:border-black/40 dark:border-white/[.2] dark:focus-within:border-white/50">
+                      <label className="inline-flex w-16 items-center gap-1 rounded border border-black/[.15] px-2 py-1 text-sm tabular-nums focus-within:border-black/40 dark:border-white/[.2] dark:focus-within:border-white/50">
                         <span className="select-none text-zinc-400">$</span>
                         <input
                           type="number"
@@ -1952,7 +1952,7 @@ export default function WebsiteProductsPanel({
                     <td className="border-r border-black/[.08] bg-black/[.015] px-2 py-2 text-right dark:border-white/[.145] dark:bg-white/[.02]">
                       <label
                         title="Manual override -- wins over Purchase Cost + Extra Cost, and works even when Original Cost / Total Cost 10% aren't filled in"
-                        className="inline-flex w-24 items-center gap-1 rounded border border-black/[.15] px-2 py-1 text-sm font-medium tabular-nums focus-within:border-black/40 dark:border-white/[.2] dark:focus-within:border-white/50"
+                        className="inline-flex w-[5.5rem] items-center gap-1 rounded border border-black/[.15] px-2 py-1 text-sm font-medium tabular-nums focus-within:border-black/40 dark:border-white/[.2] dark:focus-within:border-white/50"
                       >
                         <span className="select-none text-zinc-400">$</span>
                         <input
@@ -2084,7 +2084,7 @@ export default function WebsiteProductsPanel({
                         title="Edit name, Khmer name and scale"
                         aria-label="Edit"
                         aria-expanded={editRowKey === key}
-                        className="mr-1 inline-flex size-8 items-center justify-center rounded-md text-zinc-400 transition-colors hover:bg-black/[.05] hover:text-foreground dark:hover:bg-white/[.08]"
+                        className="mr-0.5 inline-flex size-7 items-center justify-center rounded-md text-zinc-400 transition-colors hover:bg-black/[.05] hover:text-foreground dark:hover:bg-white/[.08]"
                       >
                         <Pencil className="size-4" />
                       </button>
@@ -2094,7 +2094,7 @@ export default function WebsiteProductsPanel({
                           onClick={() => setMoveTarget({ p, to: moveTargets[0].id })}
                           title="Move to another business"
                           aria-label="Move to another business"
-                          className="mr-1 inline-flex size-8 items-center justify-center rounded-md text-zinc-400 transition-colors hover:bg-black/[.05] hover:text-foreground dark:hover:bg-white/[.08]"
+                          className="mr-0.5 inline-flex size-7 items-center justify-center rounded-md text-zinc-400 transition-colors hover:bg-black/[.05] hover:text-foreground dark:hover:bg-white/[.08]"
                         >
                           <ArrowRightLeft className="size-4" />
                         </button>
@@ -2105,7 +2105,7 @@ export default function WebsiteProductsPanel({
                         onClick={() => remove(p, v)}
                         title="Delete product"
                         aria-label="Delete product"
-                        className="inline-flex size-8 items-center justify-center rounded-md text-zinc-400 transition-colors hover:bg-red-50 hover:text-red-600 disabled:opacity-40 dark:hover:bg-red-950 dark:hover:text-red-400"
+                        className="inline-flex size-7 items-center justify-center rounded-md text-zinc-400 transition-colors hover:bg-red-50 hover:text-red-600 disabled:opacity-40 dark:hover:bg-red-950 dark:hover:text-red-400"
                       >
                         {pendingId === editId || pendingId === p.id ? (
                           "…"
