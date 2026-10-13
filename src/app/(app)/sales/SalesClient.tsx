@@ -958,7 +958,7 @@ export default function SalesClient({
           View / print invoice
         </Link>
         <button
-          className="rounded-full bg-black px-6 py-2 text-white dark:bg-white dark:text-black"
+          className="rounded-full bg-brand px-6 py-2 text-white hover:brightness-95"
           onClick={() => setReceipt(null)}
         >
           New sale
@@ -1059,7 +1059,7 @@ export default function SalesClient({
                 onClick={() => setActiveCategoryId("all")}
                 className={`rounded-full border px-3 py-1 text-xs ${
                   activeCategoryId === "all"
-                    ? "border-black bg-black text-white dark:border-white dark:bg-white dark:text-black"
+                    ? "border-brand bg-brand text-white"
                     : "border-black/[.15] dark:border-white/[.2]"
                 }`}
               >
@@ -1071,7 +1071,7 @@ export default function SalesClient({
                   onClick={() => setActiveCategoryId(c.id)}
                   className={`rounded-full border px-3 py-1 text-xs ${
                     activeCategoryId === c.id
-                      ? "border-black bg-black text-white dark:border-white dark:bg-white dark:text-black"
+                      ? "border-brand bg-brand text-white"
                       : "border-black/[.15] dark:border-white/[.2]"
                   }`}
                 >

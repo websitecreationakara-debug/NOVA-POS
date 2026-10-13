@@ -299,7 +299,7 @@ export default function CrmChartsClient({ data }: { data: CrmChartsResult }) {
                 aria-pressed={gran === g}
                 onClick={() => go({ g, a: null, b: null })}
                 className={`rounded-lg px-2 py-1.5 text-sm font-medium transition-colors sm:px-3.5 ${
-                  gran === g ? "bg-card text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
+                  gran === g ? "bg-brand text-white shadow-sm" : "text-muted-foreground hover:text-foreground"
                 }`}
               >
                 {GRANULARITY_LABELS[g]}
@@ -322,7 +322,7 @@ export default function CrmChartsClient({ data }: { data: CrmChartsResult }) {
               className={`rounded-lg border px-3 py-1.5 text-sm font-medium transition-colors ${
                 comparing
                   ? "border-brand bg-brand text-white"
-                  : "border-border text-foreground hover:bg-black/[.04] dark:hover:bg-white/[.06]"
+                  : "border-brand/60 text-brand hover:bg-brand/10"
               }`}
             >
               Compare

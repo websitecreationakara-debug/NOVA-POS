@@ -683,7 +683,7 @@ export default function StockClient({
           onClick={() => setActiveCategoryId("all")}
           className={`rounded-full border px-3 py-1 text-xs ${
             activeCategoryId === "all"
-              ? "border-black bg-black text-white dark:border-white dark:bg-white dark:text-black"
+              ? "border-brand bg-brand text-white"
               : "border-black/[.15] dark:border-white/[.2]"
           }`}
         >
@@ -725,7 +725,7 @@ export default function StockClient({
                 onClick={() => setActiveCategoryId(c.id)}
                 className={`rounded-full border px-3 py-1 text-xs ${
                   activeCategoryId === c.id
-                    ? "border-black bg-black text-white dark:border-white dark:bg-white dark:text-black"
+                    ? "border-brand bg-brand text-white"
                     : "border-black/[.15] dark:border-white/[.2]"
                 }`}
               >

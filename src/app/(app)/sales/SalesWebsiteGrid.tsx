@@ -116,7 +116,7 @@ export function SalesGridPreview({ catalogId }: { catalogId: WebsiteCatalogId })
       <div className="mb-4 flex flex-wrap gap-2">
         {data && data.chips.length > 0 ? (
           <>
-            <span className="rounded-full border border-black bg-black px-3 py-1 text-xs text-white dark:border-white dark:bg-white dark:text-black">
+            <span className="rounded-full border border-brand bg-brand px-3 py-1 text-xs text-white">
               All
             </span>
             {data.chips.map((label) => (
@@ -392,7 +392,7 @@ export default function SalesWebsiteGrid({
             onClick={() => setActiveCategoryId("all")}
             className={`rounded-full border px-3 py-1 text-xs ${
               activeCategoryId === "all"
-                ? "border-black bg-black text-white dark:border-white dark:bg-white dark:text-black"
+                ? "border-brand bg-brand text-white"
                 : "border-black/[.15] dark:border-white/[.2]"
             }`}
           >
@@ -404,7 +404,7 @@ export default function SalesWebsiteGrid({
               onClick={() => setActiveCategoryId(c.id)}
               className={`rounded-full border px-3 py-1 text-xs ${
                 activeCategoryId === c.id
-                  ? "border-black bg-black text-white dark:border-white dark:bg-white dark:text-black"
+                  ? "border-brand bg-brand text-white"
                   : "border-black/[.15] dark:border-white/[.2]"
               }`}
             >
@@ -416,7 +416,7 @@ export default function SalesWebsiteGrid({
               onClick={() => setActiveCategoryId("__uncategorised")}
               className={`rounded-full border px-3 py-1 text-xs ${
                 activeCategoryId === "__uncategorised"
-                  ? "border-black bg-black text-white dark:border-white dark:bg-white dark:text-black"
+                  ? "border-brand bg-brand text-white"
                   : "border-black/[.15] dark:border-white/[.2]"
               }`}
             >
