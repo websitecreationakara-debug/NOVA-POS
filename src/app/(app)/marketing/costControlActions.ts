@@ -160,6 +160,9 @@ export type SetItemDetail = {
   // True when baseCostPerUnit comes from Stock: the line's price then follows
   // Stock and isn't hand-editable here.
   priceFromStock: boolean;
+  // The product's "Total Cost 10%" in Stock, per native pack/unit (null when
+  // Stock has none). Read-only here, like the Stock-priced Unit Cost.
+  cost10pct: number | null;
   amount: number;
   unit: string;
   unitCost: number | null;
@@ -237,7 +240,7 @@ async function loadSet(setId: string): Promise<{ detail: SetDetail; staleProduct
           : null;
         if (isWeightScale(i.unit) && weight === null) return [];
         const expected = computeUnitCostForScale(base, weight, i.unit);
-        const stale = expected !== null && (i.unit_cost === null || Math.abs(i.unit_cost - expected) > 0.00005);
+        const stale = expected !== null && (i.unit_cost === null || Math.abs(i.unit_cost - expected) > 0.0000001);
         return stale ? [i.product_id] : [];
       })
     ),
@@ -252,6 +255,7 @@ async function loadSet(setId: string): Promise<{ detail: SetDetail; staleProduct
     productWeightGrams: i.products?.weight_grams ?? null,
     baseCostPerUnit: pricings[idx].base,
     priceFromStock: pricings[idx].fromStock,
+    cost10pct: pricings[idx].cost10,
     amount: i.amount,
     unit: i.unit,
     unitCost: i.unit_cost,

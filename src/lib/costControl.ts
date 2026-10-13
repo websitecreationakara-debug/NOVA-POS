@@ -7,10 +7,11 @@ function round2(n: number): number {
   return Math.round(n * 100) / 100;
 }
 
-// Matches set_items.unit_cost's numeric(12,4) precision -- a per-gram cost
-// like $0.0630 needs more than cents to stay accurate across many grams.
-function round4(n: number): number {
-  return Math.round(n * 10000) / 10000;
+// Matches set_items.unit_cost's numeric(12,8) precision (migration 0078) -- a
+// per-gram cost like $0.10009 needs more than 4 places, or 1000g adds up to
+// $100.10 while 1kg of the same product is $100.09.
+function round8(n: number): number {
+  return Math.round(n * 1e8) / 1e8;
 }
 
 export type SetItemCost = {
@@ -136,8 +137,8 @@ export function computeUnitCostForScale(
   scale: string
 ): number | null {
   const s = scale.trim().toLowerCase();
-  if (s === "kg") return weightGrams === null ? null : round4((baseCostPerUnit / weightGrams) * 1000);
-  if (s === "g") return weightGrams === null ? null : round4(baseCostPerUnit / weightGrams);
+  if (s === "kg") return weightGrams === null ? null : round8((baseCostPerUnit / weightGrams) * 1000);
+  if (s === "g") return weightGrams === null ? null : round8(baseCostPerUnit / weightGrams);
   return baseCostPerUnit;
 }
 
