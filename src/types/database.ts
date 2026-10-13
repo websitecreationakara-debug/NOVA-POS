@@ -690,6 +690,16 @@ export type Database = {
         Args: { p_statuses: string[]; p_brand_id: string | null; p_from: string; p_to: string };
         Returns: Json;
       };
+      // Margin Report lines grouped per product and unit cost (migration 0075).
+      margin_report: {
+        Args: { p_statuses: string[]; p_brand_id: string | null; p_from: string; p_to: string };
+        Returns: Json;
+      };
+      // Position of each order among its Phnom Penh month's paid orders, for invoice numbers (migration 0076).
+      invoice_sequence: {
+        Args: { p_order_ids: string[] };
+        Returns: Json;
+      };
       // Units on hand at the start and end of a range, from the stock history (migration 0074).
       stock_units_between: {
         Args: { p_brand_id: string | null; p_from: string; p_to: string };

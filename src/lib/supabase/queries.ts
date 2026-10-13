@@ -910,6 +910,21 @@ export async function getOrdersList(
   // among ALL paid orders of its Phnom Penh month, oldest first. For each month
   // on this page, count the earlier orders (base) and list the orders from the
   // page's oldest to newest, so numbering matches regardless of filters/paging.
+  // Counted in the database in one call (migration 0076); if that isn't applied
+  // yet, fall back to the per-month queries below (slower) -- same numbers.
+  const { data: seqs, error: seqError } = await supabaseAdmin.rpc("invoice_sequence", {
+    p_order_ids: rows.filter((r) => r.paidAt).map((r) => r.id),
+  });
+  if (!seqError && seqs) {
+    const seqById = seqs as unknown as Record<string, number>;
+    for (const r of rows) {
+      const n = seqById[r.id];
+      if (n) r.invoiceNumber = formatInvoiceNumber(r.paidAt, Number(n));
+    }
+    return { rows, total: count ?? 0 };
+  }
+  if (seqError && seqError.code !== "PGRST202") throw new Error(seqError.message);
+
   const byMonth = new Map<string, OrderListRow[]>();
   for (const r of rows) {
     if (!r.paidAt) continue;
@@ -1571,65 +1586,111 @@ export async function getMarginReport(
   fromDate: string,
   toDate: string
 ): Promise<MarginReportRow[]> {
-  // The sold lines are read in parallel pages (one page after another took ~3 s
-  // for a year of sales).
-  const items = await readAllPages<{
-    product_id: string;
-    quantity: number;
-    line_total: number;
-    cogs: number | null;
-    unit_cost: number | null;
-    orders: { list_at: string | null; paid_at: string | null } | null;
-  }>((withCount) => {
-    let query = supabaseAdmin
-      .from("order_items")
-      .select(
-        "product_id, quantity, line_total, cogs, unit_cost, products!inner(brand_id), orders!inner(status, list_at, paid_at)",
-        { count: withCount ? "exact" : undefined }
-      )
-      .eq("orders.status", "paid")
-      .in("orders.fulfillment_status", COUNTED_FULFILLMENT_STATUSES)
-      .gte("orders.list_at", ppDayStart(fromDate))
-      .lte("orders.list_at", ppDayEnd(toDate));
-    if (brandId !== ALL_BUSINESSES_ID) query = query.eq("products.brand_id", brandId);
-    return query.order("id");
-  });
-  if (items.length === 0) return [];
+  type ProductInfo = { id: string; name: string; price: number; categories: { name: string } | null };
+  const productById = new Map<string, ProductInfo>();
+  const byProduct = new Map<string, MarginLine[]>();
 
-  const productIds = [...new Set(items.map((i) => i.product_id))];
-  // In chunks: hundreds of ids in one .in() make the request URL too long.
-  const productById = new Map<string, { id: string; name: string; price: number; categories: { name: string } | null }>();
-  // Unit Cost is each product's current cost (see getEffectiveProductCost), so
-  // it reads the same whichever date range is viewed. Looked up for every
-  // product in a few queries, alongside the product details.
-  const [productPages, currentCostByProduct] = await Promise.all([
-    Promise.all(
-      Array.from({ length: Math.ceil(productIds.length / 150) }, (_, i) =>
+  // Grouped in the database (migration 0075): each product comes back with its
+  // lines already collapsed to one per recorded unit cost. If that isn't applied
+  // yet, read every sold line and group them here (slower) -- same numbers.
+  const { data: report, error: reportError } = await supabaseAdmin.rpc("margin_report", {
+    p_statuses: COUNTED_FULFILLMENT_STATUSES,
+    p_brand_id: brandId === ALL_BUSINESSES_ID ? null : brandId,
+    p_from: ppDayStart(fromDate),
+    p_to: ppDayEnd(toDate),
+  });
+  if (!reportError && report) {
+    const rows = report as unknown as {
+      product_id: string;
+      name: string;
+      price: number | string;
+      category_name: string | null;
+      lines: {
+        quantity: number | string;
+        line_total: number | string;
+        cogs: number | string | null;
+        unit_cost: number | string | null;
+        paid_at: string | null;
+      }[];
+    }[];
+    for (const r of rows) {
+      productById.set(r.product_id, {
+        id: r.product_id,
+        name: r.name,
+        price: Number(r.price),
+        categories: r.category_name === null ? null : { name: r.category_name },
+      });
+      byProduct.set(
+        r.product_id,
+        r.lines.map((l) => ({
+          quantity: Number(l.quantity),
+          lineTotal: Number(l.line_total),
+          cogs: l.cogs === null ? null : Number(l.cogs),
+          unitCost: l.unit_cost === null ? null : Number(l.unit_cost),
+          paidAt: l.paid_at,
+        }))
+      );
+    }
+  } else {
+    if (reportError && reportError.code !== "PGRST202") throw new Error(reportError.message);
+
+    // The sold lines are read in parallel pages (one page after another took ~3 s
+    // for a year of sales).
+    const items = await readAllPages<{
+      product_id: string;
+      quantity: number;
+      line_total: number;
+      cogs: number | null;
+      unit_cost: number | null;
+      orders: { list_at: string | null; paid_at: string | null } | null;
+    }>((withCount) => {
+      let query = supabaseAdmin
+        .from("order_items")
+        .select(
+          "product_id, quantity, line_total, cogs, unit_cost, products!inner(brand_id), orders!inner(status, list_at, paid_at)",
+          { count: withCount ? "exact" : undefined }
+        )
+        .eq("orders.status", "paid")
+        .in("orders.fulfillment_status", COUNTED_FULFILLMENT_STATUSES)
+        .gte("orders.list_at", ppDayStart(fromDate))
+        .lte("orders.list_at", ppDayEnd(toDate));
+      if (brandId !== ALL_BUSINESSES_ID) query = query.eq("products.brand_id", brandId);
+      return query.order("id");
+    });
+    for (const item of items) {
+      const lines = byProduct.get(item.product_id) ?? [];
+      lines.push({
+        quantity: item.quantity,
+        lineTotal: item.line_total,
+        cogs: item.cogs,
+        unitCost: item.unit_cost,
+        paidAt: (item.orders as unknown as { list_at: string | null; paid_at: string | null } | null)?.list_at ?? (item.orders as unknown as { paid_at: string | null } | null)?.paid_at ?? null,
+      });
+      byProduct.set(item.product_id, lines);
+    }
+
+    // In chunks: hundreds of ids in one .in() make the request URL too long.
+    const ids = [...byProduct.keys()];
+    const productPages = await Promise.all(
+      Array.from({ length: Math.ceil(ids.length / 150) }, (_, i) =>
         supabaseAdmin
           .from("products")
           .select("id, name, price, categories(name)")
-          .in("id", productIds.slice(i * 150, (i + 1) * 150))
+          .in("id", ids.slice(i * 150, (i + 1) * 150))
       )
-    ),
-    getEffectiveProductCosts(productIds).catch(() => new Map<string, number | null>()),
-  ]);
-  for (const { data: products, error: prodError } of productPages) {
-    if (prodError) throw prodError;
-    for (const p of (products ?? []) as unknown as { id: string; name: string; price: number; categories: { name: string } | null }[]) productById.set(p.id, p);
+    );
+    for (const { data: products, error: prodError } of productPages) {
+      if (prodError) throw prodError;
+      for (const p of (products ?? []) as unknown as ProductInfo[]) productById.set(p.id, p);
+    }
   }
+  if (byProduct.size === 0) return [];
 
-  const byProduct = new Map<string, MarginLine[]>();
-  for (const item of items) {
-    const lines = byProduct.get(item.product_id) ?? [];
-    lines.push({
-      quantity: item.quantity,
-      lineTotal: item.line_total,
-      cogs: item.cogs,
-      unitCost: item.unit_cost,
-      paidAt: (item.orders as unknown as { list_at: string | null; paid_at: string | null } | null)?.list_at ?? (item.orders as unknown as { paid_at: string | null } | null)?.paid_at ?? null,
-    });
-    byProduct.set(item.product_id, lines);
-  }
+  // Unit Cost is each product's current cost (see getEffectiveProductCost), so
+  // it reads the same whichever date range is viewed.
+  const currentCostByProduct = await getEffectiveProductCosts([...byProduct.keys()]).catch(
+    () => new Map<string, number | null>()
+  );
 
   const rows = Array.from(byProduct.entries()).map(([productId, lines]) => {
     const product = productById.get(productId);
