@@ -118,4 +118,16 @@ export type WebsiteProductWrite = {
   promotion_id?: string | null;
   video_url?: string | null;
   pre_order?: boolean;
+  // Create-only: the sizes/flavors and extra photos created along with a
+  // product (used when moving a product to another business's website).
+  variations?: {
+    weight: string;
+    flavor?: string | null;
+    price: number;
+    sale_price: number | null;
+    image_url: string | null;
+    stock: number | null;
+    pcs: number | null;
+  }[];
+  images?: string[];
 };

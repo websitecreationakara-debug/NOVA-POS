@@ -1,5 +1,5 @@
 import { getBrands, getCatalogForBrand, getRecentStockUpdates } from "@/lib/supabase/queries";
-import { catalogForBrandSlug } from "@/lib/websiteProducts/catalogs";
+import { catalogForBrandSlug, configuredCatalogs } from "@/lib/websiteProducts/catalogs";
 import { listWebsiteAddons, listWebsiteCategories, listWebsiteProducts } from "@/lib/websiteProducts/client";
 import { getWebsitePurchaseCosts, type PurchaseCostFields } from "@/lib/websiteProducts/purchaseCosts";
 import { syncWebsiteToPos } from "@/lib/websiteProducts/syncFromWebsite";
@@ -15,6 +15,8 @@ import StockClient from "./StockClient";
 export type WebsiteCatalogData = {
   id: WebsiteCatalogId;
   label: string;
+  // The other businesses a product here can be moved to (their websites are connected).
+  moveTargets: { id: WebsiteCatalogId; label: string }[];
   products: WebsiteProduct[] | null;
   error: string | null;
   // Read-only -- see addonToWebsiteProduct's comment in
@@ -57,12 +59,19 @@ export default async function StockPage({
 
   const catalog = catalogForBrandSlug(currentBrand.slug);
 
+  const moveTargets = catalog
+    ? configuredCatalogs()
+        .filter((c) => c.id !== catalog.id)
+        .map((c) => ({ id: c.id, label: c.label }))
+    : [];
+
   const websiteCatalogPromise: Promise<WebsiteCatalogData | null> =
     catalog
       ? listWebsiteProducts(catalog.id)
           .then(async (prods) => ({
             id: catalog.id,
             label: catalog.label,
+            moveTargets,
             products: prods,
             error: null,
             addons: await listWebsiteAddons(catalog.id).catch(() => []),
@@ -74,6 +83,7 @@ export default async function StockPage({
           .catch((e) => ({
             id: catalog.id,
             label: catalog.label,
+            moveTargets,
             products: null,
             error:
               e instanceof Error

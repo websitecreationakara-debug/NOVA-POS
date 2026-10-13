@@ -6,6 +6,7 @@ import {
   Check,
   ChevronLeft,
   ChevronRight,
+  ArrowRightLeft,
   Download,
   Pencil,
   RefreshCw,
@@ -39,6 +40,7 @@ import {
   deleteWebsiteProductVariationAction,
   listWebsiteCategoriesAction,
   listWebsiteProductsAction,
+  moveWebsiteProductAction,
   setProductDetailsAction,
   setSimpleProductPriceAction,
   setSimpleProductStockAction,
@@ -158,6 +160,7 @@ function toEntries(list: WebsiteProduct[]): Entry[] {
 
 export default function WebsiteProductsPanel({
   catalogId,
+  moveTargets = [],
   initialProducts,
   initialError,
   posProducts,
@@ -167,6 +170,8 @@ export default function WebsiteProductsPanel({
   recentStockUpdates,
 }: {
   catalogId: WebsiteCatalogId;
+  // Other businesses a product can be moved to; none = no Move button.
+  moveTargets?: { id: WebsiteCatalogId; label: string }[];
   initialProducts: WebsiteProduct[] | null;
   initialError: string | null;
   // The brand's own POS products, so a "variable" product's sizes can show
@@ -279,6 +284,43 @@ export default function WebsiteProductsPanel({
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [confirmTarget]);
+
+  // Set while the "Move to another business" dialog is open.
+  const [moveTarget, setMoveTarget] = useState<{ p: WebsiteProduct; to: WebsiteCatalogId } | null>(null);
+  const [moving, setMoving] = useState(false);
+  useEffect(() => {
+    if (!moveTarget || moving) return;
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape") setMoveTarget(null);
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [moveTarget, moving]);
+
+  // Moves the whole product (every size) to the chosen business.
+  function confirmMove() {
+    if (!moveTarget || moving) return;
+    const { p, to } = moveTarget;
+    const toLabel = moveTargets.find((t) => t.id === to)?.label ?? "the other business";
+    setMoving(true);
+    startTransition(async () => {
+      try {
+        const result = await moveWebsiteProductAction({ from: catalogId, to, productId: p.id });
+        notify(
+          result.warnings.length > 0
+            ? `Moved “${p.title}” to ${toLabel}. ${result.warnings.join(" ")}`
+            : `Moved “${p.title}” to ${toLabel}`
+        );
+        setMoveTarget(null);
+        load();
+        router.refresh();
+      } catch (e) {
+        notify(e instanceof Error ? e.message : "Couldn't move the product", "err");
+      } finally {
+        setMoving(false);
+      }
+    });
+  }
 
   // Per-product unsaved edits to the inline price/stock fields. While a product
   // has a draft, polling leaves that field alone so it can't wipe what the user
@@ -1830,7 +1872,7 @@ export default function WebsiteProductsPanel({
                       )}
                     </td>
                     <td className="bg-black/[.015] px-2 py-2 text-right dark:bg-white/[.02]">
-                      <label className="inline-flex w-16 items-center gap-1 rounded border border-black/[.15] px-2 py-1 text-sm tabular-nums focus-within:border-black/40 dark:border-white/[.2] dark:focus-within:border-white/50">
+                      <label className="inline-flex w-24 items-center gap-1 rounded border border-black/[.15] px-2 py-1 text-sm tabular-nums focus-within:border-black/40 dark:border-white/[.2] dark:focus-within:border-white/50">
                         <span className="select-none text-zinc-400">$</span>
                         <input
                           type="number"
@@ -1855,7 +1897,7 @@ export default function WebsiteProductsPanel({
                       </label>
                     </td>
                     <td className="bg-black/[.015] px-2 py-2 text-right dark:bg-white/[.02]">
-                      <label className="inline-flex w-16 items-center gap-1 rounded border border-black/[.15] px-2 py-1 text-sm tabular-nums focus-within:border-black/40 dark:border-white/[.2] dark:focus-within:border-white/50">
+                      <label className="inline-flex w-24 items-center gap-1 rounded border border-black/[.15] px-2 py-1 text-sm tabular-nums focus-within:border-black/40 dark:border-white/[.2] dark:focus-within:border-white/50">
                         <span className="select-none text-zinc-400">$</span>
                         <input
                           type="number"
@@ -1883,7 +1925,7 @@ export default function WebsiteProductsPanel({
                       {purchaseCost === null ? "—" : formatMoney(purchaseCost)}
                     </td>
                     <td className="bg-black/[.015] px-2 py-2 text-right dark:bg-white/[.02]">
-                      <label className="inline-flex w-16 items-center gap-1 rounded border border-black/[.15] px-2 py-1 text-sm tabular-nums focus-within:border-black/40 dark:border-white/[.2] dark:focus-within:border-white/50">
+                      <label className="inline-flex w-24 items-center gap-1 rounded border border-black/[.15] px-2 py-1 text-sm tabular-nums focus-within:border-black/40 dark:border-white/[.2] dark:focus-within:border-white/50">
                         <span className="select-none text-zinc-400">$</span>
                         <input
                           type="number"
@@ -1910,7 +1952,7 @@ export default function WebsiteProductsPanel({
                     <td className="border-r border-black/[.08] bg-black/[.015] px-2 py-2 text-right dark:border-white/[.145] dark:bg-white/[.02]">
                       <label
                         title="Manual override -- wins over Purchase Cost + Extra Cost, and works even when Original Cost / Total Cost 10% aren't filled in"
-                        className="inline-flex w-16 items-center gap-1 rounded border border-black/[.15] px-2 py-1 text-sm font-medium tabular-nums focus-within:border-black/40 dark:border-white/[.2] dark:focus-within:border-white/50"
+                        className="inline-flex w-24 items-center gap-1 rounded border border-black/[.15] px-2 py-1 text-sm font-medium tabular-nums focus-within:border-black/40 dark:border-white/[.2] dark:focus-within:border-white/50"
                       >
                         <span className="select-none text-zinc-400">$</span>
                         <input
@@ -2046,6 +2088,17 @@ export default function WebsiteProductsPanel({
                       >
                         <Pencil className="size-4" />
                       </button>
+                      {moveTargets.length > 0 && (
+                        <button
+                          type="button"
+                          onClick={() => setMoveTarget({ p, to: moveTargets[0].id })}
+                          title="Move to another business"
+                          aria-label="Move to another business"
+                          className="mr-1 inline-flex size-8 items-center justify-center rounded-md text-zinc-400 transition-colors hover:bg-black/[.05] hover:text-foreground dark:hover:bg-white/[.08]"
+                        >
+                          <ArrowRightLeft className="size-4" />
+                        </button>
+                      )}
                       <button
                         type="button"
                         disabled={pendingId === editId || pendingId === p.id}
@@ -2153,6 +2206,64 @@ export default function WebsiteProductsPanel({
               )}
             </span>
             <p className="text-sm leading-snug font-medium text-foreground">{toast.text}</p>
+          </div>
+        </div>
+      )}
+
+      {moveTarget && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+          onClick={() => {
+            if (!moving) setMoveTarget(null);
+          }}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label="Move to another business"
+            className="w-full max-w-sm rounded-2xl border border-border bg-card p-6 shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2 className="text-base font-semibold text-foreground">Move to another business</h2>
+            <p className="mt-1.5 text-sm text-muted-foreground">
+              Moves “{moveTarget.p.title}”
+              {(moveTarget.p.variations?.length ?? 0) > 0 ? ` with all ${moveTarget.p.variations?.length} sizes` : ""} to
+              the other business&apos;s website. Its price, stock, photos, costs and Cost Control sets go with it, and it
+              is removed from this website. Past sales will count under the new business.
+            </p>
+            <label className="mt-4 block text-xs font-medium text-muted-foreground">
+              Move to
+              <select
+                value={moveTarget.to}
+                disabled={moving}
+                onChange={(e) => setMoveTarget({ ...moveTarget, to: e.target.value as WebsiteCatalogId })}
+                className="mt-1 w-full rounded-lg border border-border bg-card px-3 py-2 text-sm text-foreground"
+              >
+                {moveTargets.map((t) => (
+                  <option key={t.id} value={t.id}>
+                    {t.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <div className="mt-6 flex justify-center gap-2">
+              <button
+                type="button"
+                disabled={moving}
+                onClick={() => setMoveTarget(null)}
+                className="flex-1 rounded-full border border-border px-4 py-2 text-sm font-medium transition-colors hover:bg-muted disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={moving}
+                onClick={confirmMove}
+                className="flex-1 rounded-full bg-brand px-4 py-2 text-sm font-medium text-white transition-colors hover:opacity-90 disabled:opacity-50"
+              >
+                {moving ? "Moving…" : "Move"}
+              </button>
+            </div>
           </div>
         </div>
       )}

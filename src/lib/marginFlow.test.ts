@@ -66,6 +66,28 @@ describe("Margin Report: Unit Cost is fixed, COGS is real", () => {
   });
 });
 
+describe("Margin Report: a Unit Cost typed into the report", () => {
+  const edited: MarginLine[] = [
+    { quantity: 5, lineTotal: 75, cogs: 50, unitCost: 10, paidAt: "2026-10-01T03:00:00Z", costOverridden: true },
+    { quantity: 3, lineTotal: 45, cogs: 30, unitCost: 10, paidAt: "2026-10-03T03:00:00Z", costOverridden: true },
+  ];
+
+  it("shows the typed cost, not Stock's current cost", () => {
+    const r = summarizeMarginLines(edited, 9.55);
+    expect(r.unitCost).toBe(10);
+    expect(r.soldAt).toEqual([]);
+    expect(r.totalCogs).toBe(80);
+  });
+
+  it("a later sale at Stock's cost brings Stock's cost back", () => {
+    const r = summarizeMarginLines(
+      [...edited, { quantity: 1, lineTotal: 15, cogs: 9.55, unitCost: 9.55, paidAt: "2026-10-04T03:00:00Z" }],
+      9.55
+    );
+    expect(r.unitCost).toBe(9.55);
+  });
+});
+
 describe("Orders list: day a Pre-Order was finished", () => {
   const preOrderDay = "2026-10-01T03:00:00Z"; // Oct 1, Phnom Penh
 

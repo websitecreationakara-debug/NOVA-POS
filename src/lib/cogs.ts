@@ -76,6 +76,8 @@ export type MarginLine = {
   cogs: number | null;
   unitCost: number | null;
   paidAt: string | null;
+  // The cost on this line was typed into the Margin Report (cost_source "report").
+  costOverridden?: boolean;
 };
 
 // Units sold at each recorded per-unit cost, newest cost first (by the sale
@@ -102,8 +104,14 @@ export function summarizeMarginLines(lines: MarginLine[], currentCost: number | 
   const { grossProfit, grossMarginPct } = computeGrossMargin(revenue, totalCogs);
 
   const soldAt = unitsSoldByCost(lines);
+  // A cost typed into the report (on every sold line, all at one cost) is shown as
+  // the Unit Cost instead of Stock's current cost -- that edit never touches Stock.
+  const typedCost =
+    lines.length > 0 && lines.every((l) => l.costOverridden) && soldAt.length === 1 ? soldAt[0].unitCost : null;
   const unitCost =
-    currentCost ?? (totalCogs === null ? null : (soldAt[0]?.unitCost ?? round2(totalCogs / unitsSold)));
+    typedCost ??
+    currentCost ??
+    (totalCogs === null ? null : (soldAt[0]?.unitCost ?? round2(totalCogs / unitsSold)));
   const anyDifferent = unitCost !== null && soldAt.some((s) => s.unitCost !== round2(unitCost));
 
   return {

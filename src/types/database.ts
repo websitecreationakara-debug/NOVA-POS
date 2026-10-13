@@ -311,7 +311,7 @@ export type OrderItem = {
   // Both null when the cost was unknown at sale time.
   unit_cost: number | null;
   cogs: number | null;
-  cost_source: "direct" | "recipe" | null;
+  cost_source: "direct" | "recipe" | "report" | null;
   // Custom size sold on this line, e.g. "100g" of a 350g pack (migration 0050).
   size_label: string | null;
 };

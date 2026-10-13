@@ -30,7 +30,8 @@ import type {
   WebsiteProductWrite,
 } from "@/lib/websiteProducts/types";
 import type { ProductSiteLink, StockAdjustmentCategory } from "@/types/database";
-import { requireStockAccess } from "@/lib/stockAccess";
+import { requireFullStockAccess, requireStockAccess } from "@/lib/stockAccess";
+import { moveWebsiteProduct, type MoveProductResult } from "@/lib/websiteProducts/move";
 import { isStockUntracked } from "@/lib/websiteProducts/stockTracking";
 import { adjustStockAction, setProductPriceAction } from "./actions";
 
@@ -683,4 +684,20 @@ export async function deleteWebsiteProductVariationAction(
   await requireStockAccess();
   await deleteWebsiteProductVariation(catalogId, productId, variationId);
   revalidatePath("/stock");
+}
+
+// Moves a product, with all its sizes, to another business: recreated on that
+// business's website, its POS items/costs/sets follow it, and it's removed from
+// the old website. See moveWebsiteProduct.
+export async function moveWebsiteProductAction(input: {
+  from: WebsiteCatalogId;
+  to: WebsiteCatalogId;
+  productId: string;
+}): Promise<MoveProductResult> {
+  await requireFullStockAccess();
+  const result = await moveWebsiteProduct(input);
+  revalidatePath("/stock");
+  revalidatePath("/sales");
+  revalidatePath("/marketing");
+  return result;
 }
