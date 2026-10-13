@@ -1,6 +1,15 @@
 import Sidebar from "@/components/Sidebar";
 import TopBar from "@/components/TopBar";
 import { getSessionUser } from "@/lib/supabase/auth-server";
+import { supabaseAdmin } from "@/lib/supabase/server";
+
+// The logged-in staff member's photo (migration 0077), for the top bar. `*`
+// rather than naming avatar_url so the app still loads if that migration isn't
+// applied yet; a failed lookup just means the initials show.
+async function getAvatarUrl(userId: string): Promise<string | null> {
+  const { data } = await supabaseAdmin.from("profiles").select("*").eq("id", userId).maybeSingle();
+  return data?.avatar_url ?? null;
+}
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
   // Middleware already guarantees a valid session with a role for every
@@ -9,6 +18,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   // out" state, so it's fine to just render with an empty fallback rather
   // than redirect again.
   const user = await getSessionUser();
+  const avatarUrl = user ? await getAvatarUrl(user.id) : null;
 
   return (
     // print:* unwinds the app shell when printing -- a scroll container
@@ -22,7 +32,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
     <div className="flex h-full overflow-hidden print:block print:h-auto print:overflow-visible">
       <Sidebar role={user?.role ?? ""} />
       <div className="flex min-h-0 min-w-0 flex-1 flex-col print:block print:min-h-0">
-        <TopBar fullName={user?.fullName ?? ""} role={user?.role ?? ""} />
+        <TopBar fullName={user?.fullName ?? ""} role={user?.role ?? ""} avatarUrl={avatarUrl} />
         <div
           id="app-scroll-area"
           className="min-h-0 flex-1 overflow-y-auto print:overflow-visible print:flex-none"

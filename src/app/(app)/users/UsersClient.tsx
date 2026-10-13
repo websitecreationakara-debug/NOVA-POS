@@ -2,24 +2,69 @@
 
 import { useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { Trash2, TriangleAlert } from "lucide-react";
+import { Trash2, TriangleAlert, Wand2 } from "lucide-react";
 import { staffRoleLabel, type StaffRole } from "@/types/database";
 import {
   createStaffAccountAction,
   deleteStaffAccountAction,
+  removeStaffAvatarAction,
   updateStaffRoleAction,
+  uploadStaffAvatarAction,
 } from "./actions";
 
+const AVATAR_TYPES = ["image/png", "image/jpeg", "image/webp", "image/gif"];
+const AVATAR_MAX_BYTES = 2 * 1024 * 1024;
+
 const ROLES: StaffRole[] = ["admin", "sales", "stock", "accountance", "marketing"];
+
+// A random 12-character password from letters and digits, leaving out look-alikes
+// (0/O, 1/l/I) since it gets read out or typed from a message. Always has at least
+// one lowercase letter, one uppercase letter and one digit.
+function generatePassword(length = 12): string {
+  const lower = "abcdefghijkmnopqrstuvwxyz";
+  const upper = "ABCDEFGHJKLMNPQRSTUVWXYZ";
+  const digits = "23456789";
+  const all = lower + upper + digits;
+  const pick = (set: string, n: number) => set[n % set.length];
+  const bytes = crypto.getRandomValues(new Uint32Array(length));
+  const chars = Array.from(bytes, (n) => pick(all, n));
+  // Force one of each kind into fixed spots, then shuffle so they aren't predictable.
+  chars[0] = pick(lower, bytes[0]);
+  chars[1] = pick(upper, bytes[1]);
+  chars[2] = pick(digits, bytes[2]);
+  const order = crypto.getRandomValues(new Uint32Array(length));
+  return chars
+    .map((c, i) => ({ c, k: order[i] }))
+    .sort((a, b) => a.k - b.k)
+    .map((x) => x.c)
+    .join("");
+}
+
+// Up to two letters for the avatar next to a staff name ("Vichet Vorng" -> "VV").
+function initials(name: string): string {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return "?";
+  const letters = parts.length === 1 ? parts[0].slice(0, 2) : parts[0][0] + parts[parts.length - 1][0];
+  return letters.toUpperCase();
+}
 
 export default function UsersClient({
   staff,
   currentUserId,
 }: {
-  staff: { id: string; fullName: string; role: string; email: string | null; createdAt: string }[];
+  staff: {
+    id: string;
+    fullName: string;
+    role: string;
+    email: string | null;
+    avatarUrl: string | null;
+    createdAt: string;
+  }[];
   currentUserId: string;
 }) {
   const router = useRouter();
+  const [avatarBusyId, setAvatarBusyId] = useState<string | null>(null);
+  const [avatarError, setAvatarError] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<{ id: string; name: string } | null>(null);
@@ -98,6 +143,48 @@ export default function UsersClient({
     });
   }
 
+  function changeAvatar(id: string, file: File | null) {
+    if (!file) return;
+    setAvatarError(null);
+    if (!AVATAR_TYPES.includes(file.type)) {
+      setAvatarError("Photo must be a PNG, JPG, WEBP or GIF");
+      return;
+    }
+    if (file.size > AVATAR_MAX_BYTES) {
+      setAvatarError("Photo must be under 2MB");
+      return;
+    }
+    setAvatarBusyId(id);
+    const formData = new FormData();
+    formData.set("userId", id);
+    formData.set("file", file);
+    startTransition(async () => {
+      try {
+        await uploadStaffAvatarAction(formData);
+        router.refresh();
+      } catch (e) {
+        setAvatarError(e instanceof Error ? e.message : "Upload failed");
+      } finally {
+        setAvatarBusyId(null);
+      }
+    });
+  }
+
+  function removeAvatar(id: string) {
+    setAvatarError(null);
+    setAvatarBusyId(id);
+    startTransition(async () => {
+      try {
+        await removeStaffAvatarAction(id);
+        router.refresh();
+      } catch (e) {
+        setAvatarError(e instanceof Error ? e.message : "Failed to remove photo");
+      } finally {
+        setAvatarBusyId(null);
+      }
+    });
+  }
+
   function confirmDeleteAccount() {
     if (!confirmDelete) return;
     const { id } = confirmDelete;
@@ -127,8 +214,8 @@ export default function UsersClient({
 
       <section className="rounded-2xl border border-border bg-card p-4 sm:p-6">
         <h2 className="font-display font-bold">Add staff account</h2>
-        <div className="mt-4 flex flex-wrap items-end gap-3">
-          <div className="flex w-full flex-col gap-1 sm:w-auto">
+        <div className="mt-4 grid gap-4 sm:grid-cols-2">
+          <div className="flex flex-col gap-1.5">
             <label className="text-xs font-bold tracking-widest text-muted-foreground uppercase">
               Full name
             </label>
@@ -136,10 +223,10 @@ export default function UsersClient({
               type="text"
               value={fullName}
               onChange={(e) => setFullName(e.target.value)}
-              className="w-full rounded-lg border border-border bg-transparent px-3 py-2 text-sm outline-none focus:border-brand sm:w-auto"
+              className="w-full rounded-lg border border-border bg-transparent px-3 py-2 text-sm outline-none focus:border-brand"
             />
           </div>
-          <div className="flex w-full flex-col gap-1 sm:w-auto">
+          <div className="flex flex-col gap-1.5">
             <label className="text-xs font-bold tracking-widest text-muted-foreground uppercase">
               Email
             </label>
@@ -147,29 +234,50 @@ export default function UsersClient({
               type="email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              className="w-full rounded-lg border border-border bg-transparent px-3 py-2 text-sm outline-none focus:border-brand sm:w-auto"
+              className="w-full rounded-lg border border-border bg-transparent px-3 py-2 text-sm outline-none focus:border-brand"
             />
           </div>
-          <div className="flex w-full flex-col gap-1 sm:w-auto">
-            <label className="text-xs font-bold tracking-widest text-muted-foreground uppercase">
-              Password
-            </label>
+          <div className="flex flex-col gap-1.5">
+            <div className="flex items-center justify-between">
+              <label className="text-xs font-bold tracking-widest text-muted-foreground uppercase">
+                Password
+              </label>
+              <button
+                type="button"
+                onClick={() => setPassword(generatePassword())}
+                className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium text-brand hover:bg-brand/10"
+              >
+                <Wand2 className="size-3" />
+                Generate
+              </button>
+            </div>
             <input
               type="text"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              placeholder="8+ characters"
-              className="w-full rounded-lg border border-border bg-transparent px-3 py-2 text-sm outline-none focus:border-brand sm:w-auto"
+              className="w-full rounded-lg border border-border bg-transparent px-3 py-2 text-sm outline-none focus:border-brand"
             />
+            <p
+              className={`text-xs ${
+                password.length === 0
+                  ? "text-muted-foreground"
+                  : password.length < 8
+                    ? "text-red-500"
+                    : "text-emerald-600 dark:text-emerald-400"
+              }`}
+            >
+              At least 8 characters
+              {password.length > 0 && ` (${password.length})`}
+            </p>
           </div>
-          <div className="flex w-full flex-col gap-1 sm:w-auto">
+          <div className="flex flex-col gap-1.5">
             <label className="text-xs font-bold tracking-widest text-muted-foreground uppercase">
               Role
             </label>
             <select
               value={role}
               onChange={(e) => setRole(e.target.value as StaffRole)}
-              className="w-full rounded-lg border border-border bg-card px-3 py-2 text-sm text-foreground outline-none focus:border-brand sm:w-auto"
+              className="w-full rounded-lg border border-border bg-card px-3 py-2 text-sm text-foreground outline-none focus:border-brand"
             >
               {ROLES.map((r) => (
                 <option key={r} value={r}>
@@ -178,13 +286,15 @@ export default function UsersClient({
               ))}
             </select>
           </div>
-          <button
-            disabled={isPending}
-            onClick={createAccount}
-            className="w-full rounded-full bg-brand px-5 py-2 text-sm font-medium text-white disabled:opacity-40 sm:w-auto"
-          >
-            {isPending ? "Creating…" : "Create account"}
-          </button>
+          <div className="flex sm:col-span-2 sm:justify-end">
+            <button
+              disabled={isPending}
+              onClick={createAccount}
+              className="w-full rounded-full bg-brand px-5 py-2 text-sm font-medium text-white disabled:opacity-40 sm:w-auto"
+            >
+              {isPending ? "Creating…" : "Create account"}
+            </button>
+          </div>
         </div>
 
         {error && <p className="mt-3 text-sm text-red-500">{error}</p>}
@@ -218,6 +328,7 @@ export default function UsersClient({
         </div>
         {deleteError && <p className="px-4 pt-4 text-sm text-red-500 sm:px-6">{deleteError}</p>}
         {roleError && <p className="px-4 pt-4 text-sm text-red-500 sm:px-6">{roleError}</p>}
+        {avatarError && <p className="px-4 pt-4 text-sm text-red-500 sm:px-6">{avatarError}</p>}
         <div className="overflow-x-auto">
         {/* On a phone each person is a small card (name, full email, role + date);
             from md up it's the normal table. */}
@@ -228,16 +339,69 @@ export default function UsersClient({
               <th className="px-3 py-3 text-left">Email</th>
               <th className="px-3 py-3 text-left">Role</th>
               <th className="px-3 py-3 text-right">Created</th>
-              <th className="px-6 py-3 text-right">&nbsp;</th>
+              <th className="px-6 py-3 text-right">Actions</th>
             </tr>
           </thead>
           <tbody className="block md:table-row-group">
             {staff.map((s) => (
               <tr
                 key={s.id}
-                className="relative grid grid-cols-2 items-center gap-x-3 gap-y-1 border-t border-border px-4 py-3 md:table-row md:px-0 md:py-0"
+                className="relative grid grid-cols-2 items-center gap-x-3 gap-y-1 border-t border-border px-4 py-3 transition-colors md:table-row md:px-0 md:py-0 md:even:bg-muted/30 md:hover:bg-muted/50"
               >
-                <td className="col-span-2 p-0 pr-10 font-medium md:px-6 md:py-3 md:pr-6 md:font-normal">{s.fullName}</td>
+                <td className="col-span-2 p-0 pr-10 font-medium md:px-6 md:py-3 md:pr-6 md:font-normal">
+                  <span className="flex items-center gap-3">
+                    {/* The avatar and the "photo" links below share one hidden file input. */}
+                    <input
+                      id={`avatar-${s.id}`}
+                      type="file"
+                      accept="image/png,image/jpeg,image/webp,image/gif"
+                      className="hidden"
+                      disabled={avatarBusyId === s.id}
+                      onChange={(e) => {
+                        const file = e.target.files?.[0] ?? null;
+                        e.target.value = "";
+                        changeAvatar(s.id, file);
+                      }}
+                    />
+                    <label
+                      htmlFor={`avatar-${s.id}`}
+                      title={s.avatarUrl ? "Change photo" : "Add photo"}
+                      className={`grid size-10 shrink-0 cursor-pointer place-items-center overflow-hidden rounded-full bg-brand/15 text-xs font-bold text-brand ${
+                        avatarBusyId === s.id ? "opacity-50" : "hover:ring-2 hover:ring-brand/40"
+                      }`}
+                    >
+                      {s.avatarUrl ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img src={s.avatarUrl} alt="" className="size-full object-cover" />
+                      ) : (
+                        initials(s.fullName)
+                      )}
+                    </label>
+                    <span className="min-w-0">
+                      <span className="block truncate">{s.fullName}</span>
+                      <span className="flex gap-2 text-xs font-normal text-muted-foreground">
+                        {avatarBusyId === s.id ? (
+                          <span>Saving…</span>
+                        ) : (
+                          <>
+                            <label htmlFor={`avatar-${s.id}`} className="cursor-pointer hover:text-foreground hover:underline">
+                              {s.avatarUrl ? "Change photo" : "Add photo"}
+                            </label>
+                            {s.avatarUrl && (
+                              <button
+                                type="button"
+                                onClick={() => removeAvatar(s.id)}
+                                className="hover:text-red-600 hover:underline"
+                              >
+                                Remove
+                              </button>
+                            )}
+                          </>
+                        )}
+                      </span>
+                    </span>
+                  </span>
+                </td>
                 <td className="col-span-2 p-0 text-xs break-all text-muted-foreground md:px-3 md:py-3 md:text-sm md:break-normal">
                   {s.email ?? "—"}
                 </td>

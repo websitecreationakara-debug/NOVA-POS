@@ -219,11 +219,16 @@ export default function DeliveryAlertBell() {
       </button>
 
       {open && (
-        <div className="absolute right-0 top-full z-50 mt-2 w-80 overflow-hidden rounded-xl border border-border bg-card shadow-lg">
+        // The bell isn't at the screen's right edge (the theme toggle, profile and
+        // logout sit to its right), so a panel hung off the bell either spills off
+        // the left (phones) or floats mid-bar (tablets). Phones: pinned under the top
+        // bar and stretched between the screen edges. Tablets: pinned under the top
+        // bar against the right edge. lg and up: the usual dropdown under the bell.
+        <div className="fixed top-[4.25rem] right-3 left-3 z-50 overflow-hidden rounded-xl border border-border bg-card shadow-lg sm:left-auto sm:w-96 lg:absolute lg:top-full lg:right-0 lg:mt-2 lg:w-80">
           <div className="border-b border-border px-4 py-2.5">
             <span className="text-sm font-semibold">Alerts</span>
           </div>
-          <div className="max-h-96 overflow-y-auto">
+          <div className="max-h-[70dvh] overflow-y-auto lg:max-h-96">
             {recentSales.length > 0 && (
               <>
                 <p className="bg-muted/50 px-4 py-1.5 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">
