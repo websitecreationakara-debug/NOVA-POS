@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { supabaseAdmin } from "@/lib/supabase/server";
-import { pushOrderStatusToSite, pushStockToSites } from "@/lib/site-sync";
+import { pushOrderDeleteToSite, pushOrderStatusToSite, pushStockToSites } from "@/lib/site-sync";
 import { getCategoriesFingerprintAction } from "@/app/(app)/stock/actions";
 import { computeLineCogs, computeRecipeUnitCost } from "@/lib/cogs";
 import { getEffectiveProductCost } from "@/lib/websiteProducts/purchaseCosts";
@@ -532,8 +532,25 @@ export async function setOrderUnpaidAction(orderId: string, unpaid: boolean): Pr
 }
 
 export async function deleteOrderAction(orderId: string): Promise<void> {
+  // Read the storefront link first -- the row is gone once delete_order() runs.
+  const { data: order } = await supabaseAdmin
+    .from("orders")
+    .select("channel, site, site_order_id")
+    .eq("id", orderId)
+    .maybeSingle();
+
   const { data, error } = await supabaseAdmin.rpc("delete_order", { p_order_id: orderId });
   if (error) throw error;
+
+  // An order that came from a storefront is removed from that storefront too.
+  // Best-effort -- a failure here shouldn't bring back an order staff just deleted.
+  if (order?.channel === "online" && order.site && order.site_order_id) {
+    const site = order.site as ProductSiteLink["site"];
+    const result = await pushOrderDeleteToSite(site, order.site_order_id);
+    if (!result.ok) {
+      console.error(`Failed to delete order on ${site}: ${result.reason}`);
+    }
+  }
 
   revalidatePath(`/invoice/${orderId}`);
   revalidatePath(`/orders/${orderId}`);

@@ -257,6 +257,46 @@ async function pushSimpleLinkStock(
   );
 }
 
+// Delete side of order sync: staff delete an order in POS, and (for an order that
+// came from a storefront) that storefront is told to remove its own copy too, so
+// the invoice doesn't linger in the website's admin. Same shape and auth as
+// pushOrderStatusToSite, against the storefront's /api/pos-order-delete.
+// Best-effort -- never throws; the order is already gone from POS by then.
+export async function pushOrderDeleteToSite(
+  site: ProductSiteLink["site"],
+  siteOrderId: string
+): Promise<{ ok: true } | { ok: false; reason: string }> {
+  const secret = process.env.STOCK_SYNC_SECRET;
+  const baseUrl = SITE_BASE_URL[site];
+  if (!secret) return { ok: false, reason: "STOCK_SYNC_SECRET is not configured" };
+  if (!baseUrl) return { ok: false, reason: `no base URL configured for ${site}` };
+
+  try {
+    const res = await fetch(`${baseUrl}/api/pos-order-delete`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${secret}`,
+      },
+      body: JSON.stringify({ siteOrderId }),
+      signal: AbortSignal.timeout(8000),
+    });
+    // A 404 means the storefront no longer has that order -- already the state we want.
+    if (!res.ok && res.status !== 404) {
+      const body = await res.text().catch(() => "");
+      console.error(
+        `pos-order-delete push rejected by ${site} for order ${siteOrderId} ` +
+          `(HTTP ${res.status}): ${body.slice(0, 300)}`
+      );
+      return { ok: false, reason: `HTTP ${res.status}` };
+    }
+    return { ok: true };
+  } catch (e) {
+    console.error(`pos-order-delete push failed for ${site} order ${siteOrderId}`, e);
+    return { ok: false, reason: e instanceof Error ? e.message : "network error" };
+  }
+}
+
 // POS -> storefront status mapping, the inverse of what /api/order-status-sync
 // (the website -> POS direction) accepts -- see that route for the pairing
 // this mirrors. "pre_order" has no storefront equivalent, so it's treated
