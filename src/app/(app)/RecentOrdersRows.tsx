@@ -44,7 +44,7 @@ export default function RecentOrdersRows({ orders }: { orders: OrderListRow[] })
             <Link
               href={orderHref(o.id)}
               onClick={(e) => e.stopPropagation()}
-              className="font-semibold text-brand hover:underline"
+              className="font-semibold text-[#1f66a3] hover:underline dark:text-brand"
             >
               {o.invoiceNumber ?? `#${o.id.slice(0, 8)}`}
             </Link>

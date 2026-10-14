@@ -10,7 +10,7 @@ export default function LoginPage() {
     <div className="flex min-h-screen items-center justify-center bg-background p-8">
       <div className="w-full max-w-sm rounded-2xl border border-border bg-card p-8">
         {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src="/logos/nova-pos.png" alt="NOVA POS" className="mx-auto h-28 w-auto" />
+        <img src="/logos/nova-pos.png" alt="NOVA POS" width={300} height={247} className="mx-auto h-28 w-auto" />
         <h1 className="sr-only">NOVA POS</h1>
         <p className="mt-1 text-center text-sm text-muted-foreground">Sign in to continue</p>
 

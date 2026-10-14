@@ -1132,7 +1132,7 @@ export default function AccountanceClient({
   }
 
   return (
-    <div className="p-3 sm:p-6">
+    <main className="p-3 sm:p-6">
       {/* Top Bar -- title, business + Day/Month/Year + the date control that
           mode needs, and the export actions, all in one row so "what am I
           looking at" and "what can I do with it" live together instead of
@@ -1147,6 +1147,7 @@ export default function AccountanceClient({
           </span>
         ) : (
           <select
+            aria-label="Business"
             className="rounded border border-black/[.15] bg-card px-3 py-1.5 text-sm text-foreground dark:border-white/[.2]"
             value={currentBrand.id}
             onChange={(e) => switchBrand(e.target.value)}
@@ -1172,7 +1173,7 @@ export default function AccountanceClient({
               onClick={() => switchMode(m)}
               aria-pressed={mode === m}
               className={`rounded-full px-3 py-1 text-xs font-medium capitalize transition-colors ${
-                mode === m ? "bg-brand text-white" : "text-zinc-500 hover:text-foreground"
+                mode === m ? "bg-brand text-white" : "text-zinc-600 hover:text-foreground dark:text-zinc-400"
               }`}
             >
               {m}
@@ -1184,6 +1185,7 @@ export default function AccountanceClient({
           <div className="flex items-center gap-1.5">
             <input
               type="date"
+              aria-label={showRangeEnd ? "Start date" : "Date"}
               value={fromDate}
               max={showRangeEnd ? toDate : undefined}
               onChange={(e) => switchDates(e.target.value, showRangeEnd ? toDate : e.target.value)}
@@ -1194,6 +1196,7 @@ export default function AccountanceClient({
                 <span className="text-xs text-zinc-500">to</span>
                 <input
                   type="date"
+                  aria-label="End date"
                   value={toDate}
                   min={fromDate}
                   onChange={(e) => switchDates(fromDate, e.target.value)}
@@ -1215,7 +1218,7 @@ export default function AccountanceClient({
               <button
                 type="button"
                 onClick={() => setShowRangeEnd(true)}
-                className="text-xs font-medium text-brand hover:underline"
+                className="text-xs font-medium text-[#1f66a3] hover:underline dark:text-brand"
               >
                 + Range
               </button>
@@ -1352,7 +1355,7 @@ export default function AccountanceClient({
             onClick={() => switchTab(t)}
             aria-pressed={tab === t}
             className={`rounded-xl px-2 py-2 text-center text-xs leading-tight font-medium transition-colors sm:rounded-full sm:px-3.5 sm:py-1.5 ${
-              tab === t ? "bg-brand text-white shadow-sm" : "text-zinc-500 hover:text-foreground"
+              tab === t ? "bg-brand text-white shadow-sm" : "text-zinc-600 hover:text-foreground dark:text-zinc-400"
             }`}
           >
             {TAB_LABELS[t]}
@@ -1486,7 +1489,7 @@ export default function AccountanceClient({
         {tab === "expenses" && (
         <section className="rounded-lg border border-black/[.08] p-4 dark:border-white/[.145]">
           <h2 className="font-medium">Expense log</h2>
-          <p className="mt-1 text-xs text-zinc-500">
+          <p className="mt-1 text-xs text-zinc-600 dark:text-zinc-400">
             Showing expenses for all businesses for the date filter above -- a new expense is logged for All
             Businesses on any day, regardless of that filter.
           </p>
@@ -1515,6 +1518,7 @@ export default function AccountanceClient({
               // Editing an older expense that was logged against one business:
               // it can keep that business or move to All Businesses.
               <select
+                aria-label="Expense business"
                 value={expenseBrandId}
                 onChange={(e) => setExpenseBrandId(e.target.value)}
                 className="rounded border border-black/[.15] bg-transparent px-3 py-1.5 text-sm dark:border-white/[.2]"
@@ -1532,6 +1536,7 @@ export default function AccountanceClient({
               className="min-w-[10rem] flex-1 rounded border border-black/[.15] bg-transparent px-3 py-1.5 text-sm dark:border-white/[.2]"
             />
             <select
+              aria-label="Expense category"
               value={expenseCategory}
               onChange={(e) => setExpenseCategory(e.target.value)}
               className="rounded border border-black/[.15] bg-transparent px-3 py-1.5 text-sm dark:border-white/[.2]"
@@ -1593,6 +1598,7 @@ export default function AccountanceClient({
               className="flex-1 rounded border border-black/[.15] bg-transparent px-3 py-1.5 text-sm dark:border-white/[.2]"
             />
             <select
+              aria-label="Filter by category"
               value={expenseCategoryFilter}
               onChange={(e) => setExpenseCategoryFilter(e.target.value)}
               className="rounded border border-black/[.15] bg-transparent px-3 py-1.5 text-sm dark:border-white/[.2]"
@@ -1611,7 +1617,7 @@ export default function AccountanceClient({
           <div className="mt-4 overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
-                <tr className="border-b border-black/[.08] text-left text-xs text-zinc-500 dark:border-white/[.145]">
+                <tr className="border-b border-black/[.08] text-left text-xs text-zinc-600 dark:border-white/[.145] dark:text-zinc-400">
                   <th className="py-2 pr-3 text-center font-medium">Date</th>
                   <th className="py-2 pr-3 font-medium">Business</th>
                   <th className="py-2 pr-3 font-medium">Category</th>
@@ -1661,7 +1667,7 @@ export default function AccountanceClient({
                             <button
                               type="button"
                               onClick={() => expenseDescRef.current?.focus()}
-                              className="text-xs font-medium text-brand hover:underline"
+                              className="text-xs font-medium text-[#1f66a3] hover:underline dark:text-brand"
                             >
                               + Add an expense above
                             </button>
@@ -1698,7 +1704,7 @@ export default function AccountanceClient({
                         : "Daily Revenue vs Expenses"}
                   </h2>
                   {chartStats && (
-                    <p className="mt-0.5 text-xs text-zinc-500">
+                    <p className="mt-0.5 text-xs text-zinc-600 dark:text-zinc-400">
                       {GRANULARITY_LABEL[chartGranularity]} avg revenue:{" "}
                       <span className="font-medium text-foreground">{formatMoney(chartStats.avg)}</span>
                       {" · "}
@@ -1709,7 +1715,7 @@ export default function AccountanceClient({
                   )}
                 </div>
                 <div className="flex items-center gap-3">
-                  <div className="flex items-center gap-3 text-xs text-zinc-500">
+                  <div className="flex items-center gap-3 text-xs text-zinc-600 dark:text-zinc-400">
                     <span className="flex items-center gap-1.5">
                       <span className="size-2.5 rounded-full bg-green-600" aria-hidden />
                       Revenue
@@ -1729,7 +1735,7 @@ export default function AccountanceClient({
                         onClick={() => setChartType(t)}
                         aria-pressed={chartType === t}
                         className={`rounded-full px-2.5 py-1 text-xs font-medium capitalize transition-colors ${
-                          chartType === t ? "bg-brand text-white" : "text-zinc-500 hover:text-foreground"
+                          chartType === t ? "bg-brand text-white" : "text-zinc-600 hover:text-foreground dark:text-zinc-400"
                         }`}
                       >
                         {t}
@@ -1759,7 +1765,7 @@ export default function AccountanceClient({
             <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
               <section className="rounded-lg border border-black/[.08] p-4 dark:border-white/[.145]">
                 <h2 className="font-medium">Profit &amp; Loss</h2>
-                <p className="mt-1 text-xs text-zinc-500">{rangeLabel}</p>
+                <p className="mt-1 text-xs text-zinc-600 dark:text-zinc-400">{rangeLabel}</p>
                 <div className="mt-4 space-y-2 text-sm">
                   <div className="flex justify-between">
                     <span className="text-zinc-500">Gross sales</span>
@@ -1854,7 +1860,7 @@ export default function AccountanceClient({
                 onClick={() => setWasteLogOpen((v) => !v)}
                 className="rounded-lg border border-black/[.08] bg-card p-4 text-left shadow-sm transition-colors hover:bg-black/[.02] dark:border-white/[.145] dark:hover:bg-white/[.04]"
               >
-                <div className="flex items-center justify-between gap-2 text-xs text-zinc-500">
+                <div className="flex items-center justify-between gap-2 text-xs text-zinc-600 dark:text-zinc-400">
                   <span className="flex items-center gap-1.5">
                     <Trash2 className="size-3.5" />
                     Waste ({wasteLog.length})
@@ -1877,7 +1883,7 @@ export default function AccountanceClient({
                 <div className="flex items-start justify-between gap-3">
                   <div>
                     <h2 className="font-medium">Waste log</h2>
-                    <p className="mt-1 text-xs text-zinc-500">{rangeLabel}</p>
+                    <p className="mt-1 text-xs text-zinc-600 dark:text-zinc-400">{rangeLabel}</p>
                   </div>
                   <button
                     type="button"
@@ -1901,7 +1907,7 @@ export default function AccountanceClient({
                 <div className="mt-4 overflow-x-auto">
                   <table className="w-full text-sm">
                     <thead>
-                      <tr className="border-b border-black/[.08] text-left text-xs text-zinc-500 dark:border-white/[.145]">
+                      <tr className="border-b border-black/[.08] text-left text-xs text-zinc-600 dark:border-white/[.145] dark:text-zinc-400">
                         <th className="py-2 pr-3 font-medium">Date</th>
                         <th className="py-2 pr-3 font-medium">Product</th>
                         <th className="py-2 pr-3 text-right font-medium">Qty wasted</th>
@@ -1971,7 +1977,7 @@ export default function AccountanceClient({
 
             <section className="rounded-lg border border-black/[.08] p-4 dark:border-white/[.145]">
               <h2 className="font-medium">Margin Report</h2>
-              <p className="mt-1 text-xs text-zinc-500">{rangeLabel}</p>
+              <p className="mt-1 text-xs text-zinc-600 dark:text-zinc-400">{rangeLabel}</p>
 
               {missingCostRows.length > 0 && (
                 <div className="mt-3 flex items-center justify-between gap-3 rounded-lg border border-amber-300 bg-amber-50 px-4 py-2.5 text-sm text-amber-800 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-200">
@@ -1994,11 +2000,13 @@ export default function AccountanceClient({
                 <input
                   type="text"
                   placeholder="Search product..."
+                  aria-label="Search product"
                   value={marginSearch}
                   onChange={(e) => setMarginSearch(e.target.value)}
                   className="flex-1 rounded border border-black/[.15] bg-transparent px-3 py-1.5 text-sm dark:border-white/[.2]"
                 />
                 <select
+                  aria-label="Filter by category"
                   value={marginCategoryFilter}
                   onChange={(e) => setMarginCategoryFilter(e.target.value)}
                   className="rounded border border-black/[.15] bg-transparent px-3 py-1.5 text-sm dark:border-white/[.2]"
@@ -2015,7 +2023,7 @@ export default function AccountanceClient({
               <div className="mt-4 overflow-x-auto">
                 <table className="w-full text-sm">
                   <thead>
-                    <tr className="border-b border-black/[.08] text-left text-xs text-zinc-500 dark:border-white/[.145]">
+                    <tr className="border-b border-black/[.08] text-left text-xs text-zinc-600 dark:border-white/[.145] dark:text-zinc-400">
                       <th className="py-2 pr-3 font-medium">Product</th>
                       <th className="py-2 pr-3 text-right font-medium">Units Sold</th>
                       <th className="py-2 pr-3 text-right font-medium">Revenue</th>
@@ -2381,6 +2389,6 @@ export default function AccountanceClient({
           onClose={() => setConfirmDeleteWaste(null)}
         />
       )}
-    </div>
+    </main>
   );
 }

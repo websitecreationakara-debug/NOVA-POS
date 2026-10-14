@@ -48,6 +48,29 @@ function initials(name: string): string {
   return letters.toUpperCase();
 }
 
+// Avatars show at a few dozen pixels, so a photo (or a big animated GIF) is
+// scaled down to a 256px square WebP before it's uploaded. Falls back to the
+// original file if the browser can't decode or re-encode it.
+async function shrinkAvatar(file: File): Promise<File> {
+  try {
+    const bitmap = await createImageBitmap(file);
+    const side = Math.min(bitmap.width, bitmap.height);
+    const size = Math.min(256, side);
+    const canvas = document.createElement("canvas");
+    canvas.width = size;
+    canvas.height = size;
+    canvas
+      .getContext("2d")
+      ?.drawImage(bitmap, (bitmap.width - side) / 2, (bitmap.height - side) / 2, side, side, 0, 0, size, size);
+    bitmap.close();
+    const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/webp", 0.85));
+    if (!blob || blob.type !== "image/webp" || blob.size >= file.size) return file;
+    return new File([blob], "avatar.webp", { type: "image/webp" });
+  } catch {
+    return file;
+  }
+}
+
 export default function UsersClient({
   staff,
   currentUserId,
@@ -155,11 +178,11 @@ export default function UsersClient({
       return;
     }
     setAvatarBusyId(id);
-    const formData = new FormData();
-    formData.set("userId", id);
-    formData.set("file", file);
     startTransition(async () => {
       try {
+        const formData = new FormData();
+        formData.set("userId", id);
+        formData.set("file", await shrinkAvatar(file));
         await uploadStaffAvatarAction(formData);
         router.refresh();
       } catch (e) {

@@ -29,14 +29,14 @@ function box(
         </span>
         {toggle && (
           <ChevronDown
-            className={`size-3.5 shrink-0 text-zinc-500 transition-transform ${toggle.open ? "rotate-180" : ""}`}
+            className={`size-3.5 shrink-0 text-zinc-600 dark:text-zinc-400 transition-transform ${toggle.open ? "rotate-180" : ""}`}
           />
         )}
       </div>
       <div className={`mt-1 text-xl font-semibold ${negative ? "text-rose-600 dark:text-rose-400" : ""}`}>
         {value}
       </div>
-      <div className="mt-0.5 text-[11px] text-zinc-500">{note}</div>
+      <div className="mt-0.5 text-[11px] text-zinc-600 dark:text-zinc-400">{note}</div>
     </>
   );
   if (!toggle) return <div className={cardClass}>{content}</div>;
@@ -98,7 +98,7 @@ export default function InventoryCogsBoxes({ units }: { units: StockUnits | null
           <div className="flex items-start justify-between gap-3">
             <div>
               <h2 className="font-medium">Products with stock updated</h2>
-              <p className="mt-1 text-xs text-zinc-500">
+              <p className="mt-1 text-xs text-zinc-600 dark:text-zinc-400">
                 Stock added by hand in this period, net of anything taken back out.
               </p>
             </div>
@@ -112,7 +112,7 @@ export default function InventoryCogsBoxes({ units }: { units: StockUnits | null
           <div className="mt-4 overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
-                <tr className="border-b border-black/[.08] text-left text-xs text-zinc-500 dark:border-white/[.145]">
+                <tr className="border-b border-black/[.08] text-left text-xs text-zinc-600 dark:text-zinc-400 dark:border-white/[.145]">
                   <th className="py-2 pr-3 font-medium">Product</th>
                   <th className="py-2 pr-3 text-right font-medium">Units added</th>
                   <th className="py-2 pr-3 text-right font-medium">Last updated</th>
@@ -129,7 +129,7 @@ export default function InventoryCogsBoxes({ units }: { units: StockUnits | null
                       {i.quantity > 0 ? "+" : ""}
                       {formatCount(i.quantity)}
                     </td>
-                    <td className="py-2 pr-3 text-right text-zinc-500">
+                    <td className="py-2 pr-3 text-right text-zinc-600 dark:text-zinc-400">
                       {ppDay(i.lastAt)}{" "}
                       {new Date(i.lastAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
                     </td>
@@ -149,7 +149,7 @@ export default function InventoryCogsBoxes({ units }: { units: StockUnits | null
                 ))}
                 {units.purchasedItems.length === 0 && (
                   <tr>
-                    <td colSpan={4} className="py-6 text-center text-zinc-500">
+                    <td colSpan={4} className="py-6 text-center text-zinc-600 dark:text-zinc-400">
                       No stock was added in this period.
                     </td>
                   </tr>

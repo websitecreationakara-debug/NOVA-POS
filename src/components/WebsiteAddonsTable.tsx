@@ -716,6 +716,7 @@ export default function WebsiteAddonsTable({
                     <button
                       type="button"
                       onClick={() => onPreviewImage?.({ url: a.image_url as string, title: a.title })}
+                      aria-label={`View picture of ${a.title}`}
                       className="block h-10 w-10 shrink-0 overflow-hidden rounded border border-black/[.1] bg-zinc-100 dark:border-white/[.15] dark:bg-zinc-800"
                     >
                       {/* eslint-disable-next-line @next/next/no-img-element */}

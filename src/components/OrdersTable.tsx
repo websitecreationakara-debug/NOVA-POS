@@ -250,6 +250,7 @@ export default function OrdersTable({
           />
         </div>
         <select
+          aria-label="Business"
           value={brandId}
           onChange={(e) => navigate({ brand: e.target.value })}
           className="rounded-lg border border-border bg-transparent px-2.5 py-1.5 text-sm text-foreground"
@@ -421,7 +422,7 @@ export default function OrdersTable({
                       <Link
                         href={`/orders/${o.id}`}
                         onClick={(e) => e.stopPropagation()}
-                        className="font-semibold text-brand hover:underline"
+                        className="font-semibold text-[#1f66a3] hover:underline dark:text-brand"
                       >
                         {o.invoiceNumber ?? `#${o.id.slice(0, 8)}`}
                         {o.isUnpaid && <UnpaidBadge />}
@@ -518,7 +519,7 @@ export default function OrdersTable({
                     <Link
                       href={`/orders/${o.id}`}
                       onClick={(e) => e.stopPropagation()}
-                      className="font-semibold text-brand hover:underline"
+                      className="font-semibold text-[#1f66a3] hover:underline dark:text-brand"
                     >
                       {o.invoiceNumber ?? `#${o.id.slice(0, 8)}`}
                     </Link>

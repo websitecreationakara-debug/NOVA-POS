@@ -377,7 +377,7 @@ export default function MarketingClient({
     "rounded border border-black/[.15] bg-card px-3 py-1.5 text-sm text-foreground dark:border-white/[.2]";
 
   return (
-    <div className="min-h-screen p-6">
+    <main className="min-h-screen p-6">
       <h1 className="text-lg font-medium">{crmOnly ? "CRM" : "Marketing"}</h1>
       {error && <p className="mt-3 text-sm text-red-500">{error}</p>}
 
@@ -386,6 +386,7 @@ export default function MarketingClient({
         <div className="flex flex-wrap items-center gap-3">
           <h2 className="font-medium">Promotions</h2>
           <select
+            aria-label="Business"
             className={`ml-auto ${selectClass}`}
             value={currentBrandId}
             onChange={(e) => withBrandParam(e.target.value)}
@@ -415,6 +416,7 @@ export default function MarketingClient({
             className={`flex-1 ${inputClass}`}
           />
           <select
+            aria-label="Discount type"
             value={discountType}
             onChange={(e) => setDiscountType(e.target.value as DiscountType)}
             className={selectClass}
@@ -431,6 +433,7 @@ export default function MarketingClient({
             className={`w-24 ${inputClass}`}
           />
           <select
+            aria-label="Promo business"
             value={promoBrandId}
             onChange={(e) => setPromoBrandId(e.target.value)}
             className={selectClass}
@@ -956,6 +959,6 @@ export default function MarketingClient({
           }}
         />
       )}
-    </div>
+    </main>
   );
 }

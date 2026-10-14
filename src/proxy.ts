@@ -18,6 +18,6 @@ export const config = {
   // /api/backup-to-drive is the same kind of caller (a scheduler) with its own
   // bearer secret.
   matcher: [
-    "/((?!_next/static|_next/image|favicon.ico|api/stock-sync|api/product-sync|api/order-sync|api/order-status-sync|api/backup-to-drive|.*\\.(?:png|jpg|jpeg|gif|webp|svg|ico)$).*)",
+    "/((?!_next/static|_next/image|favicon.ico|robots.txt|api/stock-sync|api/product-sync|api/order-sync|api/order-status-sync|api/backup-to-drive|.*\\.(?:png|jpg|jpeg|gif|webp|svg|ico)$).*)",
   ],
 };

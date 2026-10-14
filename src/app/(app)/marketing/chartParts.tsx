@@ -103,7 +103,7 @@ export function Kpi({
       }`}
     >
       {href && (
-        <span className="absolute right-4 bottom-4 inline-flex items-center gap-0.5 text-xs font-medium text-brand opacity-70 transition-opacity group-hover:opacity-100">
+        <span className="absolute right-4 bottom-4 inline-flex items-center gap-0.5 text-xs font-medium text-[#1f66a3] group-hover:underline dark:text-brand">
           {hrefLabel}
           <ArrowUpRight className="size-3.5" />
         </span>
