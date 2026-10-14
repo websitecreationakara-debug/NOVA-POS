@@ -132,7 +132,6 @@ export async function getEffectiveProductCost(productId: string): Promise<number
     .eq("variation_id", link.variation_id)
     .maybeSingle();
   if (!costRow) return product.cost_price;
-
   const { total } = derivePurchaseCost({
     originalCost: costRow.original_cost,
     totalCost10pct: costRow.total_cost_10pct,
@@ -250,6 +249,42 @@ export async function getEffectiveProductCosts(productIds: string[]): Promise<Ma
       totalOverride: row.total_override,
     });
     out.set(id, total ?? base);
+  }
+  return out;
+}
+
+// Stock's "Total Cost 10%" for every product that is linked to a website
+// listing: the number, or null when that box is empty. A product with no website
+// listing is absent from the map. The Margin Report's Unit Cost for a linked
+// product is taken from this and nothing else -- never Stock's Total -- so the
+// report matches the Total Cost 10% column; absent products keep the usual
+// fallback (getEffectiveProductCosts).
+export async function getLinkedStockCost10pcts(productIds: string[]): Promise<Map<string, number | null>> {
+  const out = new Map<string, number | null>();
+  const ids = [...new Set(productIds)];
+  const CHUNK = 150;
+  const linkByProduct = new Map<string, { site: string; site_product_id: string; variation_id: string }>();
+  for (let i = 0; i < ids.length; i += CHUNK) {
+    const { data, error } = await supabaseAdmin
+      .from("product_site_links")
+      .select("product_id, site, site_product_id, variation_id")
+      .in("product_id", ids.slice(i, i + CHUNK));
+    if (error) throw error;
+    for (const l of data ?? []) if (!linkByProduct.has(l.product_id)) linkByProduct.set(l.product_id, l);
+  }
+  const spIds = [...new Set([...linkByProduct.values()].map((l) => l.site_product_id))];
+  const cost10 = new Map<string, number>();
+  for (let i = 0; i < spIds.length; i += CHUNK) {
+    const { data, error } = await supabaseAdmin
+      .from("website_product_purchase_costs")
+      .select("site, site_product_id, variation_id, total_cost_10pct")
+      .in("site_product_id", spIds.slice(i, i + CHUNK))
+      .not("total_cost_10pct", "is", null);
+    if (error) throw error;
+    for (const r of data ?? []) cost10.set(`${r.site}|${r.site_product_id}|${r.variation_id}`, r.total_cost_10pct as number);
+  }
+  for (const [id, l] of linkByProduct) {
+    out.set(id, cost10.get(`${l.site}|${l.site_product_id}|${l.variation_id}`) ?? null);
   }
   return out;
 }
@@ -380,6 +415,20 @@ export async function writeCostToStockTotal(productId: string, cost: number | nu
     .limit(1)
     .maybeSingle();
   if (link) await setWebsitePurchaseCost(link.site, link.site_product_id, link.variation_id, { total_override: cost });
+}
+
+// The Margin Report's Unit Cost is Stock's "Total Cost 10%" (see
+// getLinkedStockCost10pcts), so a Unit Cost typed in the report is written back
+// there too -- the two stay in step both ways. A product with no website listing
+// has no Total Cost 10% to write, so this does nothing for it.
+export async function writeCost10pctToStock(productId: string, cost: number): Promise<void> {
+  const { data: link } = await supabaseAdmin
+    .from("product_site_links")
+    .select("site, site_product_id, variation_id")
+    .eq("product_id", productId)
+    .limit(1)
+    .maybeSingle();
+  if (link) await setWebsitePurchaseCost(link.site, link.site_product_id, link.variation_id, { total_cost_10pct: cost });
 }
 
 // Upserts only the fields provided -- e.g. `{ original_cost: 5 }` leaves an

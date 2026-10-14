@@ -97,7 +97,11 @@ export function unitsSoldByCost(lines: MarginLine[]): { unitCost: number; units:
   return [...unitsByCost].map(([cost, units]) => ({ unitCost: cost, units: round2(units) }));
 }
 
-export function summarizeMarginLines(lines: MarginLine[], currentCost: number | null = null) {
+// `currentOnly` makes Unit Cost exactly currentCost (null when there is none): no
+// typed-cost override and no fallback to what the sales were recorded at. The
+// Margin Report passes it for a product linked to a Stock listing, whose Unit Cost
+// is Stock's Total Cost 10% and nothing else.
+export function summarizeMarginLines(lines: MarginLine[], currentCost: number | null = null, currentOnly = false) {
   const unitsSold = lines.reduce((s, l) => s + l.quantity, 0);
   const revenue = lines.reduce((s, l) => s + l.lineTotal, 0);
   const { totalCogs, hasUnknownCost } = aggregateStrictCogs(lines.map((l) => l.cogs));
@@ -107,11 +111,14 @@ export function summarizeMarginLines(lines: MarginLine[], currentCost: number | 
   // A cost typed into the report (on every sold line, all at one cost) is shown as
   // the Unit Cost instead of Stock's current cost -- that edit never touches Stock.
   const typedCost =
-    lines.length > 0 && lines.every((l) => l.costOverridden) && soldAt.length === 1 ? soldAt[0].unitCost : null;
-  const unitCost =
-    typedCost ??
-    currentCost ??
-    (totalCogs === null ? null : (soldAt[0]?.unitCost ?? round2(totalCogs / unitsSold)));
+    !currentOnly && lines.length > 0 && lines.every((l) => l.costOverridden) && soldAt.length === 1
+      ? soldAt[0].unitCost
+      : null;
+  const unitCost = currentOnly
+    ? currentCost
+    : (typedCost ??
+      currentCost ??
+      (totalCogs === null ? null : (soldAt[0]?.unitCost ?? round2(totalCogs / unitsSold))));
   const anyDifferent = unitCost !== null && soldAt.some((s) => s.unitCost !== round2(unitCost));
 
   return {

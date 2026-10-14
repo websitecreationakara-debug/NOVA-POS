@@ -202,6 +202,8 @@ export async function setWebsitePurchaseCostAction(
 
   revalidatePath("/stock");
   revalidatePath("/marketing");
+  // The Margin Report's Unit Cost reads Total Cost 10% from here.
+  revalidatePath("/accountance");
 }
 
 export async function createWebsiteProductAction(

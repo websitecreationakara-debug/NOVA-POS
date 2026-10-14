@@ -13,7 +13,11 @@ import { ALL_PAYMENT_METHODS, type PaymentMethod } from "@/lib/paymentMethods";
 import { summarizeMarginLines, unitsSoldByCost, type MarginLine } from "@/lib/cogs";
 import { productWeightGrams } from "@/lib/costControl";
 import { readAllPages } from "@/lib/supabase/readAllPages";
-import { getEffectiveProductCost, getEffectiveProductCosts } from "@/lib/websiteProducts/purchaseCosts";
+import {
+  getEffectiveProductCost,
+  getEffectiveProductCosts,
+  getLinkedStockCost10pcts,
+} from "@/lib/websiteProducts/purchaseCosts";
 import type {
   Brand,
   CashReconciliation,
@@ -1691,14 +1695,25 @@ export async function getMarginReport(
   if (byProduct.size === 0) return [];
 
   // Unit Cost is each product's current cost (see getEffectiveProductCost), so
-  // it reads the same whichever date range is viewed.
+  // it reads the same whichever date range is viewed. Stock's "Total Cost 10%"
+  // is what it is taken from when that's filled in.
   const currentCostByProduct = await getEffectiveProductCosts([...byProduct.keys()]).catch(
     () => new Map<string, number | null>()
   );
+  // A product linked to a Stock listing takes its Unit Cost from Total Cost 10%
+  // only (null when empty) -- not Stock's Total, a typed cost or a recorded sale.
+  const cost10ByProduct = await getLinkedStockCost10pcts([...byProduct.keys()]).catch(
+    () => new Map<string, number | null>()
+  );
+  for (const [id, c] of cost10ByProduct) currentCostByProduct.set(id, c);
 
   const rows = Array.from(byProduct.entries()).map(([productId, lines]) => {
     const product = productById.get(productId);
-    const summary = summarizeMarginLines(lines, currentCostByProduct.get(productId) ?? null);
+    const summary = summarizeMarginLines(
+      lines,
+      currentCostByProduct.get(productId) ?? null,
+      cost10ByProduct.has(productId)
+    );
     return {
       productId,
       name: product?.name ?? "—",
@@ -1780,8 +1795,12 @@ export async function getProductMarginDetail(
     unitCost: s.unitCost,
     paidAt: s.paidAt,
   }));
-  const currentCost = await getEffectiveProductCost(productId).catch(() => null);
-  const summary = summarizeMarginLines(lines, currentCost);
+  const cost10Map = await getLinkedStockCost10pcts([productId]).catch(() => new Map<string, number | null>());
+  const linked = cost10Map.has(productId);
+  const currentCost = linked
+    ? (cost10Map.get(productId) ?? null)
+    : await getEffectiveProductCost(productId).catch(() => null);
+  const summary = summarizeMarginLines(lines, currentCost, linked);
   const totalUnits = lines.reduce((s, l) => s + l.quantity, 0);
   const costBreakdown = unitsSoldByCost(lines).map((c) => ({
     ...c,
