@@ -113,3 +113,23 @@ describe("Orders list: day a Pre-Order was finished", () => {
     expect(settledDayLabel(null, preOrderDay)).toBeNull();
   });
 });
+
+describe("Margin Report: a Stock-linked product's Unit Cost is only Total Cost 10%", () => {
+  const typed: MarginLine[] = [
+    { quantity: 2, lineTotal: 80, cogs: 5.04, unitCost: 2.52, paidAt: "2026-10-01T03:00:00Z", costOverridden: true },
+  ];
+
+  it("shows Total Cost 10% even over a cost typed into the report", () => {
+    expect(summarizeMarginLines(typed, 30, true).unitCost).toBe(30);
+  });
+
+  it("shows no Unit Cost (not the recorded sale cost) when Total Cost 10% is empty", () => {
+    const s = summarizeMarginLines(typed, null, true);
+    expect(s.unitCost).toBeNull();
+    expect(s.totalCogs).toBe(5.04); // past sales keep their real cost
+  });
+
+  it("other products still fall back to the recorded cost", () => {
+    expect(summarizeMarginLines(typed, null).unitCost).toBe(2.52);
+  });
+});

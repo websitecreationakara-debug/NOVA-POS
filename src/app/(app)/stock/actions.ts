@@ -11,6 +11,7 @@ import { ppDayEnd, ppDayStart } from "@/lib/phnomPenhTime";
 import {
   getEffectiveProductCost,
   syncSetItemCostsForProduct,
+  writeCost10pctToStock,
   writeCostToStockTotal,
 } from "@/lib/websiteProducts/purchaseCosts";
 import type { ProductSiteLink, StockAdjustmentCategory } from "@/types/database";
@@ -73,10 +74,10 @@ async function backfillOrderItemCogs(productId: string): Promise<void> {
 // lines the report is showing (the backfill above only touches lines with no cost
 // at all); sales outside the brand/date range keep their recorded cost. Lines are
 // the ones the report reads (dated by list_at, scoped by the product's business).
-// It corrects what those sales cost -- it never changes the product's cost or Total
-// in Stock, which is edited on the Stock page (or Cost Control for a Set). The lines
-// are marked cost_source "report" (migration 0079) so the report shows the typed cost
-// as the Unit Cost instead of Stock's.
+// It corrects what those sales cost and also writes the typed cost to the product's
+// "Total Cost 10%" in Stock (the report's Unit Cost is taken from it), so the two
+// stay in sync; the product's own cost and Stock's Total are left alone. The lines
+// are marked cost_source "report" (migration 0079).
 export async function setMarginUnitCostAction(input: {
   productId: string;
   unitCost: number;
@@ -124,8 +125,11 @@ export async function setMarginUnitCostAction(input: {
     throw failed.error;
   }
 
+  await writeCost10pctToStock(productId, unitCost);
+
   revalidatePath("/accountance");
   revalidatePath(`/accountance/margin/${productId}`);
+  revalidatePath("/stock");
 }
 
 // Edits one "N sold at $X" group of the Margin Report: the product's sold lines
@@ -382,6 +386,8 @@ export async function setProductCostAction(input: {
   // Margin Report's Unit Cost -- would otherwise leave Total blank or stale
   // for a linked product, and that Total wins in getEffectiveProductCost.
   await writeCostToStockTotal(productId, costPrice);
+  // ...and Total Cost 10%, which the Margin Report's Unit Cost is taken from.
+  if (costPrice !== null) await writeCost10pctToStock(productId, costPrice);
 
   // A Set item's Unit Cost only wins over this when the product also has a
   // fully-entered Purchase Cost Total (see getEffectiveProductCost) --
