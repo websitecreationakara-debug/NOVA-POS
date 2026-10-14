@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { ChevronLeft, ChevronRight, Copy, Pencil, Plus, Trash2 } from "lucide-react";
+import { ChevronDown, ChevronLeft, ChevronRight, Copy, Pencil, Plus, Trash2 } from "lucide-react";
 import type { Brand, SetStatus } from "@/types/database";
 import type { StockPickerItem } from "@/lib/supabase/queries";
 import {
@@ -1053,6 +1053,20 @@ function SetEditor({
       };
     })
   );
+  // Sum of the "Total Cost 10%" column, from the same live amount/scale the rows use.
+  const liveCost10Sum = computeSetTotalCost(
+    set.items.map((item) => {
+      const draft = itemDrafts[item.id] ?? {};
+      const amount = draft.amount !== undefined ? parseFloat(draft.amount) : item.amount;
+      return {
+        amount: Number.isNaN(amount) ? item.amount : amount,
+        unitCost:
+          item.cost10pct === null
+            ? null
+            : computeUnitCostForScale(item.cost10pct, lineWeightGrams(item), draft.unit ?? item.unit),
+      };
+    })
+  );
   const liveItemsMissingCost = set.items.filter((item) => {
     const draft = itemDrafts[item.id];
     const unitCostRaw = draft?.unitCost ?? (item.unitCost === null ? "" : String(item.unitCost));
@@ -1119,7 +1133,8 @@ function SetEditor({
         </Link>
       </div>
 
-      <div className="rounded-lg border border-black/[.08] p-4 dark:border-white/[.145]">
+      <div className="rounded-lg border border-black/[.08] p-4 shadow-sm dark:border-white/[.145]">
+        <h2 className="mb-3 font-medium">Set Details</h2>
         <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
           <label className="flex flex-col gap-1">
             <span className="text-xs font-medium text-zinc-500">Set ID</span>
@@ -1143,27 +1158,34 @@ function SetEditor({
           </label>
           <label className="flex flex-col gap-1">
             <span className="text-xs font-medium text-zinc-500">Status</span>
-            <select
-              value={set.status}
-              onChange={(e) => saveField({ status: e.target.value as "draft" | "active" })}
-              className={selectClass}
-            >
-              <option value="draft">Draft</option>
-              <option value="active">Active</option>
-            </select>
+            <div className="relative w-fit">
+              <select
+                value={set.status}
+                onChange={(e) => saveField({ status: e.target.value as "draft" | "active" })}
+                className={`cursor-pointer appearance-none rounded-full py-1.5 pr-8 pl-3.5 text-sm font-medium outline-none ${
+                  set.status === "active"
+                    ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
+                    : "bg-amber-500/10 text-amber-600 dark:text-amber-400"
+                }`}
+              >
+                <option value="draft">Draft</option>
+                <option value="active">Active</option>
+              </select>
+              <ChevronDown className="pointer-events-none absolute top-1/2 right-3 size-4 -translate-y-1/2 opacity-70" />
+            </div>
           </label>
         </div>
       </div>
 
-      <div className="rounded-lg border border-black/[.08] p-4 dark:border-white/[.145]">
+      <div className="rounded-lg border border-black/[.08] p-4 shadow-sm dark:border-white/[.145]">
         <div className="flex flex-wrap items-center gap-3">
           <h2 className="font-medium">Items</h2>
           <button
             type="button"
             onClick={() => setShowManualAdd((v) => !v)}
-            className="ml-auto text-xs font-medium text-brand hover:underline"
+            className="ml-auto inline-flex items-center gap-1 rounded-md border border-brand px-3 py-1.5 text-xs font-medium text-brand transition-colors hover:bg-brand/10"
           >
-            {showManualAdd ? "Cancel" : "+ Add manual item"}
+            {showManualAdd ? "Cancel" : (<><Plus className="size-3.5" />Add manual item</>)}
           </button>
         </div>
 
@@ -1310,15 +1332,15 @@ function SetEditor({
               from md up it's the normal table. */}
           <table className="block w-full text-left text-sm md:table">
             <thead className="hidden md:table-header-group">
-              <tr className="border-b border-black/[.08] text-xs text-zinc-500 dark:border-white/[.145]">
-                <th className="py-2 pr-3 font-medium">Product</th>
-                <th className="py-2 pr-3 text-right font-medium">Amount</th>
-                <th className="py-2 pr-3 font-medium">Scale</th>
-                <th className="py-2 pr-3 text-right font-medium">Unit Cost</th>
-                <th className="py-2 pr-3 text-right font-medium">Line Total</th>
-                <th className="py-2 pr-3 text-right font-medium">Cost 10%</th>
-                <th className="py-2 pr-3 text-right font-medium">Total Cost 10%</th>
-                <th className="w-16 py-2 text-right font-medium">Actions</th>
+              <tr className="border-b border-black/[.08] bg-black/[.03] text-[11px] tracking-wide text-zinc-500 uppercase dark:border-white/[.145] dark:bg-white/[.05]">
+                <th className="py-2.5 pr-3 pl-3 font-semibold">Product</th>
+                <th className="py-2.5 pr-3 text-right font-semibold">Amount</th>
+                <th className="py-2.5 pr-3 font-semibold">Scale</th>
+                <th className="py-2.5 pr-3 text-right font-semibold">Unit Cost</th>
+                <th className="py-2.5 pr-3 text-right font-semibold">Line Total</th>
+                <th className="py-2.5 pr-3 text-right font-semibold">Cost 10%</th>
+                <th className="py-2.5 pr-3 text-right font-semibold">Total Cost 10%</th>
+                <th className="w-16 py-2.5 pr-3 text-right font-semibold">Actions</th>
               </tr>
             </thead>
             <tbody className="block divide-y divide-black/[.06] md:table-row-group dark:divide-white/[.08]">
@@ -1345,8 +1367,8 @@ function SetEditor({
                   ? null
                   : computeLineTotal({ amount: liveAmount, unitCost: liveCost10Unit });
                 return (
-                  <tr key={item.id} className="relative grid grid-cols-2 gap-x-3 gap-y-2 py-3 md:table-row md:py-0">
-                    <td className="col-span-2 py-0 pr-10 md:py-2 md:pr-3">
+                  <tr key={item.id} className="relative grid grid-cols-2 gap-x-3 gap-y-2 py-3 transition-colors hover:bg-black/[.02] md:table-row md:py-0 dark:hover:bg-white/[.03]">
+                    <td className="col-span-2 py-0 pr-10 md:py-2 md:pr-3 md:pl-3">
                       <div className="flex items-center gap-2">
                         <div className="h-14 w-14 shrink-0 overflow-hidden rounded border border-black/[.1] bg-zinc-100 dark:border-white/[.15] dark:bg-zinc-800">
                           {lineImageUrl(item) ? (
@@ -1479,10 +1501,45 @@ function SetEditor({
                 </tr>
               )}
             </tbody>
+            {set.items.length > 0 && (
+              <tfoot className="hidden md:table-footer-group">
+                <tr className="border-t border-black/[.08] bg-black/[.03] font-semibold dark:border-white/[.145] dark:bg-white/[.05]">
+                  <td colSpan={4} className="py-3 pl-3 text-left font-normal">
+                    <div className="flex items-center gap-3">
+                      <button
+                        type="button"
+                        disabled={isPending}
+                        onClick={saveItems}
+                        className="rounded bg-brand px-4 py-1.5 text-sm font-medium text-white hover:brightness-95 disabled:cursor-not-allowed"
+                      >
+                        {isPending ? "Saving…" : "Save"}
+                      </button>
+                      {itemsDirty && !isPending && <span className="text-xs text-zinc-500">Unsaved changes</span>}
+                      {liveItemsMissingCost > 0 && (
+                        <span className="text-xs text-amber-600 dark:text-amber-500">
+                          {liveItemsMissingCost} item{liveItemsMissingCost === 1 ? "" : "s"} missing cost
+                        </span>
+                      )}
+                    </div>
+                  </td>
+                  <td className="py-3 pr-3 text-right tabular-nums">
+                    <div className="text-[10px] font-medium tracking-wide text-zinc-500 uppercase">Total Cost</div>
+                    <div className="text-base">{formatMoney(liveTotalCost)}</div>
+                  </td>
+                  <td />
+                  <td className="py-3 pr-3 text-right tabular-nums">
+                    <div className="text-[10px] font-medium tracking-wide text-zinc-500 uppercase">Total Cost 10%</div>
+                    <div className="text-base">{formatMoney(liveCost10Sum)}</div>
+                  </td>
+                  <td />
+                </tr>
+              </tfoot>
+            )}
           </table>
         </div>
 
-        <div className="mt-3 flex items-center justify-between gap-6">
+        {/* From md up (with items) Save and the totals live in the table's footer row. */}
+        <div className={`mt-3 flex items-center justify-between gap-6 ${set.items.length > 0 ? "md:hidden" : ""}`}>
           <div className="flex items-center gap-3">
             <button
               type="button"

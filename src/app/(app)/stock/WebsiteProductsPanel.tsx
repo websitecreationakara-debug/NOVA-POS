@@ -306,6 +306,10 @@ export default function WebsiteProductsPanel({
     startTransition(async () => {
       try {
         const result = await moveWebsiteProductAction({ from: catalogId, to, productId: p.id });
+        if (result.error !== undefined) {
+          notify(result.error, "err");
+          return;
+        }
         notify(
           result.warnings.length > 0
             ? `Moved “${p.title}” to ${toLabel}. ${result.warnings.join(" ")}`

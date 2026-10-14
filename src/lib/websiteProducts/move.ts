@@ -106,9 +106,27 @@ export async function moveWebsiteProduct(input: {
   const warnings: string[] = [];
 
   const src = await getWebsiteProduct(from, productId);
-  if (Array.isArray(src.tabs) && src.tabs.length > 0) {
-    throw new Error(
-      `“${src.title}” has ${src.tabs.length} info tab(s) the other website can't store, so moving it would lose them. Remove the tabs first, or leave it where it is.`
+  // Info tabs (title + text blocks) only exist on BOSBA Drink & Snack, and no
+  // website can take them on create, so they're kept as headed paragraphs at the
+  // end of the description instead of being lost.
+  const tabs = (Array.isArray(src.tabs) ? src.tabs : []).flatMap((t) => {
+    const tab = t as { title?: unknown; body?: unknown } | null;
+    const title = typeof tab?.title === "string" ? tab.title.trim() : "";
+    const body = typeof tab?.body === "string" ? tab.body.trim() : "";
+    return title || body ? [{ title, body }] : [];
+  });
+  const description =
+    tabs.length === 0
+      ? src.description
+      : [
+          src.description?.trim() ?? "",
+          ...tabs.map((t) => [t.title && `**${t.title}**`, t.body].filter(Boolean).join("\n\n")),
+        ]
+          .filter(Boolean)
+          .join("\n\n");
+  if (tabs.length > 0) {
+    warnings.push(
+      `Its ${tabs.length} info tab(s) were added to the end of the description, since the other website has no tabs.`
     );
   }
 
@@ -118,7 +136,7 @@ export async function moveWebsiteProduct(input: {
 
   const write: WebsiteProductWrite = {
     title: src.title,
-    description: src.description,
+    description,
     price: src.price,
     sale_price: src.sale_price,
     category_id: categoryId,
