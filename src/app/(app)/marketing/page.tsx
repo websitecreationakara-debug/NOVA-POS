@@ -18,6 +18,9 @@ import ProductInsightClient from "./ProductInsightClient";
 import ProductMonthlyClient from "./ProductMonthlyClient";
 import { parseInsightRange } from "@/lib/productInsight";
 import CostControlClient from "./CostControlClient";
+import { catalogForBrandSlug } from "@/lib/websiteProducts/catalogs";
+import { listWebsiteProducts } from "@/lib/websiteProducts/client";
+import { syncWebsiteToPos } from "@/lib/websiteProducts/syncFromWebsite";
 
 export default async function MarketingPage({
   searchParams,
@@ -131,6 +134,19 @@ export default async function MarketingPage({
           limit: String(setsLimit),
         })}`
       );
+    }
+
+    // Opening a set: copy the website's current names, pictures and weights onto the POS products
+    // first, so its lines match Stock even if a product was changed on the storefront directly.
+    // Best-effort and capped at 3s -- a slow or down storefront never holds the page up.
+    if (setParam) {
+      const catalog = catalogForBrandSlug(currentBrand.slug);
+      if (catalog) {
+        await Promise.race([
+          listWebsiteProducts(catalog.id).then((p) => syncWebsiteToPos(currentBrand.slug, p)),
+          new Promise((resolve) => setTimeout(resolve, 3000)),
+        ]).catch((e) => console.error("cost control: couldn't sync website products to the POS", e));
+      }
     }
 
     // Each view only loads what it shows: the list needs the page of sets; the set

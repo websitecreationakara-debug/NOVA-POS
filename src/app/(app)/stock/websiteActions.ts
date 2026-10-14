@@ -32,6 +32,7 @@ import type {
 import type { ProductSiteLink, StockAdjustmentCategory } from "@/types/database";
 import { requireFullStockAccess, requireStockAccess } from "@/lib/stockAccess";
 import { moveWebsiteProduct, type MoveProductResult } from "@/lib/websiteProducts/move";
+import { syncWebsiteToPos } from "@/lib/websiteProducts/syncFromWebsite";
 import { isStockUntracked } from "@/lib/websiteProducts/stockTracking";
 import { adjustStockAction, setProductPriceAction } from "./actions";
 
@@ -238,6 +239,20 @@ export async function updateWebsiteProductAction(
 ): Promise<void> {
   await requireStockAccess();
   await updateWebsiteProduct(catalogId, id, input);
+  // A new name, picture or weight is copied onto the linked POS products right away, so Cost
+  // Control, Sales and the Margin Report show the same as Stock (best-effort -- the Stock page
+  // also re-syncs every time it loads).
+  if (input.title !== undefined || input.image_url !== undefined || input.weight !== undefined) {
+    try {
+      const fresh = await getWebsiteProduct(catalogId, id);
+      await syncWebsiteToPos(getCatalog(catalogId).brandSlug, [fresh]);
+    } catch (e) {
+      console.error("updateWebsiteProductAction: couldn't copy the change to the POS product", e);
+    }
+    revalidatePath("/marketing");
+    revalidatePath("/sales");
+    revalidatePath("/accountance");
+  }
   revalidatePath("/stock");
 }
 
@@ -460,6 +475,7 @@ export async function setProductDetailsAction(input: {
 
   revalidatePath("/stock");
   revalidatePath("/sales");
+  revalidatePath("/marketing");
 }
 
 // Changes -- or removes (imageUrl null) -- a Stock row's picture. A simple product's image is the product's own
