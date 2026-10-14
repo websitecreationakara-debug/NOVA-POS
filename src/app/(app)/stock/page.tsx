@@ -1,6 +1,11 @@
 import { getBrands, getCatalogForBrand, getRecentStockUpdates } from "@/lib/supabase/queries";
 import { catalogForBrandSlug, configuredCatalogs } from "@/lib/websiteProducts/catalogs";
-import { listWebsiteAddons, listWebsiteCategories, listWebsiteProducts } from "@/lib/websiteProducts/client";
+import {
+  addonToWebsiteProduct,
+  listWebsiteAddons,
+  listWebsiteCategories,
+  listWebsiteProducts,
+} from "@/lib/websiteProducts/client";
 import { getWebsitePurchaseCosts, type PurchaseCostFields } from "@/lib/websiteProducts/purchaseCosts";
 import { syncWebsiteToPos } from "@/lib/websiteProducts/syncFromWebsite";
 import type {
@@ -105,7 +110,10 @@ export default async function StockPage({
   // Keep the POS products' pictures and prices in step with the website's (the website is where
   // they're managed). If anything changed, reload the POS list so this very page shows it.
   if (websiteCatalog?.products) {
-    const updated = await syncWebsiteToPos(currentBrand.slug, websiteCatalog.products).catch((e) => {
+    // Add-ons are linked POS products too (their own picture/name/price live in the storefront's
+    // add-on table), so they're copied across the same way.
+    const siteItems = [...websiteCatalog.products, ...websiteCatalog.addons.map(addonToWebsiteProduct)];
+    const updated = await syncWebsiteToPos(currentBrand.slug, siteItems).catch((e) => {
       console.error("stock: couldn't sync website pictures/prices to the POS", e);
       return 0;
     });

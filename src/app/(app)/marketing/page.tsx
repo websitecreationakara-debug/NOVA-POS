@@ -19,7 +19,7 @@ import ProductMonthlyClient from "./ProductMonthlyClient";
 import { parseInsightRange } from "@/lib/productInsight";
 import CostControlClient from "./CostControlClient";
 import { catalogForBrandSlug } from "@/lib/websiteProducts/catalogs";
-import { listWebsiteProducts } from "@/lib/websiteProducts/client";
+import { addonToWebsiteProduct, listWebsiteAddons, listWebsiteProducts } from "@/lib/websiteProducts/client";
 import { syncWebsiteToPos } from "@/lib/websiteProducts/syncFromWebsite";
 
 export default async function MarketingPage({
@@ -143,7 +143,9 @@ export default async function MarketingPage({
       const catalog = catalogForBrandSlug(currentBrand.slug);
       if (catalog) {
         await Promise.race([
-          listWebsiteProducts(catalog.id).then((p) => syncWebsiteToPos(currentBrand.slug, p)),
+          Promise.all([listWebsiteProducts(catalog.id), listWebsiteAddons(catalog.id).catch(() => [])]).then(
+            ([p, addons]) => syncWebsiteToPos(currentBrand.slug, [...p, ...addons.map(addonToWebsiteProduct)])
+          ),
           new Promise((resolve) => setTimeout(resolve, 3000)),
         ]).catch((e) => console.error("cost control: couldn't sync website products to the POS", e));
       }
