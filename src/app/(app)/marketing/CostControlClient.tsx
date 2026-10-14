@@ -186,7 +186,7 @@ export default function CostControlClient({
   }
 
   return (
-    <div className="min-h-screen p-4 sm:p-6">
+    <main className="min-h-screen p-4 sm:p-6">
       <div className="flex flex-wrap items-center gap-3">
         <h1 className="text-lg font-medium">Cost Control</h1>
         {/* Phones: the search drops to its own full-width row under the title and
@@ -201,6 +201,7 @@ export default function CostControlClient({
           />
         )}
         <select
+          aria-label="Business"
           className={`ml-auto min-w-0 max-w-full ${isBuilderOpen ? "" : "sm:ml-0"} ${selectClass}`}
           value={currentBrand.id}
           onChange={(e) => switchBrand(e.target.value)}
@@ -225,7 +226,7 @@ export default function CostControlClient({
           q={setsQuery}
         />
       )}
-    </div>
+    </main>
   );
 }
 
@@ -1123,7 +1124,7 @@ function SetEditor({
   }
 
   return (
-    <section className="mt-6 flex flex-col gap-6">
+    <main className="mt-6 flex flex-col gap-6">
       <div className="flex items-center gap-3">
         <Link
           href={`/marketing?tab=cost-control&brand=${brandId}`}
@@ -1164,8 +1165,8 @@ function SetEditor({
                 onChange={(e) => saveField({ status: e.target.value as "draft" | "active" })}
                 className={`cursor-pointer appearance-none rounded-full py-1.5 pr-8 pl-3.5 text-sm font-medium outline-none ${
                   set.status === "active"
-                    ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
-                    : "bg-amber-500/10 text-amber-600 dark:text-amber-400"
+                    ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400"
+                    : "bg-amber-500/10 text-amber-700 dark:text-amber-400"
                 }`}
               >
                 <option value="draft">Draft</option>
@@ -1183,7 +1184,7 @@ function SetEditor({
           <button
             type="button"
             onClick={() => setShowManualAdd((v) => !v)}
-            className="ml-auto inline-flex items-center gap-1 rounded-md border border-brand px-3 py-1.5 text-xs font-medium text-brand transition-colors hover:bg-brand/10"
+            className="ml-auto inline-flex items-center gap-1 rounded-md border border-brand px-3 py-1.5 text-xs font-medium text-[#1f66a3] transition-colors hover:bg-brand/10 dark:text-brand"
           >
             {showManualAdd ? "Cancel" : (<><Plus className="size-3.5" />Add manual item</>)}
           </button>
@@ -1332,7 +1333,7 @@ function SetEditor({
               from md up it's the normal table. */}
           <table className="block w-full text-left text-sm md:table">
             <thead className="hidden md:table-header-group">
-              <tr className="border-b border-black/[.08] bg-black/[.03] text-[11px] tracking-wide text-zinc-500 uppercase dark:border-white/[.145] dark:bg-white/[.05]">
+              <tr className="border-b border-black/[.08] bg-black/[.03] text-[11px] tracking-wide text-zinc-600 uppercase dark:border-white/[.145] dark:bg-white/[.05] dark:text-zinc-400">
                 <th className="py-2.5 pr-3 pl-3 font-semibold">Product</th>
                 <th className="py-2.5 pr-3 text-right font-semibold">Amount</th>
                 <th className="py-2.5 pr-3 font-semibold">Scale</th>
@@ -1375,7 +1376,7 @@ function SetEditor({
                             // eslint-disable-next-line @next/next/no-img-element
                             <img src={lineImageUrl(item) as string} alt="" className="h-full w-full object-cover" />
                           ) : (
-                            <div className="flex h-full w-full items-center justify-center text-[10px] text-zinc-400">
+                            <div className="flex h-full w-full items-center justify-center text-[10px] text-zinc-600 dark:text-zinc-400">
                               No img
                             </div>
                           )}
@@ -1410,6 +1411,7 @@ function SetEditor({
                             type="number"
                             min={0}
                             step="0.01"
+                            aria-label={`Amount of ${item.productName}`}
                             value={amountValue}
                             onChange={(e) =>
                               setItemDrafts((prev) => ({
@@ -1424,6 +1426,7 @@ function SetEditor({
                         </td>
                         <td data-label="Scale" className={`${MOBILE_LABEL} py-0 md:py-2 md:pr-3`}>
                           <select
+                            aria-label={`Scale of ${item.productName}`}
                             value={unitValue}
                             onChange={(e) => changeScale(item, e.target.value)}
                             className="w-full rounded border border-black/[.15] bg-transparent px-2 py-1 text-sm md:w-20 dark:border-white/[.2]"
@@ -1448,7 +1451,7 @@ function SetEditor({
                             </span>
                           ) : (
                             <label className="inline-flex w-full items-center gap-1 rounded border border-black/[.15] px-2 py-1 text-sm md:w-20 dark:border-white/[.2]">
-                              <span className="select-none text-zinc-400">$</span>
+                              <span className="select-none text-zinc-600 dark:text-zinc-400">$</span>
                               <input
                                 type="number"
                                 min={0}
@@ -1562,6 +1565,6 @@ function SetEditor({
           </div>
         </div>
       </div>
-    </section>
+    </main>
   );
 }

@@ -186,7 +186,7 @@ export default function DashboardRangeBar({
               className={`rounded-full px-3 py-1 text-xs font-medium capitalize transition-colors ${
                 mode === m
                   ? "bg-brand text-white"
-                  : "text-zinc-500 hover:text-foreground"
+                  : "text-zinc-600 hover:text-foreground dark:text-zinc-400"
               }`}
             >
               {m}
@@ -198,6 +198,7 @@ export default function DashboardRangeBar({
           <div className="flex items-center gap-1.5">
             <input
               type="date"
+              aria-label={showRangeEnd ? "Start date" : "Date"}
               value={fromDate}
               max={showRangeEnd ? toDate : undefined}
               onChange={(e) =>
@@ -213,6 +214,7 @@ export default function DashboardRangeBar({
                 <span className="text-xs text-zinc-500">to</span>
                 <input
                   type="date"
+                  aria-label="End date"
                   value={toDate}
                   min={fromDate}
                   onChange={(e) => switchDates(fromDate, e.target.value)}
@@ -234,7 +236,7 @@ export default function DashboardRangeBar({
               <button
                 type="button"
                 onClick={() => setShowRangeEnd(true)}
-                className="text-xs font-medium text-brand hover:underline"
+                className="text-xs font-medium text-[#1f66a3] hover:underline dark:text-brand"
               >
                 + Range
               </button>

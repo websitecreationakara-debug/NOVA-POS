@@ -90,7 +90,7 @@ export default function ProductInsightClient({
   }
 
   return (
-    <div className="min-h-screen space-y-6 p-6">
+    <main className="min-h-screen space-y-6 p-6">
       <nav className="flex items-center gap-1.5 text-sm text-muted-foreground" aria-label="Breadcrumb">
         <span>Marketing</span>
         <ChevronRight className="size-3.5" />
@@ -300,6 +300,6 @@ export default function ProductInsightClient({
           </Card>
         </>
       )}
-    </div>
+    </main>
   );
 }

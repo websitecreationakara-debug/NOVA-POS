@@ -211,7 +211,7 @@ export default function Sidebar({ role }: { role: string }) {
         <div className="flex items-start justify-between">
           <Link href="/" aria-label="NOVA POS" onClick={() => setMobileOpen(false)}>
             {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src="/logos/nova-pos.png" alt="NOVA POS" className="h-20 w-auto" />
+            <img src="/logos/nova-pos.png" alt="NOVA POS" width={300} height={247} className="h-20 w-auto" />
           </Link>
           <button
             type="button"

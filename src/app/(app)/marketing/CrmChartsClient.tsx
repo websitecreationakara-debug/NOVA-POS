@@ -279,7 +279,7 @@ export default function CrmChartsClient({ data }: { data: CrmChartsResult }) {
   ];
 
   return (
-    <div className="min-h-screen space-y-6 p-4 sm:p-6">
+    <main className="min-h-screen space-y-6 p-4 sm:p-6">
       <div>
         <h1 className="text-lg font-medium">CRM Charts</h1>
         <p className="mt-0.5 text-sm text-muted-foreground">
@@ -393,7 +393,7 @@ export default function CrmChartsClient({ data }: { data: CrmChartsResult }) {
 
         <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-muted-foreground">
           {periods.map((p, i) => (
-            <span key={p.label} className="inline-flex items-center gap-1.5 font-medium" style={{ color: colorOf(i) }}>
+            <span key={p.label} className="inline-flex items-center gap-1.5 font-medium" style={{ color: `color-mix(in srgb, ${colorOf(i)} 70%, var(--foreground))` }}>
               <span className="size-2 rounded-full" style={{ background: colorOf(i) }} />
               {p.label}
             </span>
@@ -591,6 +591,6 @@ export default function CrmChartsClient({ data }: { data: CrmChartsResult }) {
           <HBars data={a.topBuyers.map((t) => ({ name: t.name, value: t.spent }))} unit="$" format={money} />
         </Card>
       </div>
-    </div>
+    </main>
   );
 }

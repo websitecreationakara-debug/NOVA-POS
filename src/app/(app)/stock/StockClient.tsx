@@ -620,9 +620,10 @@ export default function StockClient({
   }
 
   return (
-    <div className="flex flex-col lg:h-full">
+    <main className="flex flex-col lg:h-full">
       <header className="flex flex-wrap items-center gap-3 border-b border-black/[.08] px-3 py-3 sm:px-6 dark:border-white/[.145]">
         <select
+          aria-label="Business"
           className="rounded border border-black/[.15] bg-card px-3 py-1.5 text-sm text-foreground dark:border-white/[.2]"
           value={currentBrand.id}
           onChange={(e) => switchBrand(e.target.value)}
@@ -1240,6 +1241,6 @@ export default function StockClient({
       </div>
       </>
       )}
-    </div>
+    </main>
   );
 }

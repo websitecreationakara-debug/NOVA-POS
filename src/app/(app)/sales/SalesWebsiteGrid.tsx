@@ -535,8 +535,8 @@ export default function SalesWebsiteGrid({
                     <span
                       className={
                         isVariation
-                          ? "rounded-full bg-amber-500/15 px-2 py-0.5 text-xs font-semibold text-amber-700 dark:text-amber-300"
-                          : "text-xs text-zinc-400"
+                          ? "rounded-full bg-amber-500/15 px-2 py-0.5 text-xs font-semibold text-amber-800 dark:text-amber-300"
+                          : "text-xs text-zinc-500 dark:text-zinc-400"
                       }
                     >
                       {optionLabel}
@@ -557,7 +557,7 @@ export default function SalesWebsiteGrid({
                     formatMoney(price)
                   )}
                 </div>
-                <div className={`mt-1 text-xs ${isOut ? "text-red-500" : "text-zinc-400"}`}>
+                <div className={`mt-1 text-xs ${isOut ? "text-red-500" : "text-zinc-500 dark:text-zinc-400"}`}>
                   {remaining == null
                     ? "Stock untracked"
                     : isOut

@@ -711,10 +711,13 @@ export default function SalesClient({
   }
 
   // Weight of one full unit of the line's product, if known: the product's own
-  // recorded weight, else read from its name ("... (350g)", "... 1kg").
+  // recorded weight, else read from its name ("... (350g)", "... 1kg"), else from
+  // the website listing's weight text -- a new product has no recorded weight yet
+  // and a simple product's name doesn't carry it.
   function packGramsFor(line: CartLine): number | null {
     const w = products.find((p) => p.id === line.productId)?.weight_grams;
-    return w && w > 0 ? w : parseGrams(line.name);
+    if (w && w > 0) return w;
+    return parseGrams(line.name) ?? (line.weightLabel ? parseGrams(line.weightLabel) : null);
   }
 
   // The full-size price in effect for a line, so a size can be changed again
@@ -996,6 +999,7 @@ export default function SalesClient({
           any page from that extra row of vertical space. */}
       <TopBarSlot>
         <select
+          aria-label="Business"
           className="min-w-0 max-w-[9.5rem] rounded border border-black/[.15] bg-card px-3 py-1.5 text-sm text-foreground disabled:opacity-50 sm:max-w-none dark:border-white/[.2]"
           value={currentBrand.id}
           onChange={(e) => switchBrand(e.target.value)}
@@ -1480,6 +1484,7 @@ export default function SalesClient({
                       picked. The value stays one "YYYY-MM-DDTHH:MM" string. */}
                   <input
                     type="date"
+                    aria-label="Deliver by date"
                     min={dateOffset(0)}
                     value={deliveryAt.slice(0, 10)}
                     onChange={(e) =>
