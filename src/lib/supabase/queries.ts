@@ -1554,6 +1554,8 @@ export async function getStockPickerItems(
 export type MarginReportRow = {
   productId: string;
   name: string;
+  // The product's picture (its POS copy, kept in step with the website's).
+  imageUrl: string | null;
   categoryName: string | null;
   unitsSold: number;
   revenue: number;
@@ -1590,7 +1592,13 @@ export async function getMarginReport(
   fromDate: string,
   toDate: string
 ): Promise<MarginReportRow[]> {
-  type ProductInfo = { id: string; name: string; price: number; categories: { name: string } | null };
+  type ProductInfo = {
+    id: string;
+    name: string;
+    price: number;
+    image_url: string | null;
+    categories: { name: string } | null;
+  };
   const productById = new Map<string, ProductInfo>();
   const byProduct = new Map<string, MarginLine[]>();
 
@@ -1623,6 +1631,7 @@ export async function getMarginReport(
         id: r.product_id,
         name: r.name,
         price: Number(r.price),
+        image_url: null,
         categories: r.category_name === null ? null : { name: r.category_name },
       });
       byProduct.set(
@@ -1683,7 +1692,7 @@ export async function getMarginReport(
       Array.from({ length: Math.ceil(ids.length / 150) }, (_, i) =>
         supabaseAdmin
           .from("products")
-          .select("id, name, price, categories(name)")
+          .select("id, name, price, image_url, categories(name)")
           .in("id", ids.slice(i * 150, (i + 1) * 150))
       )
     );
@@ -1693,6 +1702,20 @@ export async function getMarginReport(
     }
   }
   if (byProduct.size === 0) return [];
+
+  // The grouped report doesn't carry pictures, so read them for the rows shown
+  // (in chunks, like the product lookup above).
+  const imageIds = [...byProduct.keys()];
+  const imagePages = await Promise.all(
+    Array.from({ length: Math.ceil(imageIds.length / 150) }, (_, i) =>
+      supabaseAdmin
+        .from("products")
+        .select("id, image_url")
+        .in("id", imageIds.slice(i * 150, (i + 1) * 150))
+    )
+  );
+  const imageById = new Map<string, string | null>();
+  for (const { data } of imagePages) for (const p of data ?? []) imageById.set(p.id, p.image_url);
 
   // Unit Cost is each product's current cost (see getEffectiveProductCost), so
   // it reads the same whichever date range is viewed. Stock's "Total Cost 10%"
@@ -1717,6 +1740,7 @@ export async function getMarginReport(
     return {
       productId,
       name: product?.name ?? "—",
+      imageUrl: imageById.get(productId) ?? product?.image_url ?? null,
       categoryName: (product?.categories as { name: string } | null)?.name ?? null,
       ...summary,
       suggestedCost: null as number | null,

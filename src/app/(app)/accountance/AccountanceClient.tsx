@@ -2074,7 +2074,21 @@ export default function AccountanceClient({
                           editing ? "bg-blue-50 dark:bg-blue-950/30" : ""
                         }`}
                       >
-                        <td className="py-2 pr-3">{r.name}</td>
+                        <td className="py-2 pr-3">
+                          <div className="flex items-center gap-3">
+                            <div className="h-10 w-10 shrink-0 overflow-hidden rounded border border-black/[.1] bg-zinc-100 dark:border-white/[.15] dark:bg-zinc-800">
+                              {r.imageUrl ? (
+                                // eslint-disable-next-line @next/next/no-img-element
+                                <img src={r.imageUrl} alt="" loading="lazy" className="h-full w-full object-cover" />
+                              ) : (
+                                <div className="flex h-full w-full items-center justify-center text-[9px] text-zinc-600 dark:text-zinc-400">
+                                  No img
+                                </div>
+                              )}
+                            </div>
+                            <span>{r.name}</span>
+                          </div>
+                        </td>
                         <td className="py-2 pr-3 text-right">{r.unitsSold}</td>
                         <td className="py-2 pr-3 text-right">{formatMoney(r.revenue)}</td>
                         {editing ? (

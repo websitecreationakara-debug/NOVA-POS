@@ -537,6 +537,8 @@ export async function setProductImageAction(input: {
   revalidatePath("/stock");
   revalidatePath("/sales");
   revalidatePath("/marketing");
+  // The Margin Report shows this picture next to the product.
+  revalidatePath("/accountance");
 }
 
 // The Edit box on an addon row: the English name and picture go to the
@@ -615,6 +617,8 @@ export async function setAddonDetailsAction(input: {
   revalidatePath("/stock");
   revalidatePath("/sales");
   revalidatePath("/marketing");
+  // The Margin Report shows the add-on's name and picture.
+  revalidatePath("/accountance");
 }
 
 export async function setSimpleProductStockAction(input: {
