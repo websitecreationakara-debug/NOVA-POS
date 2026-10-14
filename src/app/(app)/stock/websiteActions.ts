@@ -688,16 +688,23 @@ export async function deleteWebsiteProductVariationAction(
 
 // Moves a product, with all its sizes, to another business: recreated on that
 // business's website, its POS items/costs/sets follow it, and it's removed from
-// the old website. See moveWebsiteProduct.
+// the old website. See moveWebsiteProduct. A failure comes back as `error` rather
+// than being thrown: a thrown error from a Server Action reaches the page as an
+// unreadable "Minified React error #441" in production.
 export async function moveWebsiteProductAction(input: {
   from: WebsiteCatalogId;
   to: WebsiteCatalogId;
   productId: string;
-}): Promise<MoveProductResult> {
-  await requireFullStockAccess();
-  const result = await moveWebsiteProduct(input);
-  revalidatePath("/stock");
-  revalidatePath("/sales");
-  revalidatePath("/marketing");
-  return result;
+}): Promise<(MoveProductResult & { error?: undefined }) | { error: string }> {
+  try {
+    await requireFullStockAccess();
+    const result = await moveWebsiteProduct(input);
+    revalidatePath("/stock");
+    revalidatePath("/sales");
+    revalidatePath("/marketing");
+    return result;
+  } catch (e) {
+    console.error("moveWebsiteProductAction failed", e);
+    return { error: e instanceof Error ? e.message : "Couldn't move the product" };
+  }
 }

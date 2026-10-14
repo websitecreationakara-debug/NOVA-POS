@@ -33,7 +33,7 @@ export default function InsightTabs({
           aria-pressed={active === t.view}
           className={`rounded-lg px-3.5 py-1.5 text-sm font-medium transition-colors ${
             active === t.view
-              ? "bg-card text-foreground shadow-sm"
+              ? "bg-brand text-white shadow-sm"
               : "text-muted-foreground hover:text-foreground"
           }`}
         >
