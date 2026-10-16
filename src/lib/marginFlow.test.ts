@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { summarizeMarginLines, type MarginLine } from "./cogs";
+import { latestSellingPrice, summarizeMarginLines, type MarginLine } from "./cogs";
 import { settledDayLabel } from "./orderStatus";
 
 const show = (title: string, rows: unknown) => console.log(`\n=== ${title} ===\n`, rows);
@@ -123,13 +123,49 @@ describe("Margin Report: a Stock-linked product's Unit Cost is only Total Cost 1
     expect(summarizeMarginLines(typed, 30, true).unitCost).toBe(30);
   });
 
-  it("shows no Unit Cost (not the recorded sale cost) when Total Cost 10% is empty", () => {
+  it("shows no Unit Cost and no COGS (not the recorded sale cost) when Total Cost 10% is empty", () => {
     const s = summarizeMarginLines(typed, null, true);
     expect(s.unitCost).toBeNull();
-    expect(s.totalCogs).toBe(5.04); // past sales keep their real cost
+    expect(s.totalCogs).toBeNull(); // no Unit Cost -> no COGS either
+  });
+
+  it("costs every sold line at Total Cost 10%, not the cost the sale was recorded at", () => {
+    const recorded: MarginLine[] = [
+      { quantity: 1, lineTotal: 37.5, cogs: 19.81, unitCost: 19.81, paidAt: "2026-10-01T03:00:00Z" },
+    ];
+    const s = summarizeMarginLines(recorded, 27.05, true);
+    expect(s.unitCost).toBe(27.05);
+    expect(s.soldAt).toEqual([]);
+    expect(s.totalCogs).toBe(27.05);
+    expect(s.grossProfit).toBe(10.45);
   });
 
   it("other products still fall back to the recorded cost", () => {
     expect(summarizeMarginLines(typed, null).unitCost).toBe(2.52);
+  });
+});
+
+describe("Margin Report: Selling Price is what it last sold at", () => {
+  const line = (paidAt: string, unitPrice: number | null, quantity = 1): MarginLine => ({
+    quantity,
+    lineTotal: (unitPrice ?? 9.71) * quantity,
+    cogs: null,
+    unitCost: null,
+    paidAt,
+    unitPrice,
+  });
+
+  it("keeps the old sale's price when the catalog price changed afterwards", () => {
+    expect(latestSellingPrice([line("2026-10-14T08:00:00Z", 9.71)])).toBe(9.71);
+  });
+
+  it("takes the newest sale's price once an order is made at a new price", () => {
+    const lines = [line("2026-10-14T08:00:00Z", 9.71), line("2026-10-16T02:00:00Z", 15), line("2026-10-15T02:00:00Z", 12)];
+    expect(latestSellingPrice(lines)).toBe(15);
+  });
+
+  it("falls back to line total / quantity without a unit price, and null without lines", () => {
+    expect(latestSellingPrice([line("2026-10-14T08:00:00Z", null, 2)])).toBe(9.71);
+    expect(latestSellingPrice([])).toBeNull();
   });
 });
