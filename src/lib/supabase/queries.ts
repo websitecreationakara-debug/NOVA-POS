@@ -10,7 +10,7 @@ import { STOCK_TRACKING_START } from "@/lib/stockTracking";
 import { COUNTED_FULFILLMENT_STATUSES } from "@/lib/orderStatus";
 import { orderForBrandShare } from "@/lib/orderBrandShare";
 import { ALL_PAYMENT_METHODS, type PaymentMethod } from "@/lib/paymentMethods";
-import { summarizeMarginLines, unitsSoldByCost, type MarginLine } from "@/lib/cogs";
+import { latestSellingPrice, summarizeMarginLines, unitsSoldByCost, type MarginLine } from "@/lib/cogs";
 import { productWeightGrams } from "@/lib/costControl";
 import { readAllPages } from "@/lib/supabase/readAllPages";
 import {
@@ -1620,6 +1620,7 @@ export async function getMarginReport(
       lines: {
         quantity: number | string;
         line_total: number | string;
+        unit_price?: number | string | null;
         cogs: number | string | null;
         unit_cost: number | string | null;
         paid_at: string | null;
@@ -1639,6 +1640,7 @@ export async function getMarginReport(
         r.lines.map((l) => ({
           quantity: Number(l.quantity),
           lineTotal: Number(l.line_total),
+          unitPrice: l.unit_price == null ? null : Number(l.unit_price),
           cogs: l.cogs === null ? null : Number(l.cogs),
           unitCost: l.unit_cost === null ? null : Number(l.unit_cost),
           paidAt: l.paid_at,
@@ -1655,6 +1657,7 @@ export async function getMarginReport(
       product_id: string;
       quantity: number;
       line_total: number;
+      unit_price: number | null;
       cogs: number | null;
       unit_cost: number | null;
       cost_source?: string | null;
@@ -1663,7 +1666,7 @@ export async function getMarginReport(
       let query = supabaseAdmin
         .from("order_items")
         .select(
-          "product_id, quantity, line_total, cogs, unit_cost, cost_source, products!inner(brand_id), orders!inner(status, list_at, paid_at)",
+          "product_id, quantity, line_total, unit_price, cogs, unit_cost, cost_source, products!inner(brand_id), orders!inner(status, list_at, paid_at)",
           { count: withCount ? "exact" : undefined }
         )
         .eq("orders.status", "paid")
@@ -1678,6 +1681,7 @@ export async function getMarginReport(
       lines.push({
         quantity: item.quantity,
         lineTotal: item.line_total,
+        unitPrice: item.unit_price === null ? null : Number(item.unit_price),
         cogs: item.cogs,
         unitCost: item.unit_cost,
         costOverridden: item.cost_source === "report",
@@ -1744,7 +1748,8 @@ export async function getMarginReport(
       categoryName: (product?.categories as { name: string } | null)?.name ?? null,
       ...summary,
       suggestedCost: null as number | null,
-      sellingPrice: product?.price ?? round2(summary.revenue / summary.unitsSold),
+      // What it last sold at in the range (older sales keep their price), not today's catalog price.
+      sellingPrice: latestSellingPrice(lines) ?? product?.price ?? round2(summary.revenue / summary.unitsSold),
     };
   });
 
@@ -1800,15 +1805,27 @@ export async function getProductMarginDetail(
   const { data: items, error } = await selectAll(query.order("id"));
   if (error) throw error;
 
+  const cost10Map = await getLinkedStockCost10pcts([productId]).catch(() => new Map<string, number | null>());
+  const linked = cost10Map.has(productId);
+  const cost10 = cost10Map.get(productId) ?? null;
+
   const sales = items
     .map((i) => ({
       orderId: i.order_id,
       paidAt: (i.orders as unknown as { list_at: string | null; paid_at: string | null } | null)?.list_at ?? (i.orders as unknown as { paid_at: string | null } | null)?.paid_at ?? null,
       quantity: Number(i.quantity),
       unitPrice: Number(i.unit_price),
-      unitCost: i.unit_cost === null ? (i.cogs === null ? null : round2(Number(i.cogs) / Number(i.quantity))) : Number(i.unit_cost),
+      // A linked product's sales are costed at its Total Cost 10%, or not at all (see summarizeMarginLines).
+      unitCost:
+        linked
+          ? cost10
+          : i.unit_cost === null
+            ? i.cogs === null
+              ? null
+              : round2(Number(i.cogs) / Number(i.quantity))
+            : Number(i.unit_cost),
       lineTotal: Number(i.line_total),
-      cogs: i.cogs === null ? null : Number(i.cogs),
+      cogs: linked ? (cost10 === null ? null : round2(cost10 * Number(i.quantity))) : i.cogs === null ? null : Number(i.cogs),
     }))
     .sort((a, b) => (b.paidAt ?? "").localeCompare(a.paidAt ?? ""));
 
@@ -1819,10 +1836,8 @@ export async function getProductMarginDetail(
     unitCost: s.unitCost,
     paidAt: s.paidAt,
   }));
-  const cost10Map = await getLinkedStockCost10pcts([productId]).catch(() => new Map<string, number | null>());
-  const linked = cost10Map.has(productId);
   const currentCost = linked
-    ? (cost10Map.get(productId) ?? null)
+    ? cost10
     : await getEffectiveProductCost(productId).catch(() => null);
   const summary = summarizeMarginLines(lines, currentCost, linked);
   const totalUnits = lines.reduce((s, l) => s + l.quantity, 0);
