@@ -1,9 +1,10 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse, after } from "next/server";
 import { revalidatePath } from "next/cache";
 import { supabaseAdmin } from "@/lib/supabase/server";
 import type { ProductSiteLink } from "@/types/database";
 import { ALL_PAYMENT_METHODS, type PaymentMethod } from "@/lib/paymentMethods";
 import { ppDay } from "@/lib/phnomPenhTime";
+import { sendPurchaseEvent } from "@/lib/metaConversions";
 
 const VALID_SITES: ProductSiteLink["site"][] = [
   "bosba-premium-foods",
@@ -261,6 +262,10 @@ export async function POST(request: NextRequest) {
   // them -- same gap as order-status-sync's cancel/un-cancel path.
   revalidatePath(`/invoice/${orderId}`);
   revalidatePath(`/orders/${orderId}`);
+
+  // Best effort, scheduled to run after the response is sent so this
+  // storefront's checkout isn't held up waiting on Meta's API.
+  after(() => sendPurchaseEvent(orderId));
   revalidatePath("/orders");
   revalidatePath("/stock");
   revalidatePath("/sales");

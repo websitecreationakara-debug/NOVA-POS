@@ -1,8 +1,10 @@
 "use server";
 
+import { after } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase/server";
 import { getSessionUser } from "@/lib/supabase/auth-server";
 import { pushStockToSites } from "@/lib/site-sync";
+import { sendPurchaseEvent } from "@/lib/metaConversions";
 import type { OrderSource, PaymentMethod } from "@/types/database";
 import { ppToday } from "@/lib/phnomPenhTime";
 import {
@@ -403,6 +405,11 @@ export async function chargeOrder(input: {
       `Stock wasn't synced to ${[...new Set(syncFailures.map((f) => f.label))].join(", ")} -- update it there manually.`
     );
   }
+
+  // Best effort, scheduled to run after the response is sent (see after()'s
+  // doc) so this sale isn't held up waiting on Meta's API -- a Meta outage
+  // must never fail or slow down a sale that's already been taken.
+  after(() => sendPurchaseEvent(orderId));
 
   return {
     orderId,
