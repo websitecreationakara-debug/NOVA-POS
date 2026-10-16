@@ -691,8 +691,15 @@ export async function getDashboardStats(
   const uncosted = await sumCogsWithFallback(
     stats.uncosted_lines.map((l) => ({ product_id: l.product_id, quantity: Number(l.quantity), cogs: null }))
   );
-  const totalCogs = round2(Number(stats.known_cogs) + uncosted.totalCogs);
-  const hasUnknownCost = uncosted.hasUnknownCost;
+  let totalCogs = round2(Number(stats.known_cogs) + uncosted.totalCogs);
+  let hasUnknownCost = uncosted.hasUnknownCost;
+  // Total COGS is the Margin Report's: the sum of the products that have a Total
+  // COGS there (a product with no cost price adds nothing), so the two match.
+  const marginRows = await getMarginReport(brandId, fromDate, toDate).catch(() => null);
+  if (marginRows) {
+    totalCogs = round2(marginRows.reduce((sum, r) => sum + (r.totalCogs ?? 0), 0));
+    hasUnknownCost = marginRows.some((r) => r.totalCogs === null);
+  }
   const topProducts = stats.top_products.map((p) => ({
     name: p.name ?? "—",
     quantity: Number(p.quantity),
