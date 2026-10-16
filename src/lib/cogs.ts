@@ -78,7 +78,21 @@ export type MarginLine = {
   paidAt: string | null;
   // The cost on this line was typed into the Margin Report (cost_source "report").
   costOverridden?: boolean;
+  // The price per unit this line was sold at (older reads only have lineTotal).
+  unitPrice?: number | null;
 };
+
+// The price the product was last sold at in these lines (by sale time): that
+// line's unit price, or its line total / quantity. Null with no priced line.
+export function latestSellingPrice(lines: MarginLine[]): number | null {
+  let latest: { paidAt: string; price: number } | null = null;
+  for (const l of lines) {
+    const price = l.unitPrice ?? (l.quantity ? l.lineTotal / l.quantity : null);
+    if (price === null || !l.paidAt) continue;
+    if (!latest || l.paidAt > latest.paidAt) latest = { paidAt: l.paidAt, price };
+  }
+  return latest === null ? null : round2(latest.price);
+}
 
 // Units sold at each recorded per-unit cost, newest cost first (by the sale
 // time of its most recent line). Lines with no cost or no sale time are skipped.
@@ -100,8 +114,18 @@ export function unitsSoldByCost(lines: MarginLine[]): { unitCost: number; units:
 // `currentOnly` makes Unit Cost exactly currentCost (null when there is none): no
 // typed-cost override and no fallback to what the sales were recorded at. The
 // Margin Report passes it for a product linked to a Stock listing, whose Unit Cost
-// is Stock's Total Cost 10% and nothing else.
+// is Stock's Total Cost 10% and nothing else -- so when that cost exists, every
+// sold line is costed at it too (a sale recorded at Stock's Total no longer shows
+// "sold at" a different cost); with none, there is no Unit Cost and no COGS either
+// (the recorded sale costs are not shown), so the row reads "Add cost price".
 export function summarizeMarginLines(lines: MarginLine[], currentCost: number | null = null, currentOnly = false) {
+  if (currentOnly) {
+    lines = lines.map((l) => ({
+      ...l,
+      unitCost: currentCost,
+      cogs: currentCost === null ? null : round2(currentCost * l.quantity),
+    }));
+  }
   const unitsSold = lines.reduce((s, l) => s + l.quantity, 0);
   const revenue = lines.reduce((s, l) => s + l.lineTotal, 0);
   const { totalCogs, hasUnknownCost } = aggregateStrictCogs(lines.map((l) => l.cogs));
