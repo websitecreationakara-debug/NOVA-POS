@@ -954,14 +954,14 @@ export default function AccountanceClient({
       return;
     }
     if (price !== undefined && (Number.isNaN(price) || price < 0)) {
-      setError("Selling price cannot be negative");
+      setError("List price cannot be negative");
       return;
     }
     setError(null);
 
     // A blank cost is ignored: a report-only override has no "clear" meaning.
     const costChanged = costPrice !== undefined && costPrice !== null && costPrice !== r.unitCost;
-    const priceChanged = price !== undefined && price !== r.sellingPrice;
+    const priceChanged = price !== undefined && price !== r.listPrice;
     if (!costChanged && !priceChanged) {
       cancelMarginEdit(r.productId);
       return;
@@ -2028,7 +2028,7 @@ export default function AccountanceClient({
                       <th className="py-2 pr-3 text-right font-medium">Units Sold</th>
                       <th className="py-2 pr-3 text-right font-medium">Revenue</th>
                       <th className="py-2 pr-3 text-right font-medium">Unit Cost</th>
-                      <th className="py-2 pr-3 text-right font-medium">Selling Price</th>
+                      <th className="py-2 pr-3 text-right font-medium" title="What this product actually sold for on average in this range -- what Gross Profit/Margin are computed from">Avg Sale Price</th>
                       <th className="py-2 pr-3 text-right font-medium">Total COGS</th>
                       <th className="py-2 pr-3 text-right font-medium">Gross Profit</th>
                       <th className="py-2 text-right font-medium">Gross Margin %</th>
@@ -2044,7 +2044,7 @@ export default function AccountanceClient({
                           : r.suggestedCost !== null
                             ? String(r.suggestedCost)
                             : "");
-                      const priceValue = marginPriceDrafts[r.productId] ?? String(r.sellingPrice);
+                      const priceValue = marginPriceDrafts[r.productId] ?? String(r.listPrice ?? "");
                       // No recorded sale-time cost for this row -- fall back to the
                       // product's current Stock cost (same value Stock's Total shows)
                       // so the row reads as real numbers instead of "No cost price".
@@ -2243,13 +2243,20 @@ export default function AccountanceClient({
                               )}
                             </td>
                             <td className="py-2 pr-3 text-right">
-                              <button
-                                type="button"
-                                onClick={() => startMarginEdit(r.productId)}
-                                className="rounded px-1 py-0.5 hover:bg-black/[.05] dark:hover:bg-white/[.08]"
-                              >
+                              <span title="What this product actually sold for on average in this range -- what Gross Profit/Margin are computed from">
                                 {formatMoney(r.sellingPrice)}
-                              </button>
+                              </span>
+                              <div className="text-xs text-zinc-500">
+                                <button
+                                  type="button"
+                                  title="Current list price for future sales -- click to edit"
+                                  onClick={() => startMarginEdit(r.productId)}
+                                  className="inline-flex items-center gap-1 rounded px-1 hover:bg-black/[.05] hover:text-foreground dark:hover:bg-white/[.08]"
+                                >
+                                  list {r.listPrice === null ? "—" : formatMoney(r.listPrice)}
+                                  <Pencil className="size-3" />
+                                </button>
+                              </div>
                             </td>
                           </>
                         )}

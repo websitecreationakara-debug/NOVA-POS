@@ -1575,10 +1575,16 @@ export type MarginReportRow = {
   // Cost Control's Sets use, so filling this in matches Stock instead of
   // requiring the number be looked up and retyped by hand.
   suggestedCost: number | null;
-  // The product's current stored price, not an average of what it actually
-  // sold for over the range -- editing this here updates that same stored
-  // value, so it stays put until changed again.
+  // What this product actually sold for on average over the range
+  // (revenue / unitsSold) -- this is what Gross Profit/Margin are computed
+  // from, so it always reconciles with those two columns.
   sellingPrice: number;
+  // The product's current stored list price, shown/edited separately from
+  // sellingPrice since it's forward-looking (applies to future sales) and
+  // can differ from what units in this range actually sold for (discounts,
+  // price changes since the sale). Editing it updates that same stored
+  // value, so it stays put until changed again.
+  listPrice: number | null;
   totalCogs: number | null;
   grossProfit: number | null;
   grossMarginPct: number | null;
@@ -1744,7 +1750,8 @@ export async function getMarginReport(
       categoryName: (product?.categories as { name: string } | null)?.name ?? null,
       ...summary,
       suggestedCost: null as number | null,
-      sellingPrice: product?.price ?? round2(summary.revenue / summary.unitsSold),
+      sellingPrice: round2(summary.revenue / summary.unitsSold),
+      listPrice: product?.price ?? null,
     };
   });
 
