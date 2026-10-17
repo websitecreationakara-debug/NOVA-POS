@@ -10,7 +10,7 @@ import { STOCK_TRACKING_START } from "@/lib/stockTracking";
 import { COUNTED_FULFILLMENT_STATUSES } from "@/lib/orderStatus";
 import { orderForBrandShare } from "@/lib/orderBrandShare";
 import { ALL_PAYMENT_METHODS, type PaymentMethod } from "@/lib/paymentMethods";
-import { latestSellingPrice, summarizeMarginLines, unitsSoldByCost, type MarginLine } from "@/lib/cogs";
+import { summarizeMarginLines, unitsSoldByCost, type MarginLine } from "@/lib/cogs";
 import { productWeightGrams } from "@/lib/costControl";
 import { readAllPages } from "@/lib/supabase/readAllPages";
 import {
@@ -1582,16 +1582,9 @@ export type MarginReportRow = {
   // Cost Control's Sets use, so filling this in matches Stock instead of
   // requiring the number be looked up and retyped by hand.
   suggestedCost: number | null;
-  // What this product actually sold for on average over the range
-  // (revenue / unitsSold) -- this is what Gross Profit/Margin are computed
-  // from, so it always reconciles with those two columns.
+  // The product's current stored selling price -- not what it sold for in the
+  // range. Editing it here updates that same stored value.
   sellingPrice: number;
-  // The product's current stored list price, shown/edited separately from
-  // sellingPrice since it's forward-looking (applies to future sales) and
-  // can differ from what units in this range actually sold for (discounts,
-  // price changes since the sale). Editing it updates that same stored
-  // value, so it stays put until changed again.
-  listPrice: number | null;
   totalCogs: number | null;
   grossProfit: number | null;
   grossMarginPct: number | null;
@@ -1761,9 +1754,7 @@ export async function getMarginReport(
       categoryName: (product?.categories as { name: string } | null)?.name ?? null,
       ...summary,
       suggestedCost: null as number | null,
-      // What it last sold at in the range (older sales keep their price), not today's catalog price.
-      sellingPrice: latestSellingPrice(lines) ?? product?.price ?? round2(summary.revenue / summary.unitsSold),
-      listPrice: product?.price ?? null,
+      sellingPrice: product?.price ?? round2(summary.revenue / summary.unitsSold),
     };
   });
 

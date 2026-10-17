@@ -5,11 +5,12 @@ import { useRouter } from "next/navigation";
 import { X } from "lucide-react";
 import { setProductCostAction, setProductPriceAction } from "@/app/(app)/stock/actions";
 import type { MarginReportRow } from "@/lib/supabase/queries";
+import { withoutBareNumberSuffix } from "@/lib/weight";
 
 // One screen listing only the products missing a cost price, each a single
 // row of two inputs -- lets someone tab straight down the Unit Cost column
 // and fill every row in one sitting instead of opening 12 rows one at a time
-// in the table. List Price is prefilled from the product's current price
+// in the table. Selling Price is prefilled from the product's current price
 // (Enter, not required to be edited) so it's there to tweak without an extra
 // trip back to the table.
 export default function BulkAddCostPriceModal({
@@ -29,7 +30,7 @@ export default function BulkAddCostPriceModal({
     )
   );
   const [priceDrafts, setPriceDrafts] = useState<Record<string, string>>(() =>
-    Object.fromEntries(rows.map((r) => [r.productId, String(r.listPrice ?? "")]))
+    Object.fromEntries(rows.map((r) => [r.productId, String(r.sellingPrice)]))
   );
   const firstInputRef = useRef<HTMLInputElement>(null);
 
@@ -62,13 +63,12 @@ export default function BulkAddCostPriceModal({
         const costPrice = parseFloat(rawCost);
         if (Number.isNaN(costPrice) || costPrice < 0) return null;
         const rawPrice = priceDrafts[r.productId];
-        const parsedPrice = rawPrice === undefined ? NaN : parseFloat(rawPrice);
-        const price = Number.isNaN(parsedPrice) || parsedPrice < 0 ? r.listPrice : parsedPrice;
+        const price = rawPrice === undefined ? r.sellingPrice : parseFloat(rawPrice);
         return {
           productId: r.productId,
           costPrice,
-          price,
-          priceChanged: price !== null && price !== r.listPrice,
+          price: Number.isNaN(price) || price < 0 ? r.sellingPrice : price,
+          priceChanged: price !== r.sellingPrice,
         };
       })
       .filter((v): v is NonNullable<typeof v> => v !== null);
@@ -84,9 +84,7 @@ export default function BulkAddCostPriceModal({
         await Promise.all(
           toSave.flatMap((r) => [
             setProductCostAction({ productId: r.productId, costPrice: r.costPrice }),
-            ...(r.priceChanged && r.price !== null
-              ? [setProductPriceAction({ productId: r.productId, price: r.price })]
-              : []),
+            ...(r.priceChanged ? [setProductPriceAction({ productId: r.productId, price: r.price })] : []),
           ])
         );
         router.refresh();
@@ -140,11 +138,11 @@ export default function BulkAddCostPriceModal({
           <div className="grid grid-cols-[1fr_7rem_7rem] items-center gap-x-3 gap-y-2">
             <div className="text-xs font-medium text-zinc-500">Product</div>
             <div className="text-xs font-medium text-zinc-500">Unit cost</div>
-            <div className="text-xs font-medium text-zinc-500">List price</div>
+            <div className="text-xs font-medium text-zinc-500">Selling price</div>
             {rows.map((r, i) => (
               <Fragment key={r.productId}>
                 <div className="truncate py-1 text-sm">
-                  {r.name}
+                  {withoutBareNumberSuffix(r.name)}
                 </div>
                 <div className="flex items-center gap-1">
                   <span className="text-zinc-400">$</span>
@@ -168,7 +166,7 @@ export default function BulkAddCostPriceModal({
                     type="number"
                     min={0}
                     step="0.01"
-                    value={priceDrafts[r.productId] ?? String(r.listPrice ?? "")}
+                    value={priceDrafts[r.productId] ?? String(r.sellingPrice)}
                     onChange={(e) => setPriceDrafts((prev) => ({ ...prev, [r.productId]: e.target.value }))}
                     onKeyDown={(e) => {
                       if (e.key === "Enter") saveAll();

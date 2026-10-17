@@ -16,6 +16,13 @@ export function parseGrams(text: string): number | null {
   return grams > 0 ? grams : null;
 }
 
+// "Baked Sweet Potato (5)" -> "Baked Sweet Potato": drops a trailing bare number in
+// brackets, which has no scale (g, kg, ...) so it says nothing useful when shown.
+// "(500g)" and other brackets are kept.
+export function withoutBareNumberSuffix(name: string): string {
+  return name.replace(/\s*\(\s*\d+(?:\.\d+)?\s*\)\s*$/, "") || name;
+}
+
 // The weight to print after a product's Khmer name. The English name carries
 // its weight ("Salmon Roe Ikura (100g)", "Whole Salmon 1kg") or the website
 // listing does ("1pc (125g)"); the Khmer name usually has neither, so it would
