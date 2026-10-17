@@ -114,28 +114,37 @@ describe("Orders list: day a Pre-Order was finished", () => {
   });
 });
 
-describe("Margin Report: a Stock-linked product's Unit Cost is only Total Cost 10%", () => {
+describe("Margin Report: a Stock-linked product's sales keep their recorded cost", () => {
   const typed: MarginLine[] = [
     { quantity: 2, lineTotal: 80, cogs: 5.04, unitCost: 2.52, paidAt: "2026-10-01T03:00:00Z", costOverridden: true },
   ];
 
-  it("shows Total Cost 10% even over a cost typed into the report", () => {
-    expect(summarizeMarginLines(typed, 30, true).unitCost).toBe(30);
+  it("keeps a cost typed into the report instead of Total Cost 10% (the edit never touches Stock)", () => {
+    const s = summarizeMarginLines(typed, 30, true);
+    expect(s.unitCost).toBe(2.52);
+    expect(s.totalCogs).toBe(5.04);
   });
 
-  it("shows no Unit Cost and no COGS (not the recorded sale cost) when Total Cost 10% is empty", () => {
-    const s = summarizeMarginLines(typed, null, true);
-    expect(s.unitCost).toBeNull();
-    expect(s.totalCogs).toBeNull(); // no Unit Cost -> no COGS either
-  });
-
-  it("costs every sold line at Total Cost 10%, not the cost the sale was recorded at", () => {
-    const recorded: MarginLine[] = [
-      { quantity: 1, lineTotal: 37.5, cogs: 19.81, unitCost: 19.81, paidAt: "2026-10-01T03:00:00Z" },
+  it("keeps each sale's recorded cost when Total Cost 10% changed later (old sale stays at its cost)", () => {
+    const sales: MarginLine[] = [
+      { quantity: 2, lineTotal: 2, cogs: 7, unitCost: 3.5, paidAt: "2026-10-17T05:34:59Z" },
+      { quantity: 2, lineTotal: 4, cogs: 9, unitCost: 4.5, paidAt: "2026-10-17T05:35:49Z" },
     ];
-    const s = summarizeMarginLines(recorded, 27.05, true);
+    const s = summarizeMarginLines(sales, 4, true);
+    expect(s.unitCost).toBe(4); // the current Total Cost 10%
+    expect(s.totalCogs).toBe(16);
+    expect(s.soldAt).toEqual([
+      { unitCost: 4.5, units: 2 },
+      { unitCost: 3.5, units: 2 },
+    ]);
+  });
+
+  it("costs a sold line that has no recorded cost at Total Cost 10%", () => {
+    const none: MarginLine[] = [
+      { quantity: 1, lineTotal: 37.5, cogs: null, unitCost: null, paidAt: "2026-10-01T03:00:00Z" },
+    ];
+    const s = summarizeMarginLines(none, 27.05, true);
     expect(s.unitCost).toBe(27.05);
-    expect(s.soldAt).toEqual([]);
     expect(s.totalCogs).toBe(27.05);
     expect(s.grossProfit).toBe(10.45);
   });
