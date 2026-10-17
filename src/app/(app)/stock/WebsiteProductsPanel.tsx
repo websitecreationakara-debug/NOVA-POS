@@ -1634,7 +1634,10 @@ export default function WebsiteProductsPanel({
                 const stockValue =
                   drafts[editId]?.stock ?? (currentStock === null ? "" : String(currentStock));
                 const imageUrl = v?.image_url ?? p.image_url;
-                const weight = v?.weight ?? p.weight;
+                // A weight that's only a bare number ("5", "10", "750") has no scale, so it's
+                // not shown next to the name.
+                const rawWeight = (v?.weight ?? p.weight)?.trim();
+                const weight = rawWeight && /^\d+(?:\.\d+)?$/.test(rawWeight) ? undefined : rawWeight;
                 // A size's own price/stock is POS's tracked value for it (see
                 // patchVariationPrice/Stock) -- separate from, and never
                 // written back to, the website's own listing for this size.
