@@ -207,7 +207,7 @@ export default function SalesClient({
   const [categoriesExpanded, setCategoriesExpanded] = useState(false);
   const [cart, setCart] = useState<CartLine[]>(() => editOrder?.lines ?? []);
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>(editOrder?.paymentMethod ?? "khqr");
-  const [orderSource, setOrderSource] = useState<OrderSource>(editOrder?.orderSource ?? "telegram");
+  const [orderSource, setOrderSource] = useState<OrderSource>(editOrder?.orderSource ?? "meta");
   const [paymentReference, setPaymentReference] = useState("");
   const [note, setNote] = useState(() => editOrder?.note ?? "");
   const [customerName, setCustomerName] = useState(() => editOrder?.customerName ?? "");
@@ -908,7 +908,7 @@ export default function SalesClient({
         setCart([]);
         setPaymentReference("");
         setNote("");
-        setOrderSource("telegram");
+        setOrderSource("meta");
         setCustomerName("");
         setCustomerPhone("");
         setCustomerAddress("");
