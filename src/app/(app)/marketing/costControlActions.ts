@@ -157,6 +157,9 @@ export type SetItemDetail = {
   // the possibly stale/rescaled unit_cost below) -- the reference
   // computeUnitCostForScale rescales from when Scale changes.
   baseCostPerUnit: number | null;
+  // The pack weight baseCostPerUnit is for, when it's another weight of the same
+  // product in Stock (a 50g line priced from Stock's 100g); null otherwise.
+  baseWeightGrams: number | null;
   // True when baseCostPerUnit comes from Stock: the line's price then follows
   // Stock and isn't hand-editable here.
   priceFromStock: boolean;
@@ -236,7 +239,8 @@ async function loadSet(setId: string): Promise<{ detail: SetDetail; staleProduct
         const { base, fromStock } = pricings[idx];
         if (!fromStock || base === null) return [];
         const weight = isWeightScale(i.unit)
-          ? productWeightGrams(i.products?.unit ?? "", i.products?.name ?? "", i.products?.weight_grams)
+          ? (pricings[idx].weightGrams ??
+            productWeightGrams(i.products?.unit ?? "", i.products?.name ?? "", i.products?.weight_grams))
           : null;
         if (isWeightScale(i.unit) && weight === null) return [];
         const expected = computeUnitCostForScale(base, weight, i.unit);
@@ -254,6 +258,7 @@ async function loadSet(setId: string): Promise<{ detail: SetDetail; staleProduct
     productUnit: i.products?.unit ?? "",
     productWeightGrams: i.products?.weight_grams ?? null,
     baseCostPerUnit: pricings[idx].base,
+    baseWeightGrams: pricings[idx].weightGrams ?? null,
     priceFromStock: pricings[idx].fromStock,
     cost10pct: pricings[idx].cost10,
     amount: i.amount,
