@@ -1800,7 +1800,7 @@ export async function getProductMarginDetail(
 
   let query = supabaseAdmin
     .from("order_items")
-    .select("order_id, quantity, unit_price, line_total, cogs, unit_cost, products!inner(brand_id), orders!inner(status, list_at, paid_at)")
+    .select("order_id, quantity, unit_price, line_total, cogs, unit_cost, cost_source, products!inner(brand_id), orders!inner(status, list_at, paid_at)")
     .eq("product_id", productId)
     .eq("orders.status", "paid")
     .in("orders.fulfillment_status", COUNTED_FULFILLMENT_STATUSES)
@@ -1816,21 +1816,28 @@ export async function getProductMarginDetail(
 
   const sales = items
     .map((i) => ({
+      costOverridden: i.cost_source === "report",
       orderId: i.order_id,
       paidAt: (i.orders as unknown as { list_at: string | null; paid_at: string | null } | null)?.list_at ?? (i.orders as unknown as { paid_at: string | null } | null)?.paid_at ?? null,
       quantity: Number(i.quantity),
       unitPrice: Number(i.unit_price),
-      // A linked product's sales are costed at its Total Cost 10%, or not at all (see summarizeMarginLines).
+      // Each sale keeps the cost it was recorded at; a linked product's sale with none is
+      // costed at its Total Cost 10% (see summarizeMarginLines).
       unitCost:
-        linked
-          ? cost10
-          : i.unit_cost === null
-            ? i.cogs === null
-              ? null
-              : round2(Number(i.cogs) / Number(i.quantity))
-            : Number(i.unit_cost),
+        i.unit_cost === null
+          ? i.cogs === null
+            ? linked
+              ? cost10
+              : null
+            : round2(Number(i.cogs) / Number(i.quantity))
+          : Number(i.unit_cost),
       lineTotal: Number(i.line_total),
-      cogs: linked ? (cost10 === null ? null : round2(cost10 * Number(i.quantity))) : i.cogs === null ? null : Number(i.cogs),
+      cogs:
+        i.cogs === null
+          ? linked && i.unit_cost === null && cost10 !== null
+            ? round2(cost10 * Number(i.quantity))
+            : null
+          : Number(i.cogs),
     }))
     .sort((a, b) => (b.paidAt ?? "").localeCompare(a.paidAt ?? ""));
 
@@ -1840,6 +1847,7 @@ export async function getProductMarginDetail(
     cogs: s.cogs,
     unitCost: s.unitCost,
     paidAt: s.paidAt,
+    costOverridden: s.costOverridden,
   }));
   const currentCost = linked
     ? cost10
