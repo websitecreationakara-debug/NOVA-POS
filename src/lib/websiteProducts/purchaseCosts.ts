@@ -5,6 +5,7 @@ import {
   computeUnitCostForScale,
   productWeightGrams,
 } from "@/lib/costControl";
+import { parseGrams } from "@/lib/weight";
 import { catalogForBrandSlug } from "./catalogs";
 import { getWebsiteProduct } from "./client";
 import type { ProductSiteLink } from "@/types/database";
@@ -300,7 +301,7 @@ export async function getLinkedStockCost10pcts(productIds: string[]): Promise<Ma
 // Stock.
 export async function getSetItemPricing(
   productId: string
-): Promise<{ base: number | null; fromStock: boolean; cost10: number | null }> {
+): Promise<{ base: number | null; fromStock: boolean; cost10: number | null; weightGrams?: number | null }> {
   const { data: product } = await supabaseAdmin
     .from("products")
     .select("cost_price")
@@ -314,8 +315,18 @@ export async function getSetItemPricing(
     .eq("product_id", productId)
     .limit(1)
     .maybeSingle();
-  if (!link) return { base: product.cost_price, fromStock: false, cost10: null };
+  if (!link) {
+    const sibling = await getWeightSiblingPricing(productId);
+    if (sibling) return { ...sibling, fromStock: true };
+    return { base: product.cost_price, fromStock: false, cost10: null };
+  }
+  return pricingForLink(link, product.cost_price);
+}
 
+async function pricingForLink(
+  link: { site: ProductSiteLink["site"]; site_product_id: string; variation_id: string },
+  costPrice: number | null
+): Promise<{ base: number | null; fromStock: boolean; cost10: number | null }> {
   const { data: costRow } = await supabaseAdmin
     .from("website_product_purchase_costs")
     .select("original_cost, total_cost_10pct, extra_money, total_override")
@@ -329,7 +340,105 @@ export async function getSetItemPricing(
     extraMoney: costRow?.extra_money ?? null,
     totalOverride: costRow?.total_override ?? null,
   });
-  return { base: total ?? product.cost_price, fromStock: true, cost10: costRow?.total_cost_10pct ?? null };
+  return { base: total ?? costPrice, fromStock: true, cost10: costRow?.total_cost_10pct ?? null };
+}
+
+// "Salmon Roe Ikura (50g)" and "Salmon Roe Ikura (100g)" -> "salmon roe ikura":
+// the name without its weight, to tell same-name products of different sizes apart.
+function nameWithoutWeight(name: string): string {
+  return name
+    .replace(/\(?\s*\d+(?:\.\d+)?\s*(?:kg|g)\b\s*\)?/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+}
+
+type SiteLinkRef = { site: ProductSiteLink["site"]; site_product_id: string; variation_id: string };
+type SameNameRow = {
+  id: string;
+  name: string;
+  weight_grams: number | null;
+  cost_price: number | null;
+  product_site_links: SiteLinkRef[] | SiteLinkRef | null;
+};
+
+// Same-brand products whose name matches `name` apart from the weight, each with
+// the weight read from its name (products without one in the name are left out).
+async function sameNameDifferentWeight(
+  productId: string,
+  brandId: string,
+  name: string
+): Promise<{ row: SameNameRow; grams: number; link: SiteLinkRef | null }[]> {
+  const base = nameWithoutWeight(name);
+  const firstWord = base.split(" ")[0];
+  if (!firstWord) return [];
+  const { data } = await supabaseAdmin
+    .from("products")
+    .select("id, name, weight_grams, cost_price, product_site_links(site, site_product_id, variation_id)")
+    .eq("brand_id", brandId)
+    .eq("is_active", true)
+    .neq("id", productId)
+    .ilike("name", `%${firstWord.replace(/[\\%_]/g, "\\$&")}%`);
+  const out: { row: SameNameRow; grams: number; link: SiteLinkRef | null }[] = [];
+  for (const row of (data ?? []) as unknown as SameNameRow[]) {
+    if (nameWithoutWeight(row.name) !== base) continue;
+    const grams = parseGrams(row.name) ?? (row.weight_grams && row.weight_grams > 0 ? row.weight_grams : null);
+    if (grams === null) continue;
+    const links = Array.isArray(row.product_site_links)
+      ? row.product_site_links
+      : row.product_site_links
+        ? [row.product_site_links]
+        : [];
+    out.push({ row, grams, link: links[0] ?? null });
+  }
+  return out;
+}
+
+// A Set product that has no Stock listing of its own but whose name (apart from
+// the weight) matches one that does -- "Salmon Roe Ikura (50g)" next to Stock's
+// "Salmon Roe Ikura (100g)" -- is priced from that Stock product (the smallest size
+// when Stock has more than one weight): its Total and Total Cost 10% come back as
+// they are for that pack, with its `weightGrams`, so a g/kg line is that pack's
+// price per gram. null when the product has no weight in its name or no such Stock
+// product.
+async function getWeightSiblingPricing(
+  productId: string
+): Promise<{ base: number; cost10: number | null; weightGrams: number } | null> {
+  const { data: product } = await supabaseAdmin
+    .from("products")
+    .select("name, brand_id, weight_grams")
+    .eq("id", productId)
+    .maybeSingle();
+  if (!product) return null;
+  // The weight in the name, else the product's own Stock weight (so the name can be plain).
+  const ownGrams = parseGrams(product.name) ?? (product.weight_grams && product.weight_grams > 0 ? product.weight_grams : null);
+  if (ownGrams === null) return null;
+
+  const siblings = (await sameNameDifferentWeight(productId, product.brand_id, product.name))
+    .filter((s) => s.link !== null)
+    .sort((a, b) => a.grams - b.grams);
+  for (const s of siblings) {
+    const priced = await pricingForLink(s.link as SiteLinkRef, s.row.cost_price);
+    if (priced.base === null) continue;
+    return { base: priced.base, cost10: priced.cost10, weightGrams: s.grams };
+  }
+  return null;
+}
+
+// Products with no Stock listing that are priced from this one by name + weight
+// (see getWeightSiblingPricing), so a change to this product's price reaches them.
+async function findWeightDependents(productId: string): Promise<string[]> {
+  const { data: product } = await supabaseAdmin
+    .from("products")
+    .select("name, brand_id, product_site_links(id)")
+    .eq("id", productId)
+    .maybeSingle();
+  if (!product) return [];
+  const links = product.product_site_links as unknown as unknown[] | null;
+  if (!Array.isArray(links) || links.length === 0) return [];
+  return (await sameNameDifferentWeight(productId, product.brand_id, product.name))
+    .filter((s) => s.link === null)
+    .map((s) => s.row.id);
 }
 
 // Pushes a product's current Set price (see getSetItemPricing) into every Set
@@ -345,16 +454,25 @@ export async function getSetItemPricing(
 // would multiply the line's cost by the pack weight. A g/kg line whose pack
 // weight can't be worked out is left as it was rather than blanked.
 export async function syncSetItemCostsForProduct(productId: string): Promise<void> {
-  const baseCost = await getSetItemPricing(productId)
-    .then((p) => p.base)
-    .catch(() => null);
+  await syncLinesForProduct(productId);
+  // Same-name products of another weight with no Stock listing of their own take
+  // their price from this one, so their lines follow it too.
+  const dependents = await findWeightDependents(productId).catch(() => [] as string[]);
+  await Promise.all(dependents.map((id) => syncLinesForProduct(id).catch(() => undefined)));
+}
+
+async function syncLinesForProduct(productId: string): Promise<void> {
+  const pricing = await getSetItemPricing(productId).catch(() => null);
+  const baseCost = pricing?.base ?? null;
 
   const { data: lines } = await supabaseAdmin.from("set_items").select("id, unit").eq("product_id", productId);
   if (!lines || lines.length === 0) return;
 
   const isWeightScale = (unit: string) => ["kg", "g"].includes(unit.trim().toLowerCase());
   const weightGrams =
-    baseCost !== null && lines.some((l) => isWeightScale(l.unit)) ? await resolveProductWeightGrams(productId) : null;
+    baseCost !== null && lines.some((l) => isWeightScale(l.unit))
+      ? (pricing?.weightGrams ?? (await resolveProductWeightGrams(productId)))
+      : null;
 
   const idsByCost = new Map<number | null, string[]>();
   for (const line of lines) {

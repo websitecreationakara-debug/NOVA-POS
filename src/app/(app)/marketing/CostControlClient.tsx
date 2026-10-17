@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { ChevronDown, ChevronLeft, ChevronRight, Copy, Pencil, Plus, Trash2 } from "lucide-react";
+import { ChevronDown, ChevronLeft, ChevronRight, Copy, ImageOff, Pencil, Plus, Trash2, X } from "lucide-react";
 import type { Brand, SetStatus } from "@/types/database";
 import type { StockPickerItem } from "@/lib/supabase/queries";
 import {
@@ -124,6 +124,18 @@ function baseProductName(name: string): string {
     .replace(/\b\d+(?:\.\d+)?\s*(?:kg|g|ml|pcs?)\b/g, " ")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+// A set line's name for display, without the weight ("Salmon Roe Ikura (50g)" and
+// "Sushi Rice 100g" -> "Salmon Roe Ikura", "Sushi Rice") -- the line's own Amount
+// pill shows how much is used. Display only: the product keeps its full name.
+function displayProductName(name: string): string {
+  const stripped = name
+    .replace(/\s*\(\s*\d+(?:\.\d+)?\s*(?:kg|g)\s*\)/gi, "")
+    .replace(/\s*\b\d+(?:\.\d+)?\s*(?:kg|g)\b/gi, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  return stripped || name;
 }
 
 const PAGE_SIZE_OPTIONS = [10, 25, 50];
@@ -797,6 +809,7 @@ function SetEditor({
   }
 
   function lineWeightGrams(item: SetItemDetail): number | null {
+    if (item.baseWeightGrams !== null) return item.baseWeightGrams;
     const fromPicker = pickerWeightByProduct.get(item.productId);
     if (fromPicker !== undefined && fromPicker !== null) return fromPicker;
     return productWeightGrams(item.productUnit, item.productName, item.productWeightGrams);
@@ -1040,6 +1053,29 @@ function SetEditor({
 
   const itemsDirty = Object.keys(itemDrafts).length > 0;
 
+  // Click a line's picture to see it full size (same popup as Stock > Website Products).
+  const [previewImage, setPreviewImage] = useState<{ url: string; title: string } | null>(null);
+  useEffect(() => {
+    if (!previewImage) return;
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && setPreviewImage(null);
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [previewImage]);
+
+  // "/" jumps to the product search from anywhere on the page (not while typing in a field).
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (e.key !== "/" || e.ctrlKey || e.metaKey || e.altKey) return;
+      const t = e.target as HTMLElement | null;
+      if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT" || t.isContentEditable)) return;
+      e.preventDefault();
+      searchInputRef.current?.focus();
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
   // Total Cost also recomputes live from the boxes, not just from what's
   // saved -- same reasoning as liveLineTotal per row above.
   const liveTotalCost = computeSetTotalCost(
@@ -1077,6 +1113,17 @@ function SetEditor({
   function saveItems() {
     setError(null);
     const entries = Object.entries(itemDrafts);
+    for (const [itemId, draft] of entries) {
+      const name = set.items.find((i) => i.id === itemId)?.productName ?? "An item";
+      if (draft.amount !== undefined && !(parseFloat(draft.amount) > 0)) {
+        setError(`${name}: Amount must be a number greater than zero.`);
+        return;
+      }
+      if (draft.unitCost !== undefined && draft.unitCost.trim() !== "" && !(parseFloat(draft.unitCost) >= 0)) {
+        setError(`${name}: Unit Cost must be a number, zero or more.`);
+        return;
+      }
+    }
     startTransition(async () => {
       try {
         const calls = entries.flatMap(([itemId, draft]) => {
@@ -1245,8 +1292,9 @@ function SetEditor({
 
         <div className="relative mt-3 max-w-md">
           <input
+            ref={searchInputRef}
             type="text"
-            placeholder="Search products to add…"
+            placeholder="Search products to add…  (press / to search)"
             value={query}
             onChange={(e) => {
               setQuery(e.target.value);
@@ -1373,15 +1421,25 @@ function SetEditor({
                       <div className="flex items-center gap-2">
                         <div className="h-14 w-14 shrink-0 overflow-hidden rounded border border-black/[.1] bg-zinc-100 dark:border-white/[.15] dark:bg-zinc-800">
                           {lineImageUrl(item) ? (
-                            // eslint-disable-next-line @next/next/no-img-element
-                            <img src={lineImageUrl(item) as string} alt="" className="h-full w-full object-cover" />
+                            <button
+                              type="button"
+                              onClick={() => setPreviewImage({ url: lineImageUrl(item) as string, title: displayProductName(item.productName) })}
+                              aria-label={`View picture of ${item.productName}`}
+                              className="block h-full w-full cursor-zoom-in"
+                            >
+                              {/* eslint-disable-next-line @next/next/no-img-element */}
+                              <img src={lineImageUrl(item) as string} alt="" className="h-full w-full object-cover" />
+                            </button>
                           ) : (
-                            <div className="flex h-full w-full items-center justify-center text-[10px] text-zinc-600 dark:text-zinc-400">
-                              No img
+                            <div
+                              className="flex h-full w-full items-center justify-center text-zinc-400 dark:text-zinc-500"
+                              title="No image"
+                            >
+                              <ImageOff className="size-5" aria-label="No image" />
                             </div>
                           )}
                         </div>
-                        <span>{item.productName}</span>
+                        <span>{displayProductName(item.productName)}</span>
                       </div>
                     </td>
                     {confirming ? (
@@ -1540,6 +1598,51 @@ function SetEditor({
             )}
           </table>
         </div>
+
+        {previewImage && (
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4"
+            onClick={() => setPreviewImage(null)}
+          >
+            <div
+              role="dialog"
+              aria-modal="true"
+              aria-label={previewImage.title}
+              className="relative max-h-[85vh] max-w-[85vw]"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <button
+                type="button"
+                onClick={() => setPreviewImage(null)}
+                aria-label="Close"
+                className="absolute -top-3 -right-3 flex h-8 w-8 items-center justify-center rounded-full bg-white text-black shadow-lg hover:bg-zinc-100"
+              >
+                <X className="h-4 w-4" />
+              </button>
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={previewImage.url}
+                alt={previewImage.title}
+                className="max-h-[85vh] max-w-[85vw] rounded-lg object-contain shadow-2xl"
+              />
+              <p className="mt-2 text-center text-sm font-medium text-white">{previewImage.title}</p>
+            </div>
+          </div>
+        )}
+
+        {itemsDirty && (
+          <div className="fixed right-4 bottom-4 z-20 flex items-center gap-3 rounded-lg border border-black/[.1] bg-card px-4 py-2 shadow-lg dark:border-white/[.2]">
+            <span className="text-xs text-zinc-500">Unsaved changes</span>
+            <button
+              type="button"
+              disabled={isPending}
+              onClick={saveItems}
+              className="rounded bg-brand px-4 py-1.5 text-sm font-medium text-white hover:brightness-95 disabled:cursor-not-allowed"
+            >
+              {isPending ? "Saving…" : "Save"}
+            </button>
+          </div>
+        )}
 
         {/* From md up (with items) Save and the totals live in the table's footer row. */}
         <div className={`mt-3 flex items-center justify-between gap-6 ${set.items.length > 0 ? "md:hidden" : ""}`}>
