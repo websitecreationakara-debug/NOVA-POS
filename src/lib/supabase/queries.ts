@@ -806,6 +806,7 @@ export type OrderListRow = {
 
 export type OrdersListParams = {
   status?: FulfillmentStatus;
+  unpaid?: boolean; // only orders flagged Unpaid
   brandId?: string;
   q?: string;
   from?: string; // YYYY-MM-DD, Phnom Penh day
@@ -852,6 +853,7 @@ export async function getOrdersList(
     .range(offset, offset + limit - 1);
 
   if (status) query = query.eq("fulfillment_status", status);
+  if (params.unpaid) query = query.eq("is_unpaid", true);
   // An order shows under EVERY business it has products from (order_brands,
   // migration 0058), not just its main one.
   if (brandId) query = query.eq("order_brands.brand_id", brandId);

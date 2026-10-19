@@ -593,12 +593,10 @@ export async function updateCustomerAction(
   input: {
     name: string;
     phone?: string;
-    secondPhone?: string;
     pageUid?: string;
     email?: string;
     address?: string;
-    label?: string;
-    source?: string;
+    age?: string;
     state?: string;
     gender?: string;
     nationality?: string;
@@ -615,12 +613,10 @@ export async function updateCustomerAction(
     .update({
       name: input.name.trim(),
       phone: input.phone?.trim() || null,
-      second_phone: input.secondPhone?.trim() || null,
       page_uid: input.pageUid?.trim() || null,
       email: input.email?.trim() || null,
       address: input.address?.trim() || null,
-      label: input.label?.trim() || null,
-      source: input.source?.trim() || null,
+      age: input.age?.trim() || null,
       state: input.state?.trim() || null,
       gender: input.gender?.trim() || null,
       nationality: input.nationality?.trim() || null,

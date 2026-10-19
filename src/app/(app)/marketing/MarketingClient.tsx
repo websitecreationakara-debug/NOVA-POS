@@ -4,7 +4,7 @@ import { Fragment, useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { ChevronLeft, ChevronRight, Trash2 } from "lucide-react";
 import type { Brand, Customer, DiscountType, Promotion } from "@/types/database";
-import { CUSTOMER_GENDERS, CUSTOMER_NATIONALITIES, PROVINCES } from "@/lib/cambodiaPlaces";
+import { CUSTOMER_AGES, CUSTOMER_GENDERS, CUSTOMER_NATIONALITIES, PROVINCES } from "@/lib/cambodiaPlaces";
 import CustomerPurchasesDialog from "@/components/CustomerPurchasesDialog";
 import DeleteCustomerDialog from "@/components/DeleteCustomerDialog";
 import ImportCustomersButton from "@/components/ImportCustomersButton";
@@ -322,12 +322,10 @@ export default function MarketingClient({
     setEditFields({
       name: customer.name,
       phone: customer.phone ?? "",
-      secondPhone: customer.second_phone ?? "",
       pageUid: customer.page_uid ?? "",
       email: customer.email ?? "",
       address: customer.address ?? "",
-      label: customer.label ?? "",
-      source: customer.source ?? "",
+      age: customer.age ?? "",
       state: customer.state ?? "",
       gender: customer.gender ?? "",
       nationality: customer.nationality ?? "",
@@ -347,12 +345,10 @@ export default function MarketingClient({
         await updateCustomerAction(id, {
           name: editFields.name,
           phone: editFields.phone,
-          secondPhone: editFields.secondPhone,
           pageUid: editFields.pageUid,
           email: editFields.email,
           address: editFields.address,
-          label: editFields.label,
-          source: editFields.source,
+          age: editFields.age,
           state: editFields.state,
           gender: editFields.gender,
           nationality: editFields.nationality,
@@ -803,12 +799,6 @@ export default function MarketingClient({
                           className={inputClass}
                         />
                         <input
-                          placeholder="Second phone"
-                          value={editFields.secondPhone ?? ""}
-                          onChange={(e) => setEditFields({ ...editFields, secondPhone: e.target.value })}
-                          className={inputClass}
-                        />
-                        <input
                           placeholder="PSID"
                           value={editFields.pageUid ?? ""}
                           onChange={(e) => setEditFields({ ...editFields, pageUid: e.target.value })}
@@ -826,17 +816,12 @@ export default function MarketingClient({
                           onChange={(e) => setEditFields({ ...editFields, address: e.target.value })}
                           className={inputClass}
                         />
-                        <input
-                          placeholder="Label"
-                          value={editFields.label ?? ""}
-                          onChange={(e) => setEditFields({ ...editFields, label: e.target.value })}
-                          className={inputClass}
-                        />
-                        <input
-                          placeholder="Source"
-                          value={editFields.source ?? ""}
-                          onChange={(e) => setEditFields({ ...editFields, source: e.target.value })}
-                          className={inputClass}
+                        <OptionSelect
+                          placeholder="Age"
+                          value={editFields.age ?? ""}
+                          onChange={(v) => setEditFields({ ...editFields, age: v })}
+                          options={CUSTOMER_AGES.map((a) => ({ value: a, label: a }))}
+                          className={selectClass}
                         />
                         <OptionSelect
                           placeholder="State/Province"
