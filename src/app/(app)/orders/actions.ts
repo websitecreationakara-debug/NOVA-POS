@@ -492,6 +492,12 @@ export async function updateFulfillmentStatusAction(
   if (rpcErr) throw rpcErr;
   if (fetchErr) throw fetchErr;
 
+  // A completed order is paid: clear its Unpaid flag.
+  if (status === "complete") {
+    const { error: paidErr } = await supabaseAdmin.from("orders").update({ is_unpaid: false }).eq("id", orderId);
+    if (paidErr) throw paidErr;
+  }
+
   if (movedStock && movedStock.length > 0) {
     revalidatePath("/stock");
     revalidatePath("/sales");

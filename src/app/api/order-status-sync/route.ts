@@ -87,6 +87,13 @@ export async function POST(request: NextRequest) {
   if (updateError) {
     return NextResponse.json({ error: updateError.message }, { status: 500 });
   }
+  // A completed order is paid: clear its Unpaid flag (same as POS's own status control).
+  if (mapped === "complete") {
+    const { error: paidError } = await supabaseAdmin.from("orders").update({ is_unpaid: false }).eq("id", order.id);
+    if (paidError) {
+      return NextResponse.json({ error: paidError.message }, { status: 500 });
+    }
+  }
   if (movedStock && movedStock.length > 0) {
     await pushStockToSites(movedStock);
   }
