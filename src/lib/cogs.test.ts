@@ -6,6 +6,7 @@ import {
   computeGrossMargin,
   computeLineCogs,
   computeRecipeUnitCost,
+  splitByWeight,
 } from "./cogs";
 
 describe("computeRecipeUnitCost", () => {
@@ -109,5 +110,23 @@ describe("historical cost snapshot", () => {
     expect(storedCogs).toBeCloseTo(6);
     expect(recomputedFromToday).toBeCloseTo(15);
     expect(storedCogs).not.toBe(recomputedFromToday);
+  });
+});
+
+describe("splitByWeight", () => {
+  it("shares add up to the exact amount, not a cent off per line", () => {
+    const shares = splitByWeight(2, [1, 1, 1]);
+    expect(shares.reduce((a, b) => a + b, 0)).toBeCloseTo(2, 10);
+    expect(shares.slice().sort()).toEqual([0.66, 0.67, 0.67]);
+  });
+
+  it("is proportional to the weights", () => {
+    expect(splitByWeight(4.65, [63.65])).toEqual([4.65]);
+    expect(splitByWeight(10, [75, 25])).toEqual([7.5, 2.5]);
+  });
+
+  it("splits evenly when every weight is 0, and handles no lines", () => {
+    expect(splitByWeight(1, [0, 0])).toEqual([0.5, 0.5]);
+    expect(splitByWeight(1, [])).toEqual([]);
   });
 });

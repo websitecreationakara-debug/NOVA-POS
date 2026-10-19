@@ -10,7 +10,7 @@ import { STOCK_TRACKING_START } from "@/lib/stockTracking";
 import { COUNTED_FULFILLMENT_STATUSES } from "@/lib/orderStatus";
 import { orderForBrandShare } from "@/lib/orderBrandShare";
 import { ALL_PAYMENT_METHODS, type PaymentMethod } from "@/lib/paymentMethods";
-import { summarizeMarginLines, unitsSoldByCost, type MarginLine } from "@/lib/cogs";
+import { computeGrossMargin, splitByWeight, summarizeMarginLines, unitsSoldByCost, type MarginLine } from "@/lib/cogs";
 import { productWeightGrams } from "@/lib/costControl";
 import { readAllPages } from "@/lib/supabase/readAllPages";
 import {
@@ -1565,7 +1565,15 @@ export type MarginReportRow = {
   imageUrl: string | null;
   categoryName: string | null;
   unitsSold: number;
+  // What customers paid for this product: the invoice Grand Total's share, i.e. the
+  // sold lines less the order-level discount plus the order's delivery fee (see
+  // getOrderAdjustmentsByProduct).
   revenue: number;
+  // The same without the discount, so a discounted row can show what it was.
+  revenueBeforeDiscount: number;
+  // This product's share of the order-level discounts / delivery fees in range.
+  discount: number;
+  deliveryFee: number;
   // The product's current cost (Stock's), the same for every date range; only
   // a product with no current cost falls back to the latest cost recorded in
   // range. null (not 0/undefined) when there's no cost at all -- never a
@@ -1590,6 +1598,49 @@ export type MarginReportRow = {
   grossMarginPct: number | null;
   hasUnknownCost: boolean;
 };
+
+// An order's discount and delivery fee are stored on the order, not its lines, so
+// each is spread over the order's lines in proportion to their totals (in whole
+// cents, so the shares add up to the order's exact amount) and summed per product
+// -- same orders, dates and business scoping as the Margin Report.
+async function getOrderAdjustmentsByProduct(
+  brandId: string,
+  fromDate: string,
+  toDate: string
+): Promise<Map<string, { discount: number; deliveryFee: number }>> {
+  const { data, error } = await selectAll(
+    supabaseAdmin
+      .from("orders")
+      .select("id, discount, delivery_fee, order_items(product_id, line_total, products(brand_id))")
+      .eq("status", "paid")
+      .in("fulfillment_status", COUNTED_FULFILLMENT_STATUSES)
+      .or("discount.gt.0,delivery_fee.gt.0")
+      .gte("list_at", ppDayStart(fromDate))
+      .lte("list_at", ppDayEnd(toDate))
+      .order("id")
+  );
+  if (error) throw new Error(error.message);
+  const byProduct = new Map<string, { discount: number; deliveryFee: number }>();
+  for (const o of data as unknown as {
+    discount: number;
+    delivery_fee: number | null;
+    order_items: { product_id: string; line_total: number; products: { brand_id: string } | null }[];
+  }[]) {
+    if (o.order_items.length === 0) continue;
+    const weights = o.order_items.map((i) => Number(i.line_total));
+    const orderTotal = weights.reduce((sum, w) => sum + w, 0);
+    const discounts = splitByWeight(Math.min(Number(o.discount), orderTotal), weights);
+    const deliveryFees = splitByWeight(Number(o.delivery_fee ?? 0), weights);
+    o.order_items.forEach((i, n) => {
+      if (brandId !== ALL_BUSINESSES_ID && i.products?.brand_id !== brandId) return;
+      const e = byProduct.get(i.product_id) ?? { discount: 0, deliveryFee: 0 };
+      e.discount = round2(e.discount + discounts[n]);
+      e.deliveryFee = round2(e.deliveryFee + deliveryFees[n]);
+      byProduct.set(i.product_id, e);
+    });
+  }
+  return byProduct;
+}
 
 // Per-product breakdown behind the COGS tab's Margin Report table (req #9) --
 // same brand/date-range scoping as getCogsSummary, grouped by product.
@@ -1740,6 +1791,10 @@ export async function getMarginReport(
   );
   for (const [id, c] of cost10ByProduct) currentCostByProduct.set(id, c);
 
+  const adjustmentsByProduct = await getOrderAdjustmentsByProduct(brandId, fromDate, toDate).catch(
+    () => new Map<string, { discount: number; deliveryFee: number }>()
+  );
+
   const rows = Array.from(byProduct.entries()).map(([productId, lines]) => {
     const product = productById.get(productId);
     const summary = summarizeMarginLines(
@@ -1747,12 +1802,21 @@ export async function getMarginReport(
       currentCostByProduct.get(productId) ?? null,
       cost10ByProduct.has(productId)
     );
+    const adjustment = adjustmentsByProduct.get(productId);
+    const discount = Math.min(round2(adjustment?.discount ?? 0), summary.revenue);
+    const deliveryFee = round2(adjustment?.deliveryFee ?? 0);
+    const revenue = round2(summary.revenue - discount + deliveryFee);
     return {
       productId,
       name: product?.name ?? "—",
       imageUrl: imageById.get(productId) ?? product?.image_url ?? null,
       categoryName: (product?.categories as { name: string } | null)?.name ?? null,
       ...summary,
+      revenue,
+      revenueBeforeDiscount: round2(summary.revenue + deliveryFee),
+      discount,
+      deliveryFee,
+      ...computeGrossMargin(revenue, summary.totalCogs),
       suggestedCost: null as number | null,
       sellingPrice: product?.price ?? round2(summary.revenue / summary.unitsSold),
     };
@@ -1767,7 +1831,12 @@ export async function getMarginReport(
 
 export type ProductMarginDetail = {
   name: string;
+  // revenue / grossProfit / grossMarginPct follow the invoice Grand Total (see
+  // MarginReportRow.revenue).
   summary: ReturnType<typeof summarizeMarginLines>;
+  revenueBeforeDiscount: number;
+  discount: number;
+  deliveryFee: number;
   // Every cost the product was sold at in range, with its units -- the full
   // list behind the Margin Report row's short "N sold at $x" preview.
   costBreakdown: { unitCost: number; units: number; cogs: number; share: number }[];
@@ -1800,7 +1869,7 @@ export async function getProductMarginDetail(
 
   let query = supabaseAdmin
     .from("order_items")
-    .select("order_id, quantity, unit_price, line_total, cogs, unit_cost, products!inner(brand_id), orders!inner(status, list_at, paid_at)")
+    .select("order_id, quantity, unit_price, line_total, cogs, unit_cost, cost_source, products!inner(brand_id), orders!inner(status, list_at, paid_at)")
     .eq("product_id", productId)
     .eq("orders.status", "paid")
     .in("orders.fulfillment_status", COUNTED_FULFILLMENT_STATUSES)
@@ -1812,7 +1881,13 @@ export async function getProductMarginDetail(
 
   const cost10Map = await getLinkedStockCost10pcts([productId]).catch(() => new Map<string, number | null>());
   const linked = cost10Map.has(productId);
-  const cost10 = cost10Map.get(productId) ?? null;
+  // A cost typed into the report (on every line, all at one cost) wins over Total Cost 10%.
+  const recordedCosts = new Set(items.map((i) => (i.unit_cost === null ? null : round2(Number(i.unit_cost)))));
+  const typedCost =
+    items.length > 0 && items.every((i) => i.cost_source === "report") && recordedCosts.size === 1
+      ? [...recordedCosts][0]
+      : null;
+  const cost10 = typedCost ?? cost10Map.get(productId) ?? null;
 
   const sales = items
     .map((i) => ({
@@ -1820,7 +1895,7 @@ export async function getProductMarginDetail(
       paidAt: (i.orders as unknown as { list_at: string | null; paid_at: string | null } | null)?.list_at ?? (i.orders as unknown as { paid_at: string | null } | null)?.paid_at ?? null,
       quantity: Number(i.quantity),
       unitPrice: Number(i.unit_price),
-      // A linked product's sales are costed at its Total Cost 10%, or not at all (see summarizeMarginLines).
+      // A linked product's sales are costed at its Total Cost 10% (or the cost typed into the report), or not at all (see summarizeMarginLines).
       unitCost:
         linked
           ? cost10
@@ -1844,7 +1919,20 @@ export async function getProductMarginDetail(
   const currentCost = linked
     ? cost10
     : await getEffectiveProductCost(productId).catch(() => null);
-  const summary = summarizeMarginLines(lines, currentCost, linked);
+  const baseSummary = summarizeMarginLines(lines, currentCost, linked);
+  const adjustment = (
+    await getOrderAdjustmentsByProduct(brandId, fromDate, toDate).catch(
+      () => new Map<string, { discount: number; deliveryFee: number }>()
+    )
+  ).get(productId);
+  const discount = Math.min(round2(adjustment?.discount ?? 0), baseSummary.revenue);
+  const deliveryFee = round2(adjustment?.deliveryFee ?? 0);
+  const netRevenue = round2(baseSummary.revenue - discount + deliveryFee);
+  const summary = {
+    ...baseSummary,
+    revenue: netRevenue,
+    ...computeGrossMargin(netRevenue, baseSummary.totalCogs),
+  };
   const totalUnits = lines.reduce((s, l) => s + l.quantity, 0);
   const costBreakdown = unitsSoldByCost(lines).map((c) => ({
     ...c,
@@ -1852,7 +1940,7 @@ export async function getProductMarginDetail(
     share: totalUnits === 0 ? 0 : round2((c.units / totalUnits) * 100),
   }));
 
-  return { name: product.name, summary, costBreakdown, sales };
+  return { name: product.name, summary, revenueBeforeDiscount: round2(baseSummary.revenue + deliveryFee), discount, deliveryFee, costBreakdown, sales };
 }
 
 export async function getExpensesForDateRange(
