@@ -2091,7 +2091,39 @@ export default function AccountanceClient({
                           </div>
                         </td>
                         <td className="py-2 pr-3 text-right">{r.unitsSold}</td>
-                        <td className="py-2 pr-3 text-right">{formatMoney(r.revenue)}</td>
+                        <td className="py-2 pr-3 text-right">
+                          {r.discount > 0 || r.deliveryFee > 0 ? (
+                            <div
+                              className="inline-flex flex-col items-end"
+                              title={[
+                                `Before discount ${formatMoney(r.revenueBeforeDiscount)}`,
+                                r.discount > 0 ? `Discount -${formatMoney(r.discount)}` : null,
+                                r.deliveryFee > 0 ? `Includes delivery ${formatMoney(r.deliveryFee)}` : null,
+                              ]
+                                .filter(Boolean)
+                                .join(" · ")}
+                            >
+                              <span>
+                                {formatMoney(r.revenue)}
+                                {r.discount > 0 && (
+                                  <span className="ml-1 rounded bg-amber-100 px-1 py-0.5 align-middle text-[10px] font-semibold text-amber-700 dark:bg-amber-500/20 dark:text-amber-300">
+                                    Discount
+                                  </span>
+                                )}
+                              </span>
+                              {r.discount > 0 && (
+                                <span className="text-[11px] text-zinc-500 line-through">
+                                  {formatMoney(r.revenueBeforeDiscount)}
+                                </span>
+                              )}
+                              {r.deliveryFee > 0 && (
+                                <span className="text-[11px] text-zinc-500">incl. {formatMoney(r.deliveryFee)} delivery</span>
+                              )}
+                            </div>
+                          ) : (
+                            formatMoney(r.revenue)
+                          )}
+                        </td>
                         {editing ? (
                           <>
                             <td className="py-2 pr-3 text-right">
@@ -2321,6 +2353,18 @@ export default function AccountanceClient({
                       </tr>
                     )}
                   </tbody>
+                  {filteredMarginReport.length > 0 && (
+                    <tfoot>
+                      <tr className="border-t-2 border-black/[.12] font-semibold dark:border-white/[.2]">
+                        <td className="py-3 pr-3">Total Revenue ({filteredMarginReport.length} products)</td>
+                        <td />
+                        <td className="py-3 pr-3 text-right">
+                          {formatMoney(filteredMarginReport.reduce((sum, r) => sum + r.revenue, 0))}
+                        </td>
+                        <td colSpan={5} />
+                      </tr>
+                    </tfoot>
+                  )}
                 </table>
               </div>
 

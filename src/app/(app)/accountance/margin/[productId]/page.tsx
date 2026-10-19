@@ -36,7 +36,7 @@ export default async function ProductMarginPage({
   ]);
   if (!detail) notFound();
 
-  const { name, summary, costBreakdown, sales } = detail;
+  const { name, summary, revenueBeforeDiscount, discount, deliveryFee, costBreakdown, sales } = detail;
   const brandName = brands.find((b) => b.id === brand)?.name ?? "All Businesses";
   const rangeLabel = fromDate === toDate ? fromDate : `${fromDate} → ${toDate}`;
   // Only ever go back to the Accounting page (the link came from a query string).
@@ -47,7 +47,16 @@ export default async function ProductMarginPage({
 
   const stats = [
     { label: "Units sold", value: String(summary.unitsSold) },
-    { label: "Revenue", value: formatMoney(summary.revenue) },
+    {
+      label: "Revenue",
+      value: formatMoney(summary.revenue),
+      note: [
+        discount > 0 ? `Discount -${formatMoney(discount)} (was ${formatMoney(revenueBeforeDiscount)})` : null,
+        deliveryFee > 0 ? `Incl. ${formatMoney(deliveryFee)} delivery` : null,
+      ]
+        .filter(Boolean)
+        .join(" · "),
+    },
     { label: "Unit cost (current)", value: summary.unitCost === null ? "—" : formatMoney(summary.unitCost) },
     { label: "Total COGS", value: summary.totalCogs === null ? "No cost price" : formatMoney(summary.totalCogs) },
     { label: "Gross profit", value: summary.grossProfit === null ? "—" : formatMoney(summary.grossProfit) },
@@ -72,6 +81,7 @@ export default async function ProductMarginPage({
           <div key={s.label} className="rounded-xl border border-border bg-card p-3">
             <p className="text-[11px] font-medium tracking-wide text-muted-foreground uppercase">{s.label}</p>
             <p className="font-display mt-1 text-lg font-bold tabular-nums">{s.value}</p>
+            {s.note && <p className="mt-0.5 text-[11px] font-medium text-amber-700 dark:text-amber-300">{s.note}</p>}
           </div>
         ))}
       </div>

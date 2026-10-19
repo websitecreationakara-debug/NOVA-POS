@@ -74,10 +74,9 @@ async function backfillOrderItemCogs(productId: string): Promise<void> {
 // lines the report is showing (the backfill above only touches lines with no cost
 // at all); sales outside the brand/date range keep their recorded cost. Lines are
 // the ones the report reads (dated by list_at, scoped by the product's business).
-// It corrects what those sales cost and also writes the typed cost to the product's
-// "Total Cost 10%" in Stock (the report's Unit Cost is taken from it), so the two
-// stay in sync; the product's own cost and Stock's Total are left alone. The lines
-// are marked cost_source "report" (migration 0079).
+// It corrects what those sales cost only: the product's Total Cost 10% and Total in
+// Stock, and its own cost, are left alone. The lines are marked cost_source "report"
+// (migration 0079), which is how the report keeps showing the typed cost.
 export async function setMarginUnitCostAction(input: {
   productId: string;
   unitCost: number;
@@ -125,11 +124,8 @@ export async function setMarginUnitCostAction(input: {
     throw failed.error;
   }
 
-  await writeCost10pctToStock(productId, unitCost);
-
   revalidatePath("/accountance");
   revalidatePath(`/accountance/margin/${productId}`);
-  revalidatePath("/stock");
 }
 
 // Edits one "N sold at $X" group of the Margin Report: the product's sold lines

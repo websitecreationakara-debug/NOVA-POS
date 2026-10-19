@@ -8,6 +8,26 @@ function round2(n: number): number {
   return Math.round(n * 100) / 100;
 }
 
+// Splits an amount (in dollars) across lines in proportion to `weights`, in whole
+// cents, so the shares always add up to exactly that amount (the leftover cents go
+// to the largest remainders). Rounding each share on its own can drift by a cent
+// per line. All-zero weights split evenly.
+export function splitByWeight(amount: number, weights: number[]): number[] {
+  if (weights.length === 0) return [];
+  const totalCents = Math.round(amount * 100);
+  const sum = weights.reduce((a, b) => a + b, 0);
+  const exact = weights.map((w) => (sum > 0 ? (totalCents * w) / sum : totalCents / weights.length));
+  const cents = exact.map(Math.floor);
+  let left = totalCents - cents.reduce((a, b) => a + b, 0);
+  const byRemainder = exact.map((e, i) => ({ i, r: e - Math.floor(e) })).sort((a, b) => b.r - a.r);
+  for (const { i } of byRemainder) {
+    if (left <= 0) break;
+    cents[i] += 1;
+    left -= 1;
+  }
+  return cents.map((c) => c / 100);
+}
+
 // A recipe's total unit cost = sum(ingredient quantity * ingredient cost).
 // null (not 0) the moment any ingredient has no cost_price -- an unknown
 // ingredient cost makes the whole recipe's cost unknown, never silently
@@ -112,14 +132,23 @@ export function unitsSoldByCost(lines: MarginLine[]): { unitCost: number; units:
 }
 
 // `currentOnly` makes Unit Cost exactly currentCost (null when there is none): no
-// typed-cost override and no fallback to what the sales were recorded at. The
+// fallback to what the sales were recorded at. The
 // Margin Report passes it for a product linked to a Stock listing, whose Unit Cost
-// is Stock's Total Cost 10% and nothing else -- so when that cost exists, every
+// is Stock's Total Cost 10% (or a cost typed into the report, which wins when every
+// sold line carries it) and nothing else -- so when that cost exists, every
 // sold line is costed at it too (a sale recorded at Stock's Total no longer shows
 // "sold at" a different cost); with none, there is no Unit Cost and no COGS either
 // (the recorded sale costs are not shown), so the row reads "Add cost price".
 export function summarizeMarginLines(lines: MarginLine[], currentCost: number | null = null, currentOnly = false) {
+  // A cost typed into the report (on every sold line, all at one cost) is shown as
+  // the Unit Cost instead of Stock's current cost -- that edit never touches Stock.
+  const typedSoldAt = unitsSoldByCost(lines);
+  const typedCost =
+    lines.length > 0 && lines.every((l) => l.costOverridden) && typedSoldAt.length === 1
+      ? typedSoldAt[0].unitCost
+      : null;
   if (currentOnly) {
+    currentCost = typedCost ?? currentCost;
     lines = lines.map((l) => ({
       ...l,
       unitCost: currentCost,
@@ -132,12 +161,6 @@ export function summarizeMarginLines(lines: MarginLine[], currentCost: number | 
   const { grossProfit, grossMarginPct } = computeGrossMargin(revenue, totalCogs);
 
   const soldAt = unitsSoldByCost(lines);
-  // A cost typed into the report (on every sold line, all at one cost) is shown as
-  // the Unit Cost instead of Stock's current cost -- that edit never touches Stock.
-  const typedCost =
-    !currentOnly && lines.length > 0 && lines.every((l) => l.costOverridden) && soldAt.length === 1
-      ? soldAt[0].unitCost
-      : null;
   const unitCost = currentOnly
     ? currentCost
     : (typedCost ??

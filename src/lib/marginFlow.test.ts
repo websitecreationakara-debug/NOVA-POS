@@ -119,12 +119,25 @@ describe("Margin Report: a Stock-linked product's Unit Cost is only Total Cost 1
     { quantity: 2, lineTotal: 80, cogs: 5.04, unitCost: 2.52, paidAt: "2026-10-01T03:00:00Z", costOverridden: true },
   ];
 
-  it("shows Total Cost 10% even over a cost typed into the report", () => {
-    expect(summarizeMarginLines(typed, 30, true).unitCost).toBe(30);
+  it("shows a cost typed into the report over Total Cost 10%, costing every line at it", () => {
+    const s = summarizeMarginLines(typed, 30, true);
+    expect(s.unitCost).toBe(2.52);
+    expect(s.totalCogs).toBe(5.04);
+  });
+
+  it("shows Total Cost 10% once a later sale isn't at the typed cost", () => {
+    const later: MarginLine[] = [
+      ...typed,
+      { quantity: 1, lineTotal: 40, cogs: 2.52, unitCost: 2.52, paidAt: "2026-10-04T03:00:00Z" },
+    ];
+    expect(summarizeMarginLines(later, 30, true).unitCost).toBe(30);
   });
 
   it("shows no Unit Cost and no COGS (not the recorded sale cost) when Total Cost 10% is empty", () => {
-    const s = summarizeMarginLines(typed, null, true);
+    const recorded: MarginLine[] = [
+      { quantity: 2, lineTotal: 80, cogs: 5.04, unitCost: 2.52, paidAt: "2026-10-01T03:00:00Z" },
+    ];
+    const s = summarizeMarginLines(recorded, null, true);
     expect(s.unitCost).toBeNull();
     expect(s.totalCogs).toBeNull(); // no Unit Cost -> no COGS either
   });
