@@ -64,6 +64,9 @@ const EXPENSE_CATEGORY_OPTIONS = [
 // How many "N sold at $x" lines a Margin Report row shows; the rest are on the
 // product's own page, opened by clicking the row.
 const MARGIN_SOLD_AT_PREVIEW = 2;
+// The "N sold at $x" lines under a row's Unit Cost are hidden for now (the product's own
+// page still lists every cost it sold at); set to true to show them again.
+const SHOW_MARGIN_SOLD_AT = false;
 
 const TAB_LABELS: Record<AccountanceTab, string> = {
   expenses: "Expense & Accounts Payable",
@@ -2177,7 +2180,7 @@ export default function AccountanceClient({
                                   <Pencil className="size-3 text-zinc-400" />
                                 </button>
                               )}
-                              {r.soldAt.length > 0 && (
+                              {SHOW_MARGIN_SOLD_AT && r.soldAt.length > 0 && (
                                 <div
                                   className="text-xs text-zinc-500"
                                   title="Units sold at each cost in this period; each sale keeps its own cost in Total COGS"

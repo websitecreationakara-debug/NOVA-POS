@@ -111,20 +111,22 @@ export function unitsSoldByCost(lines: MarginLine[]): { unitCost: number; units:
   return [...unitsByCost].map(([cost, units]) => ({ unitCost: cost, units: round2(units) }));
 }
 
-// `currentOnly` makes Unit Cost exactly currentCost (null when there is none): no
-// typed-cost override and no fallback to what the sales were recorded at. The
-// Margin Report passes it for a product linked to a Stock listing, whose Unit Cost
-// is Stock's Total Cost 10% and nothing else -- so when that cost exists, every
-// sold line is costed at it too (a sale recorded at Stock's Total no longer shows
-// "sold at" a different cost); with none, there is no Unit Cost and no COGS either
-// (the recorded sale costs are not shown), so the row reads "Add cost price".
+// `currentOnly` is for a product linked to a Stock listing, whose current Unit Cost
+// is Stock's Total Cost 10%: a sold line with no cost recorded is costed at it. A
+// line that has a recorded cost keeps it -- each sale keeps the cost it was made at,
+// so a later cost change doesn't rewrite earlier sales (and a cost typed into the
+// report, costOverridden, stays in the report and never changes Stock).
 export function summarizeMarginLines(lines: MarginLine[], currentCost: number | null = null, currentOnly = false) {
   if (currentOnly) {
-    lines = lines.map((l) => ({
-      ...l,
-      unitCost: currentCost,
-      cogs: currentCost === null ? null : round2(currentCost * l.quantity),
-    }));
+    lines = lines.map((l) =>
+      l.costOverridden || l.unitCost !== null || l.cogs !== null
+        ? l
+        : {
+            ...l,
+            unitCost: currentCost,
+            cogs: currentCost === null ? null : round2(currentCost * l.quantity),
+          }
+    );
   }
   const unitsSold = lines.reduce((s, l) => s + l.quantity, 0);
   const revenue = lines.reduce((s, l) => s + l.lineTotal, 0);
@@ -135,14 +137,11 @@ export function summarizeMarginLines(lines: MarginLine[], currentCost: number | 
   // A cost typed into the report (on every sold line, all at one cost) is shown as
   // the Unit Cost instead of Stock's current cost -- that edit never touches Stock.
   const typedCost =
-    !currentOnly && lines.length > 0 && lines.every((l) => l.costOverridden) && soldAt.length === 1
-      ? soldAt[0].unitCost
-      : null;
-  const unitCost = currentOnly
-    ? currentCost
-    : (typedCost ??
-      currentCost ??
-      (totalCogs === null ? null : (soldAt[0]?.unitCost ?? round2(totalCogs / unitsSold))));
+    lines.length > 0 && lines.every((l) => l.costOverridden) && soldAt.length === 1 ? soldAt[0].unitCost : null;
+  const unitCost =
+    typedCost ??
+    currentCost ??
+    (totalCogs === null ? null : (soldAt[0]?.unitCost ?? round2(totalCogs / unitsSold)));
   const anyDifferent = unitCost !== null && soldAt.some((s) => s.unitCost !== round2(unitCost));
 
   return {
