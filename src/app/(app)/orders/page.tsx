@@ -23,6 +23,7 @@ export default async function OrdersPage({
     from?: string;
     to?: string;
     range?: string;
+    unpaid?: string;
   }>;
 }) {
   const {
@@ -34,11 +35,14 @@ export default async function OrdersPage({
     from: fromParam = "",
     to: toParam = "",
     range = "",
+    unpaid: unpaidParam = "",
   } = await searchParams;
+  const unpaidOnly = unpaidParam === "1";
   // With no date range and no search, show only the current Cambodia month;
   // other months appear by picking a month/dates, or "All time" (?range=all).
   // A search still looks across all months.
-  const allTime = range === "all";
+  // The Unpaid filter looks across all months too, so no unpaid order is hidden.
+  const allTime = range === "all" || (unpaidOnly && !fromParam && !toParam);
   const defaultRange = !fromParam && !toParam && !q.trim() && !allTime;
   let from = fromParam;
   let to = toParam;
@@ -67,15 +71,18 @@ export default async function OrdersPage({
     { total: newOrderCount },
     { total: deliveredCount },
     { total: cancelCount },
+    { total: unpaidCount },
     counts,
     brands,
     user,
   ] = await Promise.all([
-    getOrdersList({ status, brandId: brand, q, from, to, page, limit }),
+    getOrdersList({ status, unpaid: unpaidOnly, brandId: brand, q, from, to, page, limit }),
     countFor("complete"),
     countFor("new_order"),
     countFor("delivered"),
     countFor("cancelled"),
+    // Every unpaid order of the chosen business, whatever the month.
+    getOrdersList({ unpaid: true, brandId: brand, page: 1, limit: 1 }),
     getOrdersSummary(),
     getBrands(),
     getSessionUser(),
@@ -83,7 +90,7 @@ export default async function OrdersPage({
   // The CSV backup holds customer details -- Administration and Cooperate Admin only.
   const canBackup = user?.role === "admin" || user?.role === "accountance";
 
-  const summary: { label: string; value: number; href: string }[] = [
+  const summary: { label: string; value: number; href: string; active?: boolean }[] = [
     { label: "New today", value: counts.newToday, href: "/orders?status=new_order" },
     { label: "Pre-Order", value: counts.preOrders, href: "/orders?status=pre_order" },
     { label: "New Order", value: newOrderCount, href: "/orders?status=new_order" },
@@ -91,6 +98,8 @@ export default async function OrdersPage({
     { label: "Delivered", value: deliveredCount, href: "/orders?status=delivered" },
     { label: "Cancel", value: cancelCount, href: "/orders?status=cancelled" },
     { label: "Complete", value: completeCount, href: "/orders?status=complete" },
+    // Clicking again turns the Unpaid filter back off.
+    { label: "Unpaid", value: unpaidCount, href: unpaidOnly ? "/orders" : "/orders?unpaid=1", active: unpaidOnly },
   ];
 
   return (
@@ -115,7 +124,9 @@ export default async function OrdersPage({
           <Link
             key={s.label}
             href={s.href}
-            className="rounded-xl border border-border bg-card px-3 py-2.5 transition-colors hover:border-foreground/20 sm:px-4 sm:py-3"
+            className={`rounded-xl border bg-card px-3 py-2.5 transition-colors hover:border-foreground/20 sm:px-4 sm:py-3 ${
+              s.active ? "border-orange-400" : "border-border"
+            }`}
           >
             <p className="text-[11px] leading-tight font-medium tracking-wide text-muted-foreground uppercase sm:text-xs">
               {s.label}
