@@ -11,6 +11,7 @@ import { notifyOrdersChanged } from "@/lib/ordersChanged";
 import { COUNTED_FULFILLMENT_STATUSES, FULFILLMENT_STATUSES, STATUS_LABELS } from "@/lib/orderStatus";
 import OrderStatusControl from "@/components/OrderStatusControl";
 import OrderRowMenu from "@/components/OrderRowMenu";
+import WebsiteBadge from "@/components/WebsiteBadge";
 import { formatCount, formatUsd } from "@/lib/formatNumber";
 
 const PAGE_SIZE_OPTIONS = [10, 25, 50];
@@ -106,7 +107,7 @@ export default function OrdersTable({
   total: number;
   page: number;
   limit: number;
-  filters: { q: string; brandId: string; from: string; to: string };
+  filters: { q: string; brandId: string; source: string; from: string; to: string };
   // True when from/to are just the current-month default, not a chosen filter.
   defaultRange?: boolean;
   // "All time" is selected (no date limit), and this month in Cambodia ("YYYY-MM").
@@ -117,7 +118,7 @@ export default function OrdersTable({
 }) {
   const router = useRouter();
   const [search, setSearch] = useState(filters.q);
-  const { brandId, from, to } = filters;
+  const { brandId, source, from, to } = filters;
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [bulkBusy, setBulkBusy] = useState(false);
 
@@ -156,7 +157,7 @@ export default function OrdersTable({
   }, [search, filters.q]);
 
   const hasFilter =
-    search.trim() !== "" || allTime || (!defaultRange && (from !== "" || to !== "")) || brandId !== "";
+    search.trim() !== "" || allTime || (!defaultRange && (from !== "" || to !== "")) || brandId !== "" || source !== "";
 
   const selectedMonth = wholeMonth(from, to);
   // Month the arrows step from: the chosen month, else the month of "From", else this month.
@@ -261,6 +262,16 @@ export default function OrdersTable({
               {b.name}
             </option>
           ))}
+        </select>
+        <select
+          aria-label="Order source"
+          value={source}
+          onChange={(e) => navigate({ source: e.target.value })}
+          className="rounded-lg border border-border bg-transparent px-2.5 py-1.5 text-sm text-foreground"
+        >
+          <option value="">All orders</option>
+          <option value="website">Website orders</option>
+          <option value="pos">POS orders</option>
         </select>
         <div className="flex items-center gap-1">
           <button
@@ -425,6 +436,7 @@ export default function OrdersTable({
                         className="font-semibold text-[#1f66a3] hover:underline dark:text-brand"
                       >
                         {o.invoiceNumber ?? `#${o.id.slice(0, 8)}`}
+                        {o.isWebsite && <WebsiteBadge />}
                         {o.isUnpaid && <UnpaidBadge />}
                       </Link>
                       <span className="font-semibold tabular-nums">{formatMoney(o.total)}</span>
@@ -523,6 +535,7 @@ export default function OrdersTable({
                     >
                       {o.invoiceNumber ?? `#${o.id.slice(0, 8)}`}
                     </Link>
+                    {o.isWebsite && <WebsiteBadge />}
                     {o.isUnpaid && <UnpaidBadge />}
                   </td>
                   <td className="py-2 pr-4">{o.brandName}</td>
