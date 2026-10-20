@@ -118,6 +118,17 @@ async function untrackedLinkKeys(
 export async function pushStockToSites(productIds: string[]): Promise<StockSyncFailure[]> {
   if (productIds.length === 0) return [];
 
+  // A POS-only product that follows other products' stock (migration 0084) moves their stock
+  // when it changes, so those are pushed to their websites as well.
+  const { data: followers } = await supabaseAdmin
+    .from("products")
+    .select("stock_source_ids")
+    .in("id", productIds)
+    .eq("pos_only", true)
+    .not("stock_source_ids", "is", null);
+  const sourceIds = (followers ?? []).flatMap((f) => f.stock_source_ids ?? []);
+  if (sourceIds.length > 0) productIds = [...new Set([...productIds, ...sourceIds])];
+
   const { data: allLinks, error } = await supabaseAdmin
     .from("product_site_links")
     .select("product_id, site, site_product_id, variation_id")
