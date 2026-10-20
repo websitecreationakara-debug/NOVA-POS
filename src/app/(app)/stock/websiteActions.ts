@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { supabaseAdmin } from "@/lib/supabase/server";
 import { ensurePosProductForSiteProduct } from "@/app/(app)/sales/websiteActions";
 import { getCatalog } from "@/lib/websiteProducts/catalogs";
+import { listPosOnlyAsWebsiteProducts } from "@/lib/posOnlyProducts";
 import {
   createWebsiteAddon,
   createWebsiteCategory,
@@ -134,7 +135,8 @@ export async function listSellableWebsiteProductsAction(
 ): Promise<WebsiteProduct[]> {
   await requireStockAccess();
   const { products } = await listSellableWebsiteProducts(catalogId);
-  return products;
+  // The POS-only products ride along, so a refresh doesn't drop them from the grid.
+  return [...products, ...(await listPosOnlyAsWebsiteProducts(getCatalog(catalogId).brandSlug))];
 }
 
 export async function createWebsiteAddonAction(

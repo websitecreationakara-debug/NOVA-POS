@@ -21,6 +21,7 @@ import {
 import type { Brand, Category } from "@/types/database";
 import { CHECKOUT_PAYMENT_METHODS, PAYMENT_METHOD_LABELS, type PaymentMethod } from "@/lib/paymentMethods";
 import { CHECKOUT_ORDER_SOURCES, ORDER_SOURCE_LABELS, type OrderSource } from "@/lib/orderSource";
+import { POS_ONLY_ENTRY_PREFIX } from "@/lib/posOnlyEntry";
 
 // No real brand-logo assets to license/embed for ABA Pay/Wing/KHQR/Visa --
 // a generic-but-distinct icon per method still speeds up recognition at
@@ -541,6 +542,9 @@ export default function SalesClient({
         map.set(key, p);
       }
     }
+    // A POS-only product (never on the website) is its own entry, keyed like the
+    // synthetic card the Sales grid builds for it (see lib/posOnlyProducts.ts).
+    for (const p of products) if (p.pos_only) map.set(`${POS_ONLY_ENTRY_PREFIX}${p.id}`, p);
     for (const [key, p] of linkedThisSession) map.set(key, p);
     return map;
   }, [products, linkedThisSession]);

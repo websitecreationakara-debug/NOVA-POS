@@ -91,6 +91,16 @@ export type Product = {
   // "review me" on Stock; cleared when staff rename it. Its stock isn't
   // deducted by sales while flagged.
   auto_created: boolean;
+  // Sold only at the POS, never listed on the website (migration 0083). Shown in
+  // the Sales grid under "POS only".
+  pos_only: boolean;
+  // POS products whose stock this POS-only product follows (migration 0084), and the name shown
+  // for them. null = it keeps its own stock.
+  stock_source_ids: string[] | null;
+  stock_source_name: string | null;
+  // The POS-only product follows a website product with no stock number (migration 0085): it has
+  // no stock of its own to show or run out of.
+  stock_untracked: boolean;
 };
 
 export type RecipeItem = {
@@ -376,8 +386,8 @@ export type Database = {
       >;
       products: Table<
         Product,
-        Omit<Product, "id" | "created_at" | "updated_at" | "cost_price" | "is_ingredient" | "weight_grams" | "auto_created" | "name_km" | "unit_km"> &
-          Partial<Pick<Product, "id" | "cost_price" | "is_ingredient" | "weight_grams" | "auto_created" | "name_km" | "unit_km">>,
+        Omit<Product, "id" | "created_at" | "updated_at" | "cost_price" | "is_ingredient" | "weight_grams" | "auto_created" | "name_km" | "unit_km" | "pos_only" | "stock_source_ids" | "stock_source_name" | "stock_untracked"> &
+          Partial<Pick<Product, "id" | "cost_price" | "is_ingredient" | "weight_grams" | "auto_created" | "name_km" | "unit_km" | "pos_only" | "stock_source_ids" | "stock_source_name" | "stock_untracked">>,
         [
           {
             foreignKeyName: "products_brand_id_fkey";
@@ -701,6 +711,16 @@ export type Database = {
       invoice_sequence: {
         Args: { p_order_ids: string[] };
         Returns: Json;
+      };
+      // A POS-only product starts following other products' stock (migration 0084); returns its new stock.
+      link_pos_only_stock: {
+        Args: { p_product_id: string; p_source_ids: string[]; p_name: string };
+        Returns: number;
+      };
+      // A POS-only product follows a product with no stock number: it is not counted either (migration 0086).
+      set_pos_only_untracked: {
+        Args: { p_product_id: string; p_name: string };
+        Returns: undefined;
       };
       // Units on hand at the start and end of a range, from the stock history (migration 0074).
       stock_units_between: {

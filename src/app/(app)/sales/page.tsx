@@ -12,6 +12,8 @@ import {
   listWebsiteCategories,
 } from "@/lib/websiteProducts/client";
 import type { WebsiteCatalogId, WebsiteProduct } from "@/lib/websiteProducts/types";
+import { listPosOnlyAsWebsiteProducts } from "@/lib/posOnlyProducts";
+import { POS_ONLY_CATEGORY_ID } from "@/lib/posOnlyEntry";
 import SalesClient, { type EditOrderSeed } from "./SalesClient";
 
 export type SalesWebsiteCatalog = {
@@ -70,8 +72,14 @@ export default async function SalesPage({
     // added/renamed/removed on the live site.
     const liveCategoriesPromise = catalog ? listWebsiteCategories(catalog.id).catch(() => []) : Promise.resolve([]);
     return catalog
-      ? Promise.all([listSellableWebsiteProducts(catalog.id), liveCategoriesPromise])
-          .then(([{ products, addonCount }, liveCategories]) => {
+      ? Promise.all([
+          listSellableWebsiteProducts(catalog.id),
+          liveCategoriesPromise,
+          listPosOnlyAsWebsiteProducts(catalog.brandSlug),
+        ])
+          .then(([{ products: siteProducts, addonCount }, liveCategories, posOnly]) => {
+            // Products sold only at the POS ride along as their own "POS only" chip.
+            const products = [...siteProducts, ...posOnly];
             const baseCategories =
               liveCategories.length > 0
                 ? liveCategories.map((c) => ({ id: c.id, label: c.name }))
@@ -81,10 +89,11 @@ export default async function SalesPage({
               label: catalog.label,
               products,
               error: null,
-              categories:
-                addonCount > 0
-                  ? [...baseCategories, { id: ADDON_CATEGORY_ID, label: "Addon" }]
-                  : baseCategories,
+              categories: [
+                ...baseCategories,
+                ...(addonCount > 0 ? [{ id: ADDON_CATEGORY_ID, label: "Addon" }] : []),
+                ...(posOnly.length > 0 ? [{ id: POS_ONLY_CATEGORY_ID, label: "POS only" }] : []),
+              ],
             };
           })
           .catch((e) => ({

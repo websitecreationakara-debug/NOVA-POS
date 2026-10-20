@@ -9,12 +9,17 @@ import { ALL_BUSINESSES_ID } from "@/lib/supabase/queries";
 import { COUNTED_FULFILLMENT_STATUSES } from "@/lib/orderStatus";
 import { ppDayEnd, ppDayStart } from "@/lib/phnomPenhTime";
 import {
+  derivePurchaseCost,
   getEffectiveProductCost,
+  setWebsitePurchaseCost,
   syncSetItemCostsForProduct,
   writeCost10pctToStock,
   writeCostToStockTotal,
 } from "@/lib/websiteProducts/purchaseCosts";
 import type { ProductSiteLink, StockAdjustmentCategory } from "@/types/database";
+import { ensurePosProductForSiteProduct } from "@/app/(app)/sales/websiteActions";
+import { getWebsiteProduct } from "@/lib/websiteProducts/client";
+import type { WebsiteCatalogId } from "@/lib/websiteProducts/types";
 
 // Order lines never had a cost recorded because cost tracking didn't exist
 // yet at the time they were sold (cogs IS NULL) get priced retroactively
@@ -698,4 +703,280 @@ export async function createProductAction(input: {
   revalidatePath("/stock");
   revalidatePath("/sales");
   return { id: data.id };
+}
+
+// A product sold only at the POS and never on the website (migration 0083). It has no
+// website link, so Stock's website list doesn't show it -- the "+ POS-only product"
+// dialog manages it -- and Sales offers it under "POS only".
+export async function createPosOnlyProductAction(input: {
+  brandId: string;
+  name: string;
+  price: number;
+  unit: string;
+  stock: number;
+}): Promise<{ id: string }> {
+  await requireStockAccess();
+  // The name may be left blank and typed in the row afterwards; Sales doesn't offer the
+  // product until it has one.
+  const name = input.name.trim();
+  if (!Number.isFinite(input.price) || input.price < 0) throw new Error("Price cannot be negative");
+  if (!Number.isFinite(input.stock) || input.stock < 0) throw new Error("Stock cannot be negative");
+
+  const { data, error } = await supabaseAdmin
+    .from("products")
+    .insert({
+      brand_id: input.brandId,
+      category_id: null,
+      name,
+      sku: null,
+      price: input.price,
+      unit: input.unit.trim() || "pcs",
+      image_url: null,
+      is_active: true,
+      pos_only: true,
+    })
+    .select("id")
+    .single();
+  if (error || !data) {
+    throw new Error(
+      error?.message.includes("pos_only")
+        ? "Run migration 0083 (products.pos_only) first, then try again."
+        : (error?.message ?? "Failed to create product")
+    );
+  }
+
+  if (input.stock > 0) await adjustStockAction({ productId: data.id, delta: input.stock, reason: "Initial stock" });
+
+  revalidatePath("/stock");
+  revalidatePath("/sales");
+  return { id: data.id };
+}
+
+// The Original Cost / Total Cost 10% / Extra Cost / Total columns of a POS-only product.
+// They are kept the way a website product's are (website_product_purchase_costs, keyed by
+// "pos:<product id>" under the product's business), and the resulting Total is written to
+// products.cost_price -- which is where COGS and the Margin Report read a product that has
+// no website listing, so the cost works everywhere without further wiring.
+export async function setPosOnlyCostAction(input: {
+  productId: string;
+  fields: Partial<{
+    original_cost: number | null;
+    total_cost_10pct: number | null;
+    extra_money: number | null;
+    total_override: number | null;
+  }>;
+}): Promise<void> {
+  await requireStockAccess();
+  const { productId, fields } = input;
+  for (const v of Object.values(fields)) {
+    if (v !== null && v !== undefined && (!Number.isFinite(v) || v < 0)) throw new Error("Cost cannot be negative");
+  }
+
+  const { data: product, error } = await supabaseAdmin
+    .from("products")
+    .select("pos_only, brands!inner(slug)")
+    .eq("id", productId)
+    .single();
+  if (error || !product) throw error ?? new Error("Product not found");
+  if (!product.pos_only) throw new Error("This product is on the website -- edit its costs there");
+  const site = (product.brands as unknown as { slug: string }).slug as ProductSiteLink["site"];
+  const siteProductId = `pos:${productId}`;
+
+  await setWebsitePurchaseCost(site, siteProductId, "", fields);
+  const { data: row } = await supabaseAdmin
+    .from("website_product_purchase_costs")
+    .select("original_cost, total_cost_10pct, extra_money, total_override")
+    .eq("site", site)
+    .eq("site_product_id", siteProductId)
+    .eq("variation_id", "")
+    .maybeSingle();
+  const { total } = derivePurchaseCost({
+    originalCost: row?.original_cost ?? null,
+    totalCost10pct: row?.total_cost_10pct ?? null,
+    extraMoney: row?.extra_money ?? null,
+    totalOverride: row?.total_override ?? null,
+  });
+  const { error: updateError } = await supabaseAdmin.from("products").update({ cost_price: total }).eq("id", productId);
+  if (updateError) throw updateError;
+
+  revalidatePath("/stock");
+  revalidatePath("/marketing");
+  revalidatePath("/accountance");
+}
+
+// The pencil (Edit) box of a POS-only product: its name, Khmer name, scale (unit), Khmer
+// scale and weight -- the same fields the website table's Edit box saves on the linked
+// POS product.
+export async function setPosOnlyDetailsAction(input: {
+  productId: string;
+  name: string;
+  nameKm: string;
+  unit: string;
+  unitKm: string;
+  weightGrams: number | null;
+}): Promise<void> {
+  await requireStockAccess();
+  const name = input.name.trim();
+  if (!name) throw new Error("Name is required");
+  const unit = input.unit.trim();
+  if (!unit) throw new Error("Pick a scale (pcs, kg or g)");
+  if (input.weightGrams !== null && !(input.weightGrams > 0)) throw new Error("Weight must be greater than zero");
+
+  const { error } = await supabaseAdmin
+    .from("products")
+    .update({
+      name,
+      name_km: input.nameKm.trim() || null,
+      unit,
+      unit_km: input.unitKm.trim() || null,
+      weight_grams: input.weightGrams,
+      auto_created: false,
+    })
+    .eq("id", input.productId)
+    .eq("pos_only", true);
+  if (error) throw error;
+
+  revalidatePath("/stock");
+  revalidatePath("/sales");
+  revalidatePath("/marketing");
+}
+
+// Gives a POS-only product the picture of another product in its business (picked in the
+// Edit box's "Choose from products"). The picture file is shared, not copied. The product
+// takes that product's name and Khmer name with it, when they are given.
+export async function setPosOnlyImageUrlAction(input: {
+  productId: string;
+  imageUrl: string;
+  name?: string;
+  nameKm?: string | null;
+}): Promise<void> {
+  await requireStockAccess();
+  const imageUrl = input.imageUrl.trim();
+  if (!/^https?:\/\//i.test(imageUrl)) throw new Error("Not a picture address");
+  const patch: { image_url: string; name?: string; name_km?: string | null } = { image_url: imageUrl };
+  const name = input.name?.trim();
+  if (name) {
+    patch.name = name;
+    patch.name_km = input.nameKm?.trim() || null;
+  }
+  const { error } = await supabaseAdmin
+    .from("products")
+    .update(patch)
+    .eq("id", input.productId)
+    .eq("pos_only", true);
+  if (error) throw error;
+
+  revalidatePath("/stock");
+  revalidatePath("/sales");
+}
+
+// Makes a POS-only product follow the stock of a website product -- or, for a product with
+// sizes, of all its sizes added together (siteVariationId null). The POS-only product takes
+// the total now; from then on the database keeps the two in step both ways (migration 0084):
+// selling it, cancelling an order or editing its stock moves the source's stock the same
+// amount, and any change to the source (a website order, a stock edit) shows on it.
+// Each size is linked to its POS product on the way (created if it has none yet).
+export async function setPosOnlyStockSourceAction(input: {
+  productId: string;
+  catalogId: WebsiteCatalogId;
+  siteProductId: string;
+  siteVariationId: string | null;
+  name: string;
+}): Promise<{ quantity: number }> {
+  await requireStockAccess();
+  const { productId, catalogId, siteProductId, siteVariationId } = input;
+
+  const site = await getWebsiteProduct(catalogId, siteProductId);
+  const sizes = site.variations ?? [];
+  const isVariable = (site.type === "variable" || site.type === "variant") && sizes.length > 0;
+  const targets: { variationId: string | null; title: string; price: number; imageUrl: string | null; stock: number | null }[] =
+    siteVariationId
+      ? sizes
+          .filter((v) => v.id === siteVariationId)
+          .map((v) => ({
+            variationId: v.id,
+            title: v.weight ? `${site.title} (${v.weight})` : site.title,
+            price: v.price,
+            imageUrl: v.image_url ?? site.image_url,
+            stock: v.stock,
+          }))
+      : isVariable
+        ? sizes.map((v) => ({
+            variationId: v.id,
+            title: v.weight ? `${site.title} (${v.weight})` : site.title,
+            price: v.price,
+            imageUrl: v.image_url ?? site.image_url,
+            stock: v.stock,
+          }))
+        : [{ variationId: null, title: site.title, price: site.price, imageUrl: site.image_url, stock: site.stock }];
+  if (targets.length === 0) throw new Error("That size isn't on the website any more");
+
+  // Nothing on the website counts this product's stock ("—"): the POS-only product is not
+  // counted either, rather than copying the 0 / -1 the POS keeps for it.
+  if (targets.every((t) => t.stock === null)) {
+    const { error: untrackedError } = await supabaseAdmin.rpc("set_pos_only_untracked", {
+      p_product_id: productId,
+      p_name: input.name,
+    });
+    if (untrackedError) {
+      throw new Error(
+        untrackedError.message.includes("set_pos_only_untracked") || untrackedError.message.includes("stock_untracked")
+          ? "Run migration 0086 first, then try again."
+          : untrackedError.message
+      );
+    }
+    revalidatePath("/stock");
+    revalidatePath("/sales");
+    return { quantity: 0 };
+  }
+
+  const sourceIds: string[] = [];
+  for (const t of targets) {
+    const linked = await ensurePosProductForSiteProduct({
+      catalogId,
+      siteProductId,
+      variationId: t.variationId,
+      title: t.title,
+      price: t.price,
+      imageUrl: t.imageUrl,
+      stock: t.stock,
+    });
+    sourceIds.push(linked.id);
+  }
+
+  const { data, error } = await supabaseAdmin.rpc("link_pos_only_stock", {
+    p_product_id: productId,
+    p_source_ids: sourceIds,
+    p_name: input.name,
+  });
+  if (error) {
+    throw new Error(
+      error.message.includes("link_pos_only_stock") || error.message.includes("stock_source")
+        ? "Run migration 0084 first, then try again."
+        : error.message
+    );
+  }
+
+  // following a counted product again: no longer "not tracked" (ignored before migration 0085)
+  await supabaseAdmin.from("products").update({ stock_untracked: false }).eq("id", productId);
+
+  revalidatePath("/stock");
+  revalidatePath("/sales");
+  return { quantity: Number(data ?? 0) };
+}
+
+// Stops a POS-only product following other products' stock; it keeps the number it has now.
+export async function unlinkPosOnlyStockAction(input: { productId: string }): Promise<void> {
+  await requireStockAccess();
+  const { error } = await supabaseAdmin
+    .from("products")
+    .update({ stock_source_ids: null, stock_source_name: null })
+    .eq("id", input.productId)
+    .eq("pos_only", true);
+  if (error) throw error;
+  // counted again, from the number it has now (ignored before migration 0085)
+  await supabaseAdmin.from("products").update({ stock_untracked: false }).eq("id", input.productId);
+
+  revalidatePath("/stock");
+  revalidatePath("/sales");
 }

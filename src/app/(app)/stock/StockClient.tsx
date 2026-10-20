@@ -669,6 +669,7 @@ export default function StockClient({
         <WebsiteProductsPanel
           key={websiteCatalog.id}
           catalogId={websiteCatalog.id}
+          brandId={currentBrand.id}
           moveTargets={websiteCatalog.moveTargets}
           initialProducts={websiteCatalog.products}
           initialError={websiteCatalog.error}
