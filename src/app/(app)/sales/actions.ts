@@ -282,18 +282,18 @@ export async function chargeOrder(input: {
     throw new Error("Customer phone number is required");
   }
 
-  const user = await getSessionUser();
-  const customerId = await getOrCreateCustomerId(phone, name, customerAddress);
-
+  // The session, the customer and the first product's business don't depend on
+  // each other, so they are looked up together.
+  //
   // A cart can hold products from several businesses (the cart survives
   // switching business tabs). The invoice's own business -- its letterhead --
   // is the first product's; each business's revenue share is then worked out
   // from the lines by the order_brands trigger (migration 0058).
-  const { data: firstProduct } = await supabaseAdmin
-    .from("products")
-    .select("brand_id")
-    .eq("id", lines[0].productId)
-    .maybeSingle();
+  const [user, customerId, { data: firstProduct }] = await Promise.all([
+    getSessionUser(),
+    getOrCreateCustomerId(phone, name, customerAddress),
+    supabaseAdmin.from("products").select("brand_id").eq("id", lines[0].productId).maybeSingle(),
+  ]);
   const orderBrandId = firstProduct?.brand_id ?? brandId;
 
   // charge_order() runs the order insert, order_items insert, and stock
@@ -326,22 +326,29 @@ export async function chargeOrder(input: {
   // instead.
   const warnings: string[] = [];
 
+  // The follow-up writes below touch different rows/columns and the stock push
+  // only needs the committed sale, so they all run together; each reports its
+  // warning (or null) and the warnings are gathered in this fixed order.
+  const stampWarnings: Promise<string | null>[] = [];
+
   // Custom sizes ("100g" of a 350g pack) -- charge_order() has no field for
   // them, so stamp each label on its line now. A cart holds one line per
   // product, so (order, product) picks the line.
   for (const l of lines) {
     const sizeLabel = l.sizeLabel?.trim();
     if (!sizeLabel) continue;
-    const { error: sizeError } = await supabaseAdmin
-      .from("order_items")
-      .update({ size_label: sizeLabel })
-      .eq("order_id", orderId)
-      .eq("product_id", l.productId);
-    if (sizeError) {
-      warnings.push(
-        `Order saved, but the "${sizeLabel}" size on ${l.name} didn't. Run the size_label migration, then set it on the order. (${sizeError.message})`
-      );
-    }
+    stampWarnings.push(
+      (async () => {
+        const { error: sizeError } = await supabaseAdmin
+          .from("order_items")
+          .update({ size_label: sizeLabel })
+          .eq("order_id", orderId)
+          .eq("product_id", l.productId);
+        return sizeError
+          ? `Order saved, but the "${sizeLabel}" size on ${l.name} didn't. Run the size_label migration, then set it on the order. (${sizeError.message})`
+          : null;
+      })()
+    );
   }
 
   // charge_order() doesn't take a delivery time -- stamp it on afterwards so
@@ -350,17 +357,19 @@ export async function chargeOrder(input: {
   if (deliveryAt) {
     const parsed = new Date(deliveryAt);
     if (Number.isNaN(parsed.getTime())) {
-      warnings.push("Delivery date/time was invalid and wasn't saved.");
+      stampWarnings.push(Promise.resolve("Delivery date/time was invalid and wasn't saved."));
     } else {
-      const { error: dateError } = await supabaseAdmin
-        .from("orders")
-        .update({ delivery_at: parsed.toISOString() })
-        .eq("id", orderId);
-      if (dateError) {
-        warnings.push(
-          `Order saved, but the delivery time didn't. Run the delivery_at migration, then set it on the order. (${dateError.message})`
-        );
-      }
+      stampWarnings.push(
+        (async () => {
+          const { error: dateError } = await supabaseAdmin
+            .from("orders")
+            .update({ delivery_at: parsed.toISOString() })
+            .eq("id", orderId);
+          return dateError
+            ? `Order saved, but the delivery time didn't. Run the delivery_at migration, then set it on the order. (${dateError.message})`
+            : null;
+        })()
+      );
     }
   }
 
@@ -368,38 +377,43 @@ export async function chargeOrder(input: {
   // column isn't there yet rather than losing the sale. "in_store" is
   // already the column default, so skip the write when that's all we'd set.
   if (orderSource && orderSource !== "in_store") {
-    const { error: sourceError } = await supabaseAdmin
-      .from("orders")
-      .update({ order_source: orderSource })
-      .eq("id", orderId);
-    if (sourceError) {
-      warnings.push(
-        `Order saved, but "Order via" didn't. Run the order_source migration (0037), then set it on the order. (${sourceError.message})`
-      );
-    }
+    stampWarnings.push(
+      (async () => {
+        const { error: sourceError } = await supabaseAdmin
+          .from("orders")
+          .update({ order_source: orderSource })
+          .eq("id", orderId);
+        return sourceError
+          ? `Order saved, but "Order via" didn't. Run the order_source migration (0037), then set it on the order. (${sourceError.message})`
+          : null;
+      })()
+    );
   }
 
   // Same deal for the note (migration 0021) -- stamp it on, warn if the
   // column isn't there yet rather than losing the sale.
   if (note?.trim()) {
-    const { error: noteError } = await supabaseAdmin
-      .from("orders")
-      .update({ note: note.trim() })
-      .eq("id", orderId);
-    if (noteError) {
-      warnings.push(
-        `Order saved, but the note didn't. Run the order note migration (0021), then add it on the order. (${noteError.message})`
-      );
-    }
+    stampWarnings.push(
+      (async () => {
+        const { error: noteError } = await supabaseAdmin
+          .from("orders")
+          .update({ note: note.trim() })
+          .eq("id", orderId);
+        return noteError
+          ? `Order saved, but the note didn't. Run the order note migration (0021), then add it on the order. (${noteError.message})`
+          : null;
+      })()
+    );
   }
 
-  const { data: order } = await supabaseAdmin
-    .from("orders")
-    .select("invoice_number, total")
-    .eq("id", orderId)
-    .single();
-
-  const syncFailures = await pushStockToSites(lines.map((l) => l.productId));
+  const [stamped, { data: order }, syncFailures] = await Promise.all([
+    Promise.all(stampWarnings),
+    // Read after the stamps in the old order; invoice_number and total aren't
+    // touched by any of them, so it can be read alongside.
+    supabaseAdmin.from("orders").select("invoice_number, total").eq("id", orderId).single(),
+    pushStockToSites(lines.map((l) => l.productId)),
+  ]);
+  for (const w of stamped) if (w) warnings.push(w);
   if (syncFailures.length > 0) {
     warnings.push(
       `Stock wasn't synced to ${[...new Set(syncFailures.map((f) => f.label))].join(", ")} -- update it there manually.`

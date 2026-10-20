@@ -2,6 +2,8 @@ import { getBrands, getCatalogForBrand, getRecentStockUpdates } from "@/lib/supa
 import { catalogForBrandSlug, configuredCatalogs } from "@/lib/websiteProducts/catalogs";
 import {
   addonToWebsiteProduct,
+  markWebsiteSynced,
+  websiteSyncDue,
   listWebsiteAddons,
   listWebsiteCategories,
   listWebsiteProducts,
@@ -72,18 +74,23 @@ export default async function StockPage({
 
   const websiteCatalogPromise: Promise<WebsiteCatalogData | null> =
     catalog
-      ? listWebsiteProducts(catalog.id)
-          .then(async (prods) => ({
+      // The products, add-ons, categories and purchase costs don't depend on each
+      // other, so they load together instead of one after another.
+      ? Promise.all([
+          listWebsiteProducts(catalog.id),
+          listWebsiteAddons(catalog.id).catch(() => []),
+          listWebsiteCategories(catalog.id).catch(() => []),
+          getWebsitePurchaseCosts(catalog.brandSlug as ProductSiteLink["site"]).catch(() => ({})),
+        ])
+          .then(([prods, addons, categories, purchaseCosts]) => ({
             id: catalog.id,
             label: catalog.label,
             moveTargets,
             products: prods,
             error: null,
-            addons: await listWebsiteAddons(catalog.id).catch(() => []),
-            categories: await listWebsiteCategories(catalog.id).catch(() => []),
-            purchaseCosts: await getWebsitePurchaseCosts(
-              catalog.brandSlug as ProductSiteLink["site"]
-            ).catch(() => ({})),
+            addons,
+            categories,
+            purchaseCosts,
           }))
           .catch((e) => ({
             id: catalog.id,
@@ -101,28 +108,34 @@ export default async function StockPage({
       : Promise.resolve(null);
 
   // The POS catalog and the website's load together; the website is then copied onto the POS.
-  const [initialCatalog, websiteCatalog] = await Promise.all([
+  // The recent-stock-updates read doesn't need the catalog either, so it goes with them.
+  const [initialCatalog, websiteCatalog, recentByProductId] = await Promise.all([
     getCatalogForBrand(currentBrand.id),
     websiteCatalogPromise,
+    getRecentStockUpdates(currentBrand.id, 7),
   ]);
   let { categories, products } = initialCatalog;
 
   // Keep the POS products' pictures and prices in step with the website's (the website is where
   // they're managed). If anything changed, reload the POS list so this very page shows it.
-  if (websiteCatalog?.products) {
+  // That copy is only repeated every few minutes (or after a write from here) -- it re-reads
+  // every POS product, and nothing has usually changed since the last visit.
+  if (catalog && websiteCatalog?.products && websiteSyncDue(catalog.id)) {
     // Add-ons are linked POS products too (their own picture/name/price live in the storefront's
     // add-on table), so they're copied across the same way.
     const siteItems = [...websiteCatalog.products, ...websiteCatalog.addons.map(addonToWebsiteProduct)];
+    let syncFailed = false;
     const updated = await syncWebsiteToPos(currentBrand.slug, siteItems).catch((e) => {
       console.error("stock: couldn't sync website pictures/prices to the POS", e);
+      syncFailed = true;
       return 0;
     });
     if (updated > 0) ({ categories, products } = await getCatalogForBrand(currentBrand.id));
+    if (!syncFailed) markWebsiteSynced(catalog.id);
   }
 
   // When each product's stock was last changed by hand (last 7 days), keyed like the website
   // panel's own lookup -- `${site_product_id}::${variation_id}` -- for its "Recently updated" filter.
-  const recentByProductId = await getRecentStockUpdates(currentBrand.id, 7);
   const recentStockUpdates: Record<string, string> = {};
   for (const p of products) {
     const at = recentByProductId.get(p.id);

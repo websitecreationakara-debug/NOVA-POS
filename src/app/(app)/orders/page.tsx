@@ -64,7 +64,7 @@ export default async function OrdersPage({
   // business / date / search filters as the list (but not the status tab), so
   // each shows how many orders in that status are in view.
   const countFor = (s: FulfillmentStatus) =>
-    getOrdersList({ status: s, brandId: brand, q, from, to, page: 1, limit: 1 });
+    getOrdersList({ status: s, brandId: brand, q, from, to, countOnly: true });
   const [
     { rows: orders, total },
     { total: completeCount },
@@ -82,7 +82,7 @@ export default async function OrdersPage({
     countFor("delivered"),
     countFor("cancelled"),
     // Every unpaid order of the chosen business, whatever the month.
-    getOrdersList({ unpaid: true, brandId: brand, page: 1, limit: 1 }),
+    getOrdersList({ unpaid: true, brandId: brand, countOnly: true }),
     getOrdersSummary(),
     getBrands(),
     getSessionUser(),

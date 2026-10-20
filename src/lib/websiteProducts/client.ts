@@ -34,7 +34,65 @@ function looksLikeHtml(contentType: string | null, body: string): boolean {
   return /^\s*<(?:!doctype|html)\b/i.test(body);
 }
 
+// The product and add-on lists are read on every Stock / Marketing / COGS load and
+// take ~0.5 s each from the storefront, so a read is kept for a short while (and
+// shared by loads that overlap). Any write through this client drops the
+// catalog's entries, so an edit made here shows straight away. Per server
+// instance only, so a change made elsewhere (the storefront's own admin) can
+// take up to LIST_TTL_MS to show.
+const LIST_TTL_MS = 30_000;
+const listCache = new Map<string, { at: number; value: Promise<unknown> }>();
+
+function cachedList<T>(catalogId: WebsiteCatalogId, kind: string, load: () => Promise<T>): Promise<T> {
+  const key = `${catalogId}|${kind}`;
+  const hit = listCache.get(key);
+  if (hit && Date.now() - hit.at < LIST_TTL_MS) return hit.value as Promise<T>;
+  const value = load();
+  const entry = { at: Date.now(), value };
+  listCache.set(key, entry);
+  // A failed read isn't kept, so the next load tries again.
+  value.catch(() => {
+    if (listCache.get(key) === entry) listCache.delete(key);
+  });
+  return value;
+}
+
+// When each catalog's pictures/prices were last copied onto the POS (see
+// syncWebsiteToPos) -- the Stock page only repeats that copy every SYNC_EVERY_MS,
+// or sooner after a write through this client.
+const SYNC_EVERY_MS = 5 * 60_000;
+const syncedAt = new Map<WebsiteCatalogId, number>();
+
+export function websiteSyncDue(catalogId: WebsiteCatalogId): boolean {
+  const at = syncedAt.get(catalogId);
+  return at === undefined || Date.now() - at >= SYNC_EVERY_MS;
+}
+
+export function markWebsiteSynced(catalogId: WebsiteCatalogId): void {
+  syncedAt.set(catalogId, Date.now());
+}
+
+function dropCatalogCaches(catalogId: WebsiteCatalogId): void {
+  for (const key of listCache.keys()) if (key.startsWith(`${catalogId}|`)) listCache.delete(key);
+  syncedAt.delete(catalogId);
+}
+
 async function request<T>(
+  catalogId: WebsiteCatalogId,
+  path: string,
+  init?: RequestInit,
+  baseUrlOverride?: string
+): Promise<T> {
+  const isWrite = !!init?.method && init.method.toUpperCase() !== "GET";
+  if (isWrite) dropCatalogCaches(catalogId);
+  try {
+    return await sendRequest<T>(catalogId, path, init, baseUrlOverride);
+  } finally {
+    if (isWrite) dropCatalogCaches(catalogId);
+  }
+}
+
+async function sendRequest<T>(
   catalogId: WebsiteCatalogId,
   path: string,
   init?: RequestInit,
@@ -200,9 +258,11 @@ async function fetchProductsPage(
 }
 
 // Stock is an admin view, so include drafts where the catalog supports it.
-export async function listWebsiteProducts(
-  catalogId: WebsiteCatalogId
-): Promise<WebsiteProduct[]> {
+export function listWebsiteProducts(catalogId: WebsiteCatalogId): Promise<WebsiteProduct[]> {
+  return cachedList(catalogId, "products", () => loadWebsiteProducts(catalogId));
+}
+
+async function loadWebsiteProducts(catalogId: WebsiteCatalogId): Promise<WebsiteProduct[]> {
   const { listAllParam, listPageSize } = getCatalog(catalogId);
   // Always send the credential: some catalogs (sorasake.wine) require auth on
   // every request, others use it only to widen the list to include drafts.
@@ -237,7 +297,11 @@ function addonsBaseUrl(catalogId: WebsiteCatalogId): string {
 // if it has one -- see addonsUrlEnv on the catalog config. Empty array (not
 // an error) for a catalog with no add-on endpoint configured yet, so
 // Sales/Stock just show nothing for those businesses instead of failing.
-export async function listWebsiteAddons(catalogId: WebsiteCatalogId): Promise<WebsiteAddon[]> {
+export function listWebsiteAddons(catalogId: WebsiteCatalogId): Promise<WebsiteAddon[]> {
+  return cachedList(catalogId, "addons", () => loadWebsiteAddons(catalogId));
+}
+
+async function loadWebsiteAddons(catalogId: WebsiteCatalogId): Promise<WebsiteAddon[]> {
   const catalog = getCatalog(catalogId);
   if (!catalog.addonsUrlEnv) return [];
   const baseUrl = process.env[catalog.addonsUrlEnv];
