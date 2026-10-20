@@ -62,7 +62,25 @@ async function selectAll<T>(query: RowPage<T>): Promise<{ data: T[]; error: { me
   }
 }
 
-export async function getBrands(): Promise<Brand[]> {
+// Every page asks for the businesses first and they almost never change (nothing in
+// the app edits them), so the list is kept for a minute per server instance and
+// shared by loads that overlap.
+const BRANDS_TTL_MS = 60_000;
+let brandsCache: { at: number; value: Promise<Brand[]> } | null = null;
+
+export function getBrands(): Promise<Brand[]> {
+  if (brandsCache && Date.now() - brandsCache.at < BRANDS_TTL_MS) return brandsCache.value;
+  const value = loadBrands();
+  const entry = { at: Date.now(), value };
+  brandsCache = entry;
+  // A failed read isn't kept, so the next load tries again.
+  value.catch(() => {
+    if (brandsCache === entry) brandsCache = null;
+  });
+  return value;
+}
+
+async function loadBrands(): Promise<Brand[]> {
   const { data, error } = await supabaseAdmin.from("brands").select("*").order("name");
   if (error) throw error;
   const brands = data ?? [];
@@ -177,26 +195,29 @@ export async function getDailySales(
   // order_brands, migration 0058): only that business's share of the money.
   // "All businesses" reads the orders whole.
   const scoped = brandId !== ALL_BUSINESSES_ID;
-  let query = supabaseAdmin
-    .from("orders")
-    .select(scoped ? "*, order_brands!inner(brand_id, share)" : "*")
-    .eq("status", "paid")
-    .in("fulfillment_status", COUNTED_FULFILLMENT_STATUSES)
-    // Counted on the order's list day (migration 0062): the day a Pre-Order was
-    // changed to another status, else its own date.
-    .gte("list_at", ppDayStart(fromDate))
-    .lte("list_at", ppDayEnd(toDate))
-    .order("list_at", { ascending: false })
-    .order("id");
-  if (scoped) query = query.eq("order_brands.brand_id", brandId);
-  const { data, error } = await selectAll(query);
-
-  if (error) throw error;
+  // Only the columns the Accountance page and its CSV use (plus the money fields a
+  // business's share scales) -- a year of full order rows was ~3 MB, read and then
+  // sent to the browser. The pages are read in parallel (see readAllPages).
+  const columns = "id, subtotal, discount, tax, total, delivery_fee, payment_method, paid_at, list_at";
+  const rows = await readAllPages<Order & { order_brands?: { share: number }[] }>((withCount) => {
+    let query = supabaseAdmin
+      .from("orders")
+      .select(scoped ? `${columns}, order_brands!inner(brand_id, share)` : columns, {
+        count: withCount ? "exact" : undefined,
+      })
+      .eq("status", "paid")
+      .in("fulfillment_status", COUNTED_FULFILLMENT_STATUSES)
+      // Counted on the order's list day (migration 0062): the day a Pre-Order was
+      // changed to another status, else its own date.
+      .gte("list_at", ppDayStart(fromDate))
+      .lte("list_at", ppDayEnd(toDate));
+    if (scoped) query = query.eq("order_brands.brand_id", brandId);
+    return query.order("list_at", { ascending: false }).order("id");
+  });
   // paid_at is swapped for that same day, so the charts and CSV built from these
   // orders bucket them where their revenue is counted.
-  const orders = (data as unknown as (Order & { order_brands?: { share: number }[] })[]).map(
-    ({ order_brands, ...o }) =>
-      orderForBrandShare({ ...o, paid_at: o.list_at ?? o.paid_at } as Order, Number(order_brands?.[0]?.share ?? 1))
+  const orders = rows.map(({ order_brands, ...o }) =>
+    orderForBrandShare({ ...o, paid_at: o.list_at ?? o.paid_at } as Order, Number(order_brands?.[0]?.share ?? 1))
   );
   // A paid order with no payment_method recorded (create_online_order()
   // allows it, and it can be cleared via Edit) still got paid somehow --
@@ -629,11 +650,38 @@ type DashboardStatsRow = {
   expense_total: number;
 };
 
-export async function getDashboardStats(
+// The Dashboard's figures take ~1 s to work out (and its two filters can ask for the
+// same range again), so a result is kept for a short while per business and range,
+// and shared by loads that overlap. Per server instance only: a new order or
+// expense can take up to DASHBOARD_TTL_MS to show up here.
+const DASHBOARD_TTL_MS = 30_000;
+const DASHBOARD_CACHE_MAX = 40;
+const dashboardCache = new Map<string, { at: number; value: Promise<DashboardStats> }>();
+
+export function getDashboardStats(brandId: string, fromDate: string, toDate: string): Promise<DashboardStats> {
+  const key = `${brandId}|${fromDate}|${toDate}`;
+  const hit = dashboardCache.get(key);
+  if (hit && Date.now() - hit.at < DASHBOARD_TTL_MS) return hit.value;
+  const value = computeDashboardStats(brandId, fromDate, toDate);
+  const entry = { at: Date.now(), value };
+  dashboardCache.set(key, entry);
+  // A failed read isn't kept, and the oldest entries go first so the map stays small.
+  value.catch(() => {
+    if (dashboardCache.get(key) === entry) dashboardCache.delete(key);
+  });
+  while (dashboardCache.size > DASHBOARD_CACHE_MAX) dashboardCache.delete(dashboardCache.keys().next().value!);
+  return value;
+}
+
+async function computeDashboardStats(
   brandId: string,
   fromDate: string,
   toDate: string
 ): Promise<DashboardStats> {
+  // The Margin Report (used for Total COGS below) doesn't depend on the stats,
+  // so it starts now and runs alongside them instead of after.
+  const marginPromise = getMarginReport(brandId, fromDate, toDate).catch(() => null);
+
   // One database call: every figure below is summed in PostgreSQL (migration
   // 0071's dashboard_stats), so no orders / order lines / expenses reach Node.
   const { data, error } = await supabaseAdmin.rpc("dashboard_stats", {
@@ -686,19 +734,23 @@ export async function getDashboardStats(
     .map((b) => ({ ...b, revenue: round2(b.revenue) }))
     .sort((a, b) => b.revenue - a.revenue);
 
-  // Lines with no recorded cogs are priced from the product's current cost
-  // (one lookup per product); the rest was already summed in the database.
-  const uncosted = await sumCogsWithFallback(
-    stats.uncosted_lines.map((l) => ({ product_id: l.product_id, quantity: Number(l.quantity), cogs: null }))
-  );
-  let totalCogs = round2(Number(stats.known_cogs) + uncosted.totalCogs);
-  let hasUnknownCost = uncosted.hasUnknownCost;
   // Total COGS is the Margin Report's: the sum of the products that have a Total
   // COGS there (a product with no cost price adds nothing), so the two match.
-  const marginRows = await getMarginReport(brandId, fromDate, toDate).catch(() => null);
+  const marginRows = await marginPromise;
+  let totalCogs: number;
+  let hasUnknownCost: boolean;
   if (marginRows) {
     totalCogs = round2(marginRows.reduce((sum, r) => sum + (r.totalCogs ?? 0), 0));
     hasUnknownCost = marginRows.some((r) => r.totalCogs === null);
+  } else {
+    // Margin Report unavailable: lines with no recorded cogs are priced from the
+    // product's current cost (one lookup per product); the rest was already summed
+    // in the database.
+    const uncosted = await sumCogsWithFallback(
+      stats.uncosted_lines.map((l) => ({ product_id: l.product_id, quantity: Number(l.quantity), cogs: null }))
+    );
+    totalCogs = round2(Number(stats.known_cogs) + uncosted.totalCogs);
+    hasUnknownCost = uncosted.hasUnknownCost;
   }
   const topProducts = stats.top_products.map((p) => ({
     name: p.name ?? "—",
@@ -814,6 +866,10 @@ export type OrdersListParams = {
   to?: string; // YYYY-MM-DD, Phnom Penh day
   page?: number;
   limit?: number;
+  // Only the number of matches (`total`), no rows -- one head-only count query,
+  // without reading orders or working out invoice numbers. For the Orders page's
+  // summary cards.
+  countOnly?: boolean;
 };
 
 const DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -844,14 +900,21 @@ export async function getOrdersList(
   // just undefined until then).
   let query = supabaseAdmin
     .from("orders")
-    .select(brandId ? "*, brands!orders_brand_id_fkey(name), order_brands!inner(brand_id)" : "*, brands!orders_brand_id_fkey(name)", { count: "exact" })
-    .eq("status", "paid")
-    // By list_at, not paid_at: a Pre-Order that was changed to another status is
-    // filed under the day of that change (migration 0062) while the order keeps
-    // its own date and invoice number.
-    .order("list_at", { ascending: false })
-    .order("id")
-    .range(offset, offset + limit - 1);
+    .select(
+      params.countOnly
+        ? brandId
+          ? "id, order_brands!inner(brand_id)"
+          : "id"
+        : brandId
+          ? "*, brands!orders_brand_id_fkey(name), order_brands!inner(brand_id)"
+          : "*, brands!orders_brand_id_fkey(name)",
+      { count: "exact", head: params.countOnly }
+    )
+    .eq("status", "paid");
+  // By list_at, not paid_at: a Pre-Order that was changed to another status is
+  // filed under the day of that change (migration 0062) while the order keeps
+  // its own date and invoice number.
+  if (!params.countOnly) query = query.order("list_at", { ascending: false }).order("id").range(offset, offset + limit - 1);
 
   if (status) query = query.eq("fulfillment_status", status);
   if (params.unpaid) query = query.eq("is_unpaid", true).neq("fulfillment_status", "cancelled");
@@ -888,6 +951,7 @@ export async function getOrdersList(
 
   const { data, error, count } = await query;
   if (error) throw error;
+  if (params.countOnly) return { rows: [], total: count ?? 0 };
 
   type Row = {
     id: string;
@@ -1769,34 +1833,33 @@ export async function getMarginReport(
 
   // The grouped report doesn't carry pictures, so read them for the rows shown
   // (in chunks, like the product lookup above).
-  const imageIds = [...byProduct.keys()];
-  const imagePages = await Promise.all(
-    Array.from({ length: Math.ceil(imageIds.length / 150) }, (_, i) =>
-      supabaseAdmin
-        .from("products")
-        .select("id, image_url")
-        .in("id", imageIds.slice(i * 150, (i + 1) * 150))
-    )
-  );
-  const imageById = new Map<string, string | null>();
-  for (const { data } of imagePages) for (const p of data ?? []) imageById.set(p.id, p.image_url);
-
+  //
   // Unit Cost is each product's current cost (see getEffectiveProductCost), so
   // it reads the same whichever date range is viewed. Stock's "Total Cost 10%"
   // is what it is taken from when that's filled in.
-  const currentCostByProduct = await getEffectiveProductCosts([...byProduct.keys()]).catch(
-    () => new Map<string, number | null>()
-  );
+  //
+  // None of these four lookups needs another's result, so they run together.
+  const imageIds = [...byProduct.keys()];
+  const [imagePages, currentCostByProduct, cost10ByProduct, adjustmentsByProduct] = await Promise.all([
+    Promise.all(
+      Array.from({ length: Math.ceil(imageIds.length / 150) }, (_, i) =>
+        supabaseAdmin
+          .from("products")
+          .select("id, image_url")
+          .in("id", imageIds.slice(i * 150, (i + 1) * 150))
+      )
+    ),
+    getEffectiveProductCosts([...byProduct.keys()]).catch(() => new Map<string, number | null>()),
+    getLinkedStockCost10pcts([...byProduct.keys()]).catch(() => new Map<string, number | null>()),
+    getOrderAdjustmentsByProduct(brandId, fromDate, toDate).catch(
+      () => new Map<string, { discount: number; deliveryFee: number }>()
+    ),
+  ]);
+  const imageById = new Map<string, string | null>();
+  for (const { data } of imagePages) for (const p of data ?? []) imageById.set(p.id, p.image_url);
   // A product linked to a Stock listing takes its Unit Cost from Total Cost 10%
   // only (null when empty) -- not Stock's Total, a typed cost or a recorded sale.
-  const cost10ByProduct = await getLinkedStockCost10pcts([...byProduct.keys()]).catch(
-    () => new Map<string, number | null>()
-  );
   for (const [id, c] of cost10ByProduct) currentCostByProduct.set(id, c);
-
-  const adjustmentsByProduct = await getOrderAdjustmentsByProduct(brandId, fromDate, toDate).catch(
-    () => new Map<string, { discount: number; deliveryFee: number }>()
-  );
 
   const rows = Array.from(byProduct.entries()).map(([productId, lines]) => {
     const product = productById.get(productId);
