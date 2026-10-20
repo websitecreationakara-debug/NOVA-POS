@@ -139,7 +139,7 @@ export default async function AccountancePage({
   }>;
 }) {
   const {
-    brand: brandIdParam,
+    brand: brandParam,
     from: fromParam,
     to: toParam,
     date: dateParam,
@@ -150,6 +150,8 @@ export default async function AccountancePage({
     year: yearParam,
     tab: tabParam,
   } = await searchParams;
+  // No business picked (the sidebar link carries none) means every business together.
+  const brandIdParam = brandParam || ALL_BUSINESSES_ID;
   const today = todayIso();
   const mode =
     modeParam === "week" || modeParam === "month" || modeParam === "quarter" || modeParam === "year"
@@ -209,7 +211,7 @@ export default async function AccountancePage({
   const selectedBrand =
     brandIdParam === ALL_BUSINESSES_ID
       ? ALL_BUSINESSES_BRAND
-      : (brands.find((b) => b.id === brandIdParam) ?? brands[0]);
+      : (brands.find((b) => b.id === brandIdParam) ?? ALL_BUSINESSES_BRAND);
   const currentBrand = tab === "expenses" ? ALL_BUSINESSES_BRAND : selectedBrand;
 
   // Only the COGS tab needs the waste log -- skip the extra query for every other
