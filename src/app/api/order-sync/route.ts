@@ -23,6 +23,8 @@ function normalizePhone(raw: unknown): string | null {
   if (typeof raw !== "string") return null;
   const cleaned = raw.replace(/[\s\-().]/g, "");
   if (!/^\+?\d{8,15}$/.test(cleaned)) return null;
+  // "+855…" is saved without the "+", like the POS does ("855…").
+  if (cleaned.startsWith("+")) return cleaned.slice(1);
   // "00855…" is the same number with the international call prefix.
   if (cleaned.startsWith("00")) return cleaned.slice(2);
   return /^0\d/.test(cleaned) ? `855${cleaned.slice(1)}` : cleaned;
