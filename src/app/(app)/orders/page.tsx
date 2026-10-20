@@ -24,6 +24,7 @@ export default async function OrdersPage({
     to?: string;
     range?: string;
     unpaid?: string;
+    source?: string;
   }>;
 }) {
   const {
@@ -36,7 +37,9 @@ export default async function OrdersPage({
     to: toParam = "",
     range = "",
     unpaid: unpaidParam = "",
+    source: sourceParam = "",
   } = await searchParams;
+  const source = sourceParam === "website" || sourceParam === "pos" ? sourceParam : undefined;
   const unpaidOnly = unpaidParam === "1";
   // With no date range and no search, show only the current Cambodia month;
   // other months appear by picking a month/dates, or "All time" (?range=all).
@@ -64,7 +67,7 @@ export default async function OrdersPage({
   // business / date / search filters as the list (but not the status tab), so
   // each shows how many orders in that status are in view.
   const countFor = (s: FulfillmentStatus) =>
-    getOrdersList({ status: s, brandId: brand, q, from, to, countOnly: true });
+    getOrdersList({ status: s, brandId: brand, source, q, from, to, countOnly: true });
   const [
     { rows: orders, total },
     { total: completeCount },
@@ -76,13 +79,13 @@ export default async function OrdersPage({
     brands,
     user,
   ] = await Promise.all([
-    getOrdersList({ status, unpaid: unpaidOnly, brandId: brand, q, from, to, page, limit }),
+    getOrdersList({ status, unpaid: unpaidOnly, brandId: brand, source, q, from, to, page, limit }),
     countFor("complete"),
     countFor("new_order"),
     countFor("delivered"),
     countFor("cancelled"),
     // Every unpaid order of the chosen business, whatever the month.
-    getOrdersList({ unpaid: true, brandId: brand, countOnly: true }),
+    getOrdersList({ unpaid: true, brandId: brand, source, countOnly: true }),
     getOrdersSummary(),
     getBrands(),
     getSessionUser(),
@@ -143,7 +146,7 @@ export default async function OrdersPage({
         total={total}
         page={page}
         limit={limit}
-        filters={{ q, brandId: brand, from, to }}
+        filters={{ q, brandId: brand, source: source ?? "", from, to }}
         defaultRange={defaultRange}
         allTime={allTime}
         currentMonth={ppToday().slice(0, 7)}

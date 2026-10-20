@@ -854,6 +854,8 @@ export type OrderListRow = {
   settledAt: string | null;
   // Flagged Unpaid from the list's row menu (migration 0059).
   isUnpaid: boolean;
+  // Placed by the customer on a storefront website (channel "online"), not at the POS.
+  isWebsite: boolean;
 };
 
 export type OrdersListParams = {
@@ -861,6 +863,8 @@ export type OrdersListParams = {
   // Only orders flagged Unpaid that aren't cancelled (nothing is owed on those).
   unpaid?: boolean;
   brandId?: string;
+  // Where the order was placed: on a storefront website, or at the POS.
+  source?: "website" | "pos";
   q?: string;
   from?: string; // YYYY-MM-DD, Phnom Penh day
   to?: string; // YYYY-MM-DD, Phnom Penh day
@@ -917,6 +921,7 @@ export async function getOrdersList(
   if (!params.countOnly) query = query.order("list_at", { ascending: false }).order("id").range(offset, offset + limit - 1);
 
   if (status) query = query.eq("fulfillment_status", status);
+  if (params.source) query = query.eq("channel", params.source === "website" ? "online" : "pos");
   if (params.unpaid) query = query.eq("is_unpaid", true).neq("fulfillment_status", "cancelled");
   // An order shows under EVERY business it has products from (order_brands,
   // migration 0058), not just its main one.
@@ -965,6 +970,7 @@ export async function getOrdersList(
     settled_at?: string | null;
     list_at?: string | null;
     is_unpaid?: boolean;
+    channel?: string;
     brands: { name: string } | null;
   };
 
@@ -982,6 +988,7 @@ export async function getOrdersList(
     deliveryAt: o.delivery_at ?? null,
     settledAt: o.settled_at ?? null,
     isUnpaid: o.is_unpaid ?? false,
+    isWebsite: o.channel === "online",
   }));
 
   // Date-based invoice numbers (YYYYMM-N): an order's number is its position

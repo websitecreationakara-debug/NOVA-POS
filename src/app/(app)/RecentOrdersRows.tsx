@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import type { OrderListRow } from "@/lib/supabase/queries";
 import { formatUsd } from "@/lib/formatNumber";
 import { STATUS_LABELS, STATUS_STYLES } from "@/lib/orderStatus";
+import WebsiteBadge from "@/components/WebsiteBadge";
 
 function dayLabel(iso: string | null) {
   return iso ? new Date(iso).toLocaleDateString("en-US", { timeZone: "Asia/Phnom_Penh" }) : "—";
@@ -48,6 +49,7 @@ export default function RecentOrdersRows({ orders }: { orders: OrderListRow[] })
             >
               {o.invoiceNumber ?? `#${o.id.slice(0, 8)}`}
             </Link>
+            {o.isWebsite && <WebsiteBadge />}
           </td>
           <td className="px-2 py-3 sm:px-3">{o.brandName}</td>
           <td className="px-2 py-3 sm:px-3">
