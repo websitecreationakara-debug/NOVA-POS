@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useRef, useState } from "react";
 import { LogOut, Menu } from "lucide-react";
 import { logoutAction } from "@/app/login/actions";
 import ThemeToggle from "@/components/ThemeToggle";
@@ -17,6 +18,25 @@ export default function TopBar({
   role: string;
   avatarUrl?: string | null;
 }) {
+  const [profileOpen, setProfileOpen] = useState(false);
+  const profileRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!profileOpen) return;
+    function onDoc(e: MouseEvent) {
+      if (profileRef.current && !profileRef.current.contains(e.target as Node)) setProfileOpen(false);
+    }
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") setProfileOpen(false);
+    }
+    document.addEventListener("mousedown", onDoc);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDoc);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [profileOpen]);
+
   const initials =
     fullName
       .split(/\s+/)
@@ -43,19 +63,47 @@ export default function TopBar({
       <div className="ml-auto flex shrink-0 items-center gap-2 sm:gap-3">
         <DeliveryAlertBell />
         <ThemeToggle />
-        <div className="flex items-center gap-2.5 rounded-full border border-border bg-muted/60 py-1 pl-1 sm:pr-3">
-          <span className="grid size-7 shrink-0 place-items-center overflow-hidden rounded-full bg-brand/20 text-xs font-bold text-brand">
-            {avatarUrl ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img src={avatarUrl} alt="" className="size-full object-cover" />
-            ) : (
-              initials
-            )}
-          </span>
-          <div className="hidden leading-tight sm:block">
-            <div className="text-sm font-medium">{fullName}</div>
-            <div className="text-xs text-muted-foreground">{staffRoleLabel(role)}</div>
-          </div>
+        <div ref={profileRef} className="relative">
+          <button
+            type="button"
+            onClick={() => setProfileOpen((v) => !v)}
+            aria-label="Profile"
+            aria-expanded={profileOpen}
+            className="flex items-center gap-2.5 rounded-full border border-border bg-muted/60 py-1 pl-1 transition-colors hover:bg-muted sm:pr-3"
+          >
+            <span className="grid size-7 shrink-0 place-items-center overflow-hidden rounded-full bg-brand/20 text-xs font-bold text-brand">
+              {avatarUrl ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={avatarUrl} alt="" className="size-full object-cover" />
+              ) : (
+                initials
+              )}
+            </span>
+            <div className="hidden text-left leading-tight sm:block">
+              <div className="text-sm font-medium">{fullName}</div>
+              <div className="text-xs text-muted-foreground">{staffRoleLabel(role)}</div>
+            </div>
+          </button>
+
+          {profileOpen && (
+            <div className="absolute top-full right-0 z-50 mt-2 w-72 overflow-hidden rounded-2xl border border-border bg-card shadow-lg">
+              <div className="h-16 bg-gradient-to-r from-brand/40 to-brand/10" />
+              <div className="-mt-12 flex flex-col items-center px-5 pb-5 text-center">
+                <span className="grid size-24 place-items-center overflow-hidden rounded-full border-4 border-card bg-brand/20 text-3xl font-bold text-brand shadow-md">
+                  {avatarUrl ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={avatarUrl} alt={fullName} className="size-full object-cover" />
+                  ) : (
+                    initials
+                  )}
+                </span>
+                <div className="mt-3 text-lg font-semibold">{fullName}</div>
+                <span className="mt-1 rounded-full bg-brand/15 px-3 py-0.5 text-xs font-medium text-brand">
+                  {staffRoleLabel(role)}
+                </span>
+              </div>
+            </div>
+          )}
         </div>
         <form action={logoutAction}>
           <button
