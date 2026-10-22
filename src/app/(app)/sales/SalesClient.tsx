@@ -62,6 +62,9 @@ import { formatUsd } from "@/lib/formatNumber";
 export type EditOrderSeed = {
   orderId: string;
   invoiceNumber: string;
+  // The business the order belongs to. Stays put while staff browse another
+  // business's catalog to add its products.
+  brandId: string | null;
   customerId: string | null;
   customerName: string;
   customerPhone: string;
@@ -775,7 +778,9 @@ export default function SalesClient({
   }
 
   function switchBrand(brandId: string) {
-    router.push(`/sales?brand=${brandId}`);
+    router.push(
+      editOrder ? `/sales?editOrder=${editOrder.orderId}&brand=${brandId}` : `/sales?brand=${brandId}`
+    );
   }
 
   function handlePhoneChange(value: string) {
@@ -862,7 +867,7 @@ export default function SalesClient({
             customerName,
             customerPhone: phone,
             customerAddress: customerAddress.trim(),
-            brandId: currentBrand.id,
+            brandId: editOrder.brandId ?? currentBrand.id,
             items: cart.map((l) => ({
               productId: l.productId,
               quantity: l.quantity,
@@ -1007,7 +1012,6 @@ export default function SalesClient({
           className="min-w-0 max-w-[9.5rem] rounded border border-black/[.15] bg-card px-3 py-1.5 text-sm text-foreground disabled:opacity-50 sm:max-w-none dark:border-white/[.2]"
           value={currentBrand.id}
           onChange={(e) => switchBrand(e.target.value)}
-          disabled={!!editOrder}
         >
           {brands.map((b) => (
             <option key={b.id} value={b.id}>

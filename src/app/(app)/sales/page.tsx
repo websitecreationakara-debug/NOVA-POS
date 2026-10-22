@@ -41,9 +41,9 @@ export default async function SalesPage({
   // that order so the checkout can open with its cart, customer and totals
   // already filled in, and charge back an update instead of a new sale.
   const editInvoice = editOrderId ? await getInvoice(editOrderId) : null;
-  // When editing, the order's own brand wins over any ?brand= in the URL --
-  // the catalog has to match the products already on the order.
-  const effectiveBrandId = editInvoice?.order.brand_id ?? brandIdParam;
+  // When editing, the order's own brand is the starting catalog; ?brand= lets
+  // staff browse another business's catalog to add its products.
+  const effectiveBrandId = brandIdParam ?? editInvoice?.order.brand_id;
 
   // Start the (expensive, catalogs run into the hundreds of products) catalog
   // fetch immediately instead of waiting for getBrands() to resolve first --
@@ -151,6 +151,7 @@ export default async function SalesPage({
     ? {
         orderId: editInvoice.order.id,
         invoiceNumber: editInvoice.invoiceNumber,
+        brandId: editInvoice.order.brand_id,
         customerId: editInvoice.order.customer_id,
         customerName: editInvoice.order.customer_name ?? "",
         customerPhone: editInvoice.order.customer_phone ?? "",
