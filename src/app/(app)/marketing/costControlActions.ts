@@ -584,8 +584,14 @@ export async function deleteSetAction(setId: string): Promise<void> {
 // products (costing only), so nothing about the cost changes. An Active Set's
 // listing belongs to the old business (its Stock product and storefront draft), so
 // that is taken down first and the Set goes back to Draft -- activating it again
-// creates a fresh listing under the new business.
-export async function moveSetAction(setId: string, targetBrandId: string): Promise<void> {
+// creates a fresh listing under the new business. `newCode` renames the Set ID on
+// the way (IDs are unique per business). Expected problems come back as `error`
+// instead of being thrown: a production build hides a thrown message from the page.
+export async function moveSetAction(
+  setId: string,
+  targetBrandId: string,
+  newCode?: string
+): Promise<{ error?: string }> {
   await requireMarketingAccess();
 
   const { data: set, error: fetchErr } = await supabaseAdmin
@@ -593,42 +599,49 @@ export async function moveSetAction(setId: string, targetBrandId: string): Promi
     .select("brand_id, code, status")
     .eq("id", setId)
     .single();
-  if (fetchErr || !set) throw new Error(fetchErr?.message ?? "Set not found");
-  if (set.brand_id === targetBrandId) throw new Error("The set is already in that business");
+  if (fetchErr || !set) return { error: fetchErr?.message ?? "Set not found" };
+  if (set.brand_id === targetBrandId) return { error: "The set is already in that business" };
 
   const { data: target } = await supabaseAdmin.from("brands").select("name").eq("id", targetBrandId).maybeSingle();
-  if (!target) throw new Error("Business not found");
+  if (!target) return { error: "Business not found" };
+
+  const code = (newCode ?? set.code).trim();
+  if (!code) return { error: "Set ID is required" };
+  const clashMessage = `${target.name} already has a set with ID "${code}" -- enter a different Set ID.`;
 
   // Set IDs are unique per business -- check before taking anything down.
   const { data: clash } = await supabaseAdmin
     .from("sets")
     .select("id")
     .eq("brand_id", targetBrandId)
-    .eq("code", set.code)
+    .eq("code", code)
     .limit(1);
-  if (clash?.length) throw new Error(`${target.name} already has a set with ID "${set.code}"`);
+  if (clash?.length) return { error: clashMessage };
 
   const wasActive = set.status === "active";
-  if (wasActive) await deactivateSetListing(setId);
+  try {
+    if (wasActive) await deactivateSetListing(setId);
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : "Couldn't take the set's listing down" };
+  }
 
   const { error } = await supabaseAdmin
     .from("sets")
     .update({
       brand_id: targetBrandId,
+      code,
       updated_at: new Date().toISOString(),
       ...(wasActive ? { status: "draft" as const, linked_product_id: null } : {}),
     })
     .eq("id", setId);
-  if (error) {
-    if (error.code === "23505") throw new Error(`${target.name} already has a set with ID "${set.code}"`);
-    throw new Error(error.message);
-  }
+  if (error) return { error: error.code === "23505" ? clashMessage : error.message };
 
   if (wasActive) {
     revalidatePath("/stock");
     revalidatePath("/sales");
   }
   revalidatePath("/marketing");
+  return {};
 }
 
 // New code/name required from the caller (a small form on the confirm step)
