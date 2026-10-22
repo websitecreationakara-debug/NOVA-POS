@@ -1,56 +1,36 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 import { Download, Image as ImageIcon, Loader2, Printer } from "lucide-react";
 import { exportInvoicePdf } from "@/lib/exportInvoicePdf";
 import { exportInvoiceImage } from "@/lib/exportInvoiceImage";
 
-// Waits for the web fonts and pictures, so the print preview isn't taken half-loaded.
-async function whenLoaded() {
-  const images = Array.from(document.images).filter((img) => !img.complete);
-  await Promise.race([
-    Promise.all([
-      document.fonts?.ready,
-      ...images.map((img) => new Promise((resolve) => {
-        img.addEventListener("load", resolve, { once: true });
-        img.addEventListener("error", resolve, { once: true });
-      })),
-    ]),
-    new Promise((resolve) => setTimeout(resolve, 4000)),
-  ]);
-}
-
 export default function PrintButton({ filename }: { filename?: string }) {
-  // True in the tab Print opened (?autoprint=1): it prints right away, and its own
-  // Print button prints here instead of opening yet another tab.
-  const inPrintTab = useRef(false);
-  useEffect(() => {
-    const url = new URL(window.location.href);
-    if (url.searchParams.get("autoprint") !== "1") return;
-    inPrintTab.current = true;
-    url.searchParams.delete("autoprint");
-    window.history.replaceState(window.history.state, "", url.pathname + url.search);
-    void whenLoaded().then(() => window.print());
-  }, []);
-
-  // Print opens the invoice in a new tab and prints it there.
-  function handlePrint() {
-    if (inPrintTab.current) {
-      window.print();
-      return;
-    }
-    const url = new URL(window.location.href);
-    url.searchParams.set("autoprint", "1");
-    const link = document.createElement("a");
-    link.href = url.pathname + url.search;
-    link.target = "_blank";
-    link.rel = "noopener noreferrer";
-    link.click();
-  }
-
   const [exporting, setExporting] = useState(false);
   // "Saving 12 of 54" while a PNG batch runs -- a big batch takes a while.
   const [imageProgress, setImageProgress] = useState<string | null>(null);
+  // Print opens the invoice as a PDF (both copies, 2 pages) in a new tab, where the
+  // browser's viewer has its own print button. The tab has to be opened right here,
+  // inside the click -- a popup blocker refuses it once the PDF has taken a while to build.
+  async function handlePrint() {
+    const tab = window.open("", "_blank");
+    if (tab) {
+      tab.document.title = "Preparing invoice…";
+      tab.document.body.style.cssText = "font-family:sans-serif;padding:2rem;color:#555";
+      tab.document.body.textContent = "Preparing invoice PDF…";
+    }
+    setExporting(true);
+    try {
+      await exportInvoicePdf(filename || "Invoice", { allCopies: true, tab });
+    } catch (error) {
+      tab?.close();
+      console.error("Print failed", error);
+      alert("Couldn't generate the PDF to print. Try Save as PDF instead.");
+    } finally {
+      setExporting(false);
+    }
+  }
+
   async function handleSaveAsPdf() {
     setExporting(true);
     try {
