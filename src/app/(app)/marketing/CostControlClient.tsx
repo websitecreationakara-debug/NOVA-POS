@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
+import BackLink from "@/components/BackLink";
 import { ArrowRightLeft, ChevronDown, ChevronLeft, ChevronRight, Copy, ImageOff, Pencil, Plus, Trash2, X } from "lucide-react";
 import type { Brand, SetStatus } from "@/types/database";
 import type { StockPickerItem } from "@/lib/supabase/queries";
@@ -1257,12 +1258,13 @@ function SetEditor({
   return (
     <main className="mt-6 flex flex-col gap-6">
       <div className="flex items-center gap-3">
-        <Link
+        <BackLink
           href={`/marketing?tab=cost-control&brand=${brandId}`}
+          skipIfPrevIncludes="set="
           className="text-sm text-muted-foreground hover:underline"
         >
           ← Back to Sets
-        </Link>
+        </BackLink>
       </div>
 
       <div className="rounded-lg border border-black/[.08] p-4 shadow-sm dark:border-white/[.145]">

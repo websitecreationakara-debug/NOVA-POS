@@ -1,4 +1,5 @@
 import Link from "next/link";
+import BackLink from "@/components/BackLink";
 import { notFound } from "next/navigation";
 import { ALL_BUSINESSES_ID, getBrands, getProductMarginDetail } from "@/lib/supabase/queries";
 import { ppToday } from "@/lib/phnomPenhTime";
@@ -65,9 +66,9 @@ export default async function ProductMarginPage({
 
   return (
     <main className="mx-auto max-w-5xl space-y-6 p-6">
-      <Link href={backHref} className="text-sm text-muted-foreground hover:underline">
+      <BackLink href={backHref} className="text-sm text-muted-foreground hover:underline">
         ← Back to Margin Report
-      </Link>
+      </BackLink>
 
       <header>
         <h1 className="text-xl font-semibold">{name}</h1>

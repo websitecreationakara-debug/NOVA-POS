@@ -1,9 +1,9 @@
-import Link from "next/link";
 import { getBrands, getOrdersList, getOrdersSummary } from "@/lib/supabase/queries";
 import { FULFILLMENT_STATUSES } from "@/lib/orderStatus";
 import OrderStatusFilter from "@/components/OrderStatusFilter";
 import OrdersTable from "@/components/OrdersTable";
 import OrdersBackupButton from "@/components/OrdersBackupButton";
+import OrdersSummaryCards from "@/components/OrdersSummaryCards";
 import { getSessionUser } from "@/lib/supabase/auth-server";
 import { ppToday } from "@/lib/phnomPenhTime";
 import type { FulfillmentStatus } from "@/types/database";
@@ -122,22 +122,7 @@ export default async function OrdersPage({
         )}
       </header>
 
-      <div className="grid grid-cols-2 gap-2 px-3 pt-4 sm:gap-3 sm:px-6 lg:grid-cols-4">
-        {summary.map((s) => (
-          <Link
-            key={s.label}
-            href={s.href}
-            className={`rounded-xl border bg-card px-3 py-2.5 transition-colors hover:border-foreground/20 sm:px-4 sm:py-3 ${
-              s.active ? "border-orange-400" : "border-border"
-            }`}
-          >
-            <p className="text-[11px] leading-tight font-medium tracking-wide text-muted-foreground uppercase sm:text-xs">
-              {s.label}
-            </p>
-            <p className="font-display mt-0.5 text-2xl font-bold tabular-nums">{formatCount(s.value)}</p>
-          </Link>
-        ))}
-      </div>
+      <OrdersSummaryCards cards={summary} />
 
       <OrderStatusFilter active={status ?? null} />
 

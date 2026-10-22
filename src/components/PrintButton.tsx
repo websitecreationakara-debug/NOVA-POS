@@ -1,11 +1,53 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Download, Image as ImageIcon, Loader2, Printer } from "lucide-react";
 import { exportInvoicePdf } from "@/lib/exportInvoicePdf";
 import { exportInvoiceImage } from "@/lib/exportInvoiceImage";
 
+// Waits for the web fonts and pictures, so the print preview isn't taken half-loaded.
+async function whenLoaded() {
+  const images = Array.from(document.images).filter((img) => !img.complete);
+  await Promise.race([
+    Promise.all([
+      document.fonts?.ready,
+      ...images.map((img) => new Promise((resolve) => {
+        img.addEventListener("load", resolve, { once: true });
+        img.addEventListener("error", resolve, { once: true });
+      })),
+    ]),
+    new Promise((resolve) => setTimeout(resolve, 4000)),
+  ]);
+}
+
 export default function PrintButton({ filename }: { filename?: string }) {
+  // True in the tab Print opened (?autoprint=1): it prints right away, and its own
+  // Print button prints here instead of opening yet another tab.
+  const inPrintTab = useRef(false);
+  useEffect(() => {
+    const url = new URL(window.location.href);
+    if (url.searchParams.get("autoprint") !== "1") return;
+    inPrintTab.current = true;
+    url.searchParams.delete("autoprint");
+    window.history.replaceState(window.history.state, "", url.pathname + url.search);
+    void whenLoaded().then(() => window.print());
+  }, []);
+
+  // Print opens the invoice in a new tab and prints it there.
+  function handlePrint() {
+    if (inPrintTab.current) {
+      window.print();
+      return;
+    }
+    const url = new URL(window.location.href);
+    url.searchParams.set("autoprint", "1");
+    const link = document.createElement("a");
+    link.href = url.pathname + url.search;
+    link.target = "_blank";
+    link.rel = "noopener noreferrer";
+    link.click();
+  }
+
   const [exporting, setExporting] = useState(false);
   // "Saving 12 of 54" while a PNG batch runs -- a big batch takes a while.
   const [imageProgress, setImageProgress] = useState<string | null>(null);
@@ -45,7 +87,7 @@ export default function PrintButton({ filename }: { filename?: string }) {
   return (
     <div className="print:hidden flex flex-wrap items-center justify-center gap-2">
       <button
-        onClick={() => window.print()}
+        onClick={handlePrint}
         className="inline-flex items-center gap-1.5 rounded-full border border-border px-4 py-2 text-sm font-medium whitespace-nowrap hover:bg-black/[.04] dark:hover:bg-white/[.06]"
       >
         <Printer className="size-4" />
