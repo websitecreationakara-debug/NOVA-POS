@@ -287,6 +287,8 @@ export type Order = {
   // Customer-requested delivery date & time (ISO); null = ASAP / same day.
   delivery_at: string | null;
   invoice_number: string | null;
+  // Invoice number typed in by hand; shown instead of the automatic YYYYMM-N one (migration 0087).
+  custom_invoice_number?: string | null;
   customer_name: string | null;
   customer_phone: string | null;
   customer_email: string | null;

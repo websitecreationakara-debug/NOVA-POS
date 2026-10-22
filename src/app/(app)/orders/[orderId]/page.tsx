@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { getBrands, getInvoice } from "@/lib/supabase/queries";
 import OrderStatusControl from "@/components/OrderStatusControl";
 import OrderEditor from "@/components/OrderEditor";
+import InvoiceNumberEditor from "@/components/InvoiceNumberEditor";
 import DeleteOrderButton from "@/components/DeleteOrderButton";
 
 export default async function OrderDetailPage({
@@ -59,9 +60,11 @@ export default async function OrderDetailPage({
       <div className="rounded-2xl border border-border bg-card p-6">
         <div className="flex items-start justify-between gap-4 border-b border-border pb-4">
           <div>
-            <h1 className="text-xl font-semibold">
-              {invoiceNumber}
-            </h1>
+            <InvoiceNumberEditor
+              orderId={order.id}
+              invoiceNumber={invoiceNumber}
+              isCustom={!!order.custom_invoice_number}
+            />
             <p className="mt-1 text-sm text-muted-foreground">
               {order.paid_at ? new Date(order.paid_at).toLocaleString("en-US", { timeZone: "Asia/Phnom_Penh" }) : "—"}
             </p>

@@ -537,6 +537,39 @@ export async function setOrderUnpaidAction(orderId: string, unpaid: boolean): Pr
   revalidatePath("/orders");
 }
 
+// Sets the order's invoice number by hand (migration 0087). A blank value goes back
+// to the automatic YYYYMM-N number. Each typed-in number can belong to one order only.
+export async function setInvoiceNumberAction(orderId: string, value: string): Promise<void> {
+  const number = value.trim();
+  if (number.length > 40) throw new Error("Invoice number is too long (40 characters max).");
+
+  if (number) {
+    const { data: clash } = await supabaseAdmin
+      .from("orders")
+      .select("id")
+      .eq("custom_invoice_number", number)
+      .neq("id", orderId)
+      .limit(1);
+    if (clash?.length) throw new Error(`Invoice number ${number} is already used by another order.`);
+  }
+
+  const { error } = await supabaseAdmin
+    .from("orders")
+    .update({ custom_invoice_number: number || null })
+    .eq("id", orderId);
+  if (error) {
+    throw new Error(
+      error.code === "42703" || error.code === "PGRST204"
+        ? "Run migration 0087 (orders.custom_invoice_number) in Supabase first."
+        : error.message
+    );
+  }
+
+  revalidatePath(`/invoice/${orderId}`);
+  revalidatePath(`/orders/${orderId}`);
+  revalidatePath("/orders");
+}
+
 export async function deleteOrderAction(orderId: string): Promise<void> {
   // Read the storefront link first -- the row is gone once delete_order() runs.
   const { data: order } = await supabaseAdmin

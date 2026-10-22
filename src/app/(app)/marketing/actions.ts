@@ -700,7 +700,7 @@ export async function getCustomerPurchaseHistoryAction(
 
   const { data: orders, error: ordersErr } = await supabaseAdmin
     .from("orders")
-    .select("id, created_at, paid_at, status, total")
+    .select("*")
     .or(filters.join(","))
     .neq("fulfillment_status", "cancelled")
     .neq("status", "voided")
@@ -711,6 +711,8 @@ export async function getCustomerPurchaseHistoryAction(
   // N is the order's position among that month's paid orders.
   const invoiceNumbers = await Promise.all(
     (orders ?? []).map(async (o) => {
+      // A number typed in by hand (migration 0087) wins over the worked-out one.
+      if (o.custom_invoice_number) return o.custom_invoice_number as string;
       if (o.status !== "paid" || !o.paid_at) return null;
       const { count } = await supabaseAdmin
         .from("orders")
