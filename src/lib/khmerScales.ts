@@ -4,4 +4,4 @@
 export const KHMER_SCALES = ["ឈុត", "គីឡូ", "ប្រអប់", "កញ្ចប់", "កេស", "យួរ", "កំប៉ុង", "ដប", "ក្រាម", "ដុំ", "ក្បាល"];
 
 // The English scales offered next to it.
-export const ENGLISH_SCALES = ["pcs", "pc", "pkt", "pc/pkt", "pack", "case", "kg", "g"];
+export const ENGLISH_SCALES = ["pcs", "pc", "pkt", "pc/pkt", "pack", "case", "btl", "kg", "g"];
