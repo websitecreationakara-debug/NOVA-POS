@@ -329,9 +329,7 @@ async function loadWebsiteAddons(catalogId: WebsiteCatalogId): Promise<WebsiteAd
 // can fall back to the hardcoded `categories` label list instead of failing
 // outright.
 export async function listWebsiteCategories(catalogId: WebsiteCatalogId): Promise<WebsiteCategory[]> {
-  const catalog = getCatalog(catalogId);
-  if (!catalog.categoriesUrlEnv) return [];
-  const baseUrl = process.env[catalog.categoriesUrlEnv];
+  const baseUrl = categoriesUrlOrNull(catalogId);
   if (!baseUrl) return [];
 
   const payload = await request<unknown>(catalogId, "", {
@@ -355,9 +353,23 @@ export async function listWebsiteCategories(catalogId: WebsiteCatalogId): Promis
 function categoriesBaseUrl(catalogId: WebsiteCatalogId): string {
   const catalog = getCatalog(catalogId);
   if (!catalog.categoriesUrlEnv) throw new Error(`${catalog.label} has no categories API configured`);
-  const url = process.env[catalog.categoriesUrlEnv];
+  const url = categoriesUrlOrNull(catalogId);
   if (!url) throw new Error(`${catalog.categoriesUrlEnv} is not set`);
   return url;
+}
+
+// The categories endpoint sits next to the products one (`.../api/products` ->
+// `.../api/categories`), so when its own env var isn't set -- easy to miss on a
+// deployed environment, and then Stock/Sales silently fall back to the stale
+// hardcoded chips -- derive it from the products URL instead.
+function categoriesUrlOrNull(catalogId: WebsiteCatalogId): string | null {
+  const catalog = getCatalog(catalogId);
+  if (!catalog.categoriesUrlEnv) return null;
+  const explicit = process.env[catalog.categoriesUrlEnv];
+  if (explicit) return explicit;
+  const productsUrl = process.env[catalog.urlEnv];
+  if (!productsUrl || !/\/products\/?$/.test(productsUrl)) return null;
+  return productsUrl.replace(/\/products\/?$/, "/categories");
 }
 
 // bosbapremiumfoods.com's categories API 400s without a `slug` -- it doesn't
