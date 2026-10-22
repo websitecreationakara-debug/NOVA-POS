@@ -580,6 +580,57 @@ export async function deleteSetAction(setId: string): Promise<void> {
   revalidatePath("/marketing");
 }
 
+// Moves a Set to another business. Its lines keep pointing at the same Stock
+// products (costing only), so nothing about the cost changes. An Active Set's
+// listing belongs to the old business (its Stock product and storefront draft), so
+// that is taken down first and the Set goes back to Draft -- activating it again
+// creates a fresh listing under the new business.
+export async function moveSetAction(setId: string, targetBrandId: string): Promise<void> {
+  await requireMarketingAccess();
+
+  const { data: set, error: fetchErr } = await supabaseAdmin
+    .from("sets")
+    .select("brand_id, code, status")
+    .eq("id", setId)
+    .single();
+  if (fetchErr || !set) throw new Error(fetchErr?.message ?? "Set not found");
+  if (set.brand_id === targetBrandId) throw new Error("The set is already in that business");
+
+  const { data: target } = await supabaseAdmin.from("brands").select("name").eq("id", targetBrandId).maybeSingle();
+  if (!target) throw new Error("Business not found");
+
+  // Set IDs are unique per business -- check before taking anything down.
+  const { data: clash } = await supabaseAdmin
+    .from("sets")
+    .select("id")
+    .eq("brand_id", targetBrandId)
+    .eq("code", set.code)
+    .limit(1);
+  if (clash?.length) throw new Error(`${target.name} already has a set with ID "${set.code}"`);
+
+  const wasActive = set.status === "active";
+  if (wasActive) await deactivateSetListing(setId);
+
+  const { error } = await supabaseAdmin
+    .from("sets")
+    .update({
+      brand_id: targetBrandId,
+      updated_at: new Date().toISOString(),
+      ...(wasActive ? { status: "draft" as const, linked_product_id: null } : {}),
+    })
+    .eq("id", setId);
+  if (error) {
+    if (error.code === "23505") throw new Error(`${target.name} already has a set with ID "${set.code}"`);
+    throw new Error(error.message);
+  }
+
+  if (wasActive) {
+    revalidatePath("/stock");
+    revalidatePath("/sales");
+  }
+  revalidatePath("/marketing");
+}
+
 // New code/name required from the caller (a small form on the confirm step)
 // rather than guessed server-side. Clones every line item's current
 // amount/unit/cost snapshot as-is.
