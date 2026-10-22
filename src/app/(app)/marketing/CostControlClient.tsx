@@ -638,13 +638,18 @@ function MoveSetDialog({ set, brands, onClose }: { set: SetSummary; brands: Bran
   const [isPending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const [targetId, setTargetId] = useState(brands[0]?.id ?? "");
+  const [code, setCode] = useState(set.code);
 
   function submit() {
     if (!targetId) return;
     setError(null);
     startTransition(async () => {
       try {
-        await moveSetAction(set.id, targetId);
+        const result = await moveSetAction(set.id, targetId, code);
+        if (result.error) {
+          setError(result.error);
+          return;
+        }
         onClose();
         router.refresh();
       } catch (e) {
@@ -666,6 +671,10 @@ function MoveSetDialog({ set, brands, onClose }: { set: SetSummary; brands: Bran
               </option>
             ))}
           </select>
+        </label>
+        <label className="mt-3 flex flex-col gap-1">
+          <span className="text-xs font-medium text-zinc-500">Set ID in that business</span>
+          <input type="text" value={code} onChange={(e) => setCode(e.target.value)} className={inputClass} />
         </label>
         {set.status === "active" && (
           <p className="mt-3 text-sm text-amber-600 dark:text-amber-400">
