@@ -933,7 +933,16 @@ export async function getOrdersList(
     // A full invoice number (YYYYMM-N) is derived, not stored: resolve it to
     // the N-th paid order of that month.
     const invoice = /^(\d{4})(0[1-9]|1[0-2])-(\d+)$/.exec(q);
-    if (invoice) {
+    // A hand-typed number (migration 0087) is stored, so it matches directly.
+    const { data: custom } = await supabaseAdmin
+      .from("orders")
+      .select("id")
+      .eq("status", "paid")
+      .eq("custom_invoice_number", q)
+      .limit(1);
+    if (custom?.length) {
+      query = query.eq("id", custom[0].id);
+    } else if (invoice) {
       const { start, end } = invoiceMonthRange(invoice[1] + invoice[2]);
       const n = Number(invoice[3]);
       const { data: hit } = await supabaseAdmin
@@ -971,12 +980,14 @@ export async function getOrdersList(
     list_at?: string | null;
     is_unpaid?: boolean;
     channel?: string;
+    custom_invoice_number?: string | null;
     brands: { name: string } | null;
   };
 
   const rows: OrderListRow[] = ((data ?? []) as unknown as Row[]).map((o) => ({
     id: o.id,
-    invoiceNumber: null,
+    // A number typed in by hand wins over the YYYYMM-N one worked out below.
+    invoiceNumber: o.custom_invoice_number ?? null,
     brandId: o.brand_id,
     brandName: o.brands?.name ?? "—",
     customerName: o.customer_name,
@@ -1004,7 +1015,7 @@ export async function getOrdersList(
     const seqById = seqs as unknown as Record<string, number>;
     for (const r of rows) {
       const n = seqById[r.id];
-      if (n) r.invoiceNumber = formatInvoiceNumber(r.paidAt, Number(n));
+      if (n && !r.invoiceNumber) r.invoiceNumber = formatInvoiceNumber(r.paidAt, Number(n));
     }
     return { rows, total: count ?? 0 };
   }
@@ -1043,7 +1054,7 @@ export async function getOrdersList(
       const seq = new Map((span ?? []).map((o, i) => [o.id as string, (before ?? 0) + i + 1]));
       for (const r of group) {
         const n = seq.get(r.id);
-        if (n) r.invoiceNumber = formatInvoiceNumber(r.paidAt, n);
+        if (n && !r.invoiceNumber) r.invoiceNumber = formatInvoiceNumber(r.paidAt, n);
       }
     })
   );
@@ -1210,7 +1221,9 @@ export async function getInvoice(orderId: string): Promise<InvoiceData | null> {
   // Date-based invoice number: its position among that Phnom Penh month's
   // paid orders decides the -N suffix (1st of the month = YYYYMM-1).
   let invoiceNumber = `#${orderFields.id.slice(0, 8)}`;
-  if (orderFields.paid_at) {
+  if (orderFields.custom_invoice_number) {
+    invoiceNumber = orderFields.custom_invoice_number;
+  } else if (orderFields.paid_at) {
     const { count } = await supabaseAdmin
       .from("orders")
       .select("id", { count: "exact", head: true })
