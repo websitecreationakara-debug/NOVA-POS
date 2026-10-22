@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { ChevronDown, ChevronLeft, ChevronRight, Copy, ImageOff, Pencil, Plus, Trash2, X } from "lucide-react";
+import { ArrowRightLeft, ChevronDown, ChevronLeft, ChevronRight, Copy, ImageOff, Pencil, Plus, Trash2, X } from "lucide-react";
 import type { Brand, SetStatus } from "@/types/database";
 import type { StockPickerItem } from "@/lib/supabase/queries";
 import {
@@ -20,6 +20,7 @@ import {
   deleteSetAction,
   duplicateSetAction,
   linkStockPickerItemAction,
+  moveSetAction,
   removeSetItemAction,
   syncManualItemProductCostAction,
   updateSetAction,
@@ -231,6 +232,7 @@ export default function CostControlClient({
       ) : (
         <SetsOverview
           brandId={currentBrand.id}
+          brands={brands}
           sets={sets}
           total={setsTotal}
           page={setsPage}
@@ -253,6 +255,7 @@ type SetRowDraft = {
 
 function SetsOverview({
   brandId,
+  brands,
   sets,
   total,
   page,
@@ -260,6 +263,7 @@ function SetsOverview({
   q,
 }: {
   brandId: string;
+  brands: Brand[];
   sets: SetSummary[];
   total: number;
   page: number;
@@ -271,6 +275,7 @@ function SetsOverview({
   const [error, setError] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<SetSummary | null>(null);
   const [duplicating, setDuplicating] = useState<SetSummary | null>(null);
+  const [moving, setMoving] = useState<SetSummary | null>(null);
 
   // `sets` is already just this page -- the page and page size are in the address.
   const pageCount = Math.max(1, Math.ceil(total / limit));
@@ -506,6 +511,14 @@ function SetsOverview({
                     </button>
                     <button
                       type="button"
+                      title="Move to another business"
+                      onClick={() => setMoving(s)}
+                      className="rounded p-1 text-zinc-500 hover:bg-black/[.06] dark:hover:bg-white/[.1]"
+                    >
+                      <ArrowRightLeft className="size-3.5" />
+                    </button>
+                    <button
+                      type="button"
                       title="Delete"
                       onClick={() => setConfirmDelete(s)}
                       className="rounded p-1 text-zinc-500 hover:bg-red-100 hover:text-red-600 dark:hover:bg-red-900/40"
@@ -608,7 +621,69 @@ function SetsOverview({
       {duplicating && (
         <DuplicateSetDialog set={duplicating} onClose={() => setDuplicating(null)} />
       )}
+
+      {moving && (
+        <MoveSetDialog
+          set={moving}
+          brands={brands.filter((b) => b.id !== brandId)}
+          onClose={() => setMoving(null)}
+        />
+      )}
     </section>
+  );
+}
+
+function MoveSetDialog({ set, brands, onClose }: { set: SetSummary; brands: Brand[]; onClose: () => void }) {
+  const router = useRouter();
+  const [isPending, startTransition] = useTransition();
+  const [error, setError] = useState<string | null>(null);
+  const [targetId, setTargetId] = useState(brands[0]?.id ?? "");
+
+  function submit() {
+    if (!targetId) return;
+    setError(null);
+    startTransition(async () => {
+      try {
+        await moveSetAction(set.id, targetId);
+        onClose();
+        router.refresh();
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Failed to move set");
+      }
+    });
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={() => !isPending && onClose()}>
+      <div className="w-full max-w-sm rounded-2xl border border-border bg-card p-6 shadow-2xl" onClick={(e) => e.stopPropagation()}>
+        <h2 className="text-base font-semibold text-foreground">Move &quot;{set.name}&quot;</h2>
+        <label className="mt-4 flex flex-col gap-1">
+          <span className="text-xs font-medium text-zinc-500">Move to business</span>
+          <select value={targetId} onChange={(e) => setTargetId(e.target.value)} className={selectClass}>
+            {brands.map((b) => (
+              <option key={b.id} value={b.id}>
+                {b.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        {set.status === "active" && (
+          <p className="mt-3 text-sm text-amber-600 dark:text-amber-400">
+            This set is Active. Its Stock product and website listing belong to the current business, so they will be
+            taken down and the set goes back to Draft. Make it Active again to list it under the new business.
+          </p>
+        )}
+        {error && <p className="mt-3 text-sm text-red-500">{error}</p>}
+        <div className="mt-6 flex justify-end gap-2">
+          <button type="button" disabled={isPending} onClick={onClose} className="rounded-full border border-border px-4 py-2 text-sm font-medium hover:bg-muted disabled:opacity-50">
+            Cancel
+          </button>
+          <button type="button" disabled={isPending || !targetId} onClick={submit} className="rounded-full bg-brand px-4 py-2 text-sm font-medium text-white hover:brightness-95 disabled:opacity-50">
+            {isPending ? "Moving…" : "Move"}
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
 
