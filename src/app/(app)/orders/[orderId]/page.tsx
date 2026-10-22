@@ -1,4 +1,5 @@
 import Link from "next/link";
+import BackLink from "@/components/BackLink";
 import { notFound } from "next/navigation";
 import { getBrands, getInvoice } from "@/lib/supabase/queries";
 import OrderStatusControl from "@/components/OrderStatusControl";
@@ -46,9 +47,9 @@ export default async function OrderDetailPage({
   return (
     <main className="mx-auto max-w-3xl p-6">
       <div className="mb-4 flex items-center justify-between">
-        <Link href={backHref} className="text-sm text-muted-foreground hover:underline">
+        <BackLink href={backHref} className="text-sm text-muted-foreground hover:underline">
           {backToMargin ? "← Back to Margin Report" : backToDashboard ? "← Back to Dashboard" : "← Back to Orders"}
-        </Link>
+        </BackLink>
         <div className="flex items-center gap-4">
           <Link href={`/invoice/${order.id}`} className="text-sm text-brand hover:underline">
             View printable invoice →
