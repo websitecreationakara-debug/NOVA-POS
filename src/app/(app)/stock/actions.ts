@@ -20,6 +20,8 @@ import type { ProductSiteLink, StockAdjustmentCategory } from "@/types/database"
 import { ensurePosProductForSiteProduct } from "@/app/(app)/sales/websiteActions";
 import { getWebsiteProduct } from "@/lib/websiteProducts/client";
 import type { WebsiteCatalogId } from "@/lib/websiteProducts/types";
+import { SHARED_VARIATION_STOCK_CATALOG } from "@/lib/websiteProducts/stock";
+import { stockGroupKey } from "@/lib/websiteProducts/stockGroups";
 
 // Order lines never had a cost recorded because cost tracking didn't exist
 // yet at the time they were sold (cogs IS NULL) get priced retroactively
@@ -841,6 +843,39 @@ export async function setPosOnlyDetailsAction(input: {
   revalidatePath("/marketing");
 }
 
+// The products of every OTHER business, for the Edit box's "Choose from products" -- so a search
+// there finds a product of any business, with or without a picture. Once per picture (or per name
+// when it has none); the business is returned so the picker can say whose it is.
+export async function listOtherBrandImageChoicesAction(brandId: string): Promise<
+  { name: string; nameKm: string | null; url: string | null; stock: number | null; brand: string }[]
+> {
+  await requireStockAccess();
+  const rows: { name: string; name_km: string | null; image_url: string | null; brands: { name: string } | null }[] = [];
+  for (let from = 0; ; from += 1000) {
+    const { data, error } = await supabaseAdmin
+      .from("products")
+      .select("name, name_km, image_url, brands!inner(name)")
+      .neq("brand_id", brandId)
+      .eq("is_active", true)
+      .eq("pos_only", false)
+      .order("name")
+      .range(from, from + 999);
+    if (error) throw error;
+    rows.push(...((data ?? []) as unknown as typeof rows));
+    if (!data || data.length < 1000) break;
+  }
+  const seen = new Set<string>();
+  const out: { name: string; nameKm: string | null; url: string | null; stock: number | null; brand: string }[] = [];
+  for (const r of rows) {
+    const brand = r.brands?.name ?? "";
+    const key = `${brand}|${r.image_url || `no-image:${r.name}`}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({ name: r.name, nameKm: r.name_km, url: r.image_url || null, stock: null, brand });
+  }
+  return out;
+}
+
 // Gives a POS-only product the picture of another product in its business (picked in the
 // Edit box's "Choose from products"). The picture file is shared, not copied. The product
 // takes that product's name and Khmer name with it, when they are given.
@@ -852,13 +887,15 @@ export async function setPosOnlyImageUrlAction(input: {
 }): Promise<void> {
   await requireStockAccess();
   const imageUrl = input.imageUrl.trim();
-  if (!/^https?:\/\//i.test(imageUrl)) throw new Error("Not a picture address");
-  const patch: { image_url: string; name?: string; name_km?: string | null } = { image_url: imageUrl };
+  // Blank = the chosen product has no picture: only its name comes across, the current picture stays.
+  if (imageUrl && !/^https?:\/\//i.test(imageUrl)) throw new Error("Not a picture address");
+  const patch: { image_url?: string; name?: string; name_km?: string | null } = imageUrl ? { image_url: imageUrl } : {};
   const name = input.name?.trim();
   if (name) {
     patch.name = name;
     patch.name_km = input.nameKm?.trim() || null;
   }
+  if (Object.keys(patch).length === 0) return;
   const { error } = await supabaseAdmin
     .from("products")
     .update(patch)
@@ -901,7 +938,13 @@ export async function setPosOnlyStockSourceAction(input: {
             stock: v.stock,
           }))
       : isVariable
-        ? sizes.map((v) => ({
+        // A shared-stock catalog (Drink & Snack) has one count per stock group (same flavor / ml-L
+        // size), so following the product follows each count once -- following every size would add
+        // a group's count up several times.
+        ? (catalogId === SHARED_VARIATION_STOCK_CATALOG
+            ? sizes.filter((v, i) => sizes.findIndex((o) => stockGroupKey(o) === stockGroupKey(v)) === i)
+            : sizes
+          ).map((v) => ({
             variationId: v.id,
             title: v.weight ? `${site.title} (${v.weight})` : site.title,
             price: v.price,

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase/server";
+import { pushStockToSites, shareStockFromWebsite } from "@/lib/site-sync";
 import type { ProductSiteLink } from "@/types/database";
 
 const VALID_SITES: ProductSiteLink["site"][] = [
@@ -92,19 +93,28 @@ export async function POST(request: NextRequest) {
     if (updateError) {
       return NextResponse.json({ error: updateError.message }, { status: 500 });
     }
+    await shareStockFromWebsite([link.product_id]).catch(() => null);
     return NextResponse.json({ ok: true, quantity: stock, price: hasPrice ? price : undefined });
   }
 
   if (hasQuantitySold) {
+    // A can pack takes its can count off the stock per unit sold (migration 0088).
+    const { data: unitRow } = await supabaseAdmin
+      .from("products")
+      .select("stock_units_per_sale")
+      .eq("id", link.product_id)
+      .maybeSingle();
     const { data: newQuantity, error: rpcError } = await supabaseAdmin.rpc("adjust_stock", {
       p_product_id: link.product_id,
-      p_delta: -quantitySold,
+      p_delta: -quantitySold * (Number(unitRow?.stock_units_per_sale) || 1),
       p_reason: `Online sale (${site})`,
       p_created_by: null,
     });
     if (rpcError) {
       return NextResponse.json({ error: rpcError.message }, { status: 500 });
     }
+    // The website only took 1 per pack off its own count, so POS's number is pushed back to it.
+    await pushStockToSites([link.product_id]).catch(() => null);
     return NextResponse.json({ ok: true, quantity: newQuantity, price: hasPrice ? price : undefined });
   }
 

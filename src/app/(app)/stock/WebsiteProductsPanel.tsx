@@ -34,6 +34,8 @@ import type {
   WebsiteProductVariation,
   WebsiteProductWrite,
 } from "@/lib/websiteProducts/types";
+import { SHARED_VARIATION_STOCK_CATALOG } from "@/lib/websiteProducts/stock";
+import { stockGroupKey } from "@/lib/websiteProducts/stockGroups";
 import {
   createWebsiteCategoryAction,
   createWebsiteProductAction,
@@ -399,7 +401,17 @@ export default function WebsiteProductsPanel({
           name: p.title,
           nameKm: sizes.map((v) => khmerOf(p.id, v.id)).find((k) => !!k) ?? null,
           url: p.image_url,
-          stock: tracked.length === 0 ? null : tracked.reduce((sum, n) => sum + n, 0),
+          // Sizes of one stock group (Drink & Snack: same flavor / ml-L size) show the same one
+          // count -- it is counted once per group, then the groups are added up.
+          stock:
+            tracked.length === 0
+              ? null
+              : catalogId === SHARED_VARIATION_STOCK_CATALOG
+                ? [...new Set(sizes.map(stockGroupKey))]
+                    .map((key) => sizeStocks[sizes.findIndex((v) => stockGroupKey(v) === key)])
+                    .filter((n): n is number => n !== null)
+                    .reduce((sum, n) => sum + n, 0)
+                : tracked.reduce((sum, n) => sum + n, 0),
           source: { siteProductId: p.id, variationId: null },
         });
         sizes.forEach((v, i) =>
@@ -429,11 +441,13 @@ export default function WebsiteProductsPanel({
   // product can borrow a picture from.
   const imageChoices = useMemo(() => {
     const seen = new Set<string>();
-    const out: { name: string; nameKm: string | null; url: string; stock: number | null }[] = [];
+    const out: { name: string; nameKm: string | null; url: string | null; stock: number | null }[] = [];
+    // A product with no picture is offered too (once per name), so searching its name finds it.
     const add = (name: string, nameKm: string | null, url: string | null | undefined, stock: number | null) => {
-      if (url && !seen.has(url)) {
-        seen.add(url);
-        out.push({ name, nameKm, url, stock });
+      const key = url || `no-image:${name}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        out.push({ name, nameKm, url: url || null, stock });
       }
     };
     for (const c of stockChoices) add(c.name, c.nameKm, c.url, c.stock);

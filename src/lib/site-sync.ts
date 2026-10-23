@@ -1,7 +1,8 @@
 import { supabaseAdmin } from "@/lib/supabase/server";
 import { catalogForBrandSlug } from "@/lib/websiteProducts/catalogs";
-import { getWebsiteProduct, updateWebsiteProductVariation } from "@/lib/websiteProducts/client";
+import { getWebsiteProduct, setWebsiteVariationStock } from "@/lib/websiteProducts/client";
 import { isStockUntracked } from "@/lib/websiteProducts/stockTracking";
+import { stockGroupKey, stockGroupMembers } from "@/lib/websiteProducts/stockGroups";
 import type { WebsiteProduct } from "@/lib/websiteProducts/types";
 import type { FulfillmentStatus, ProductSiteLink } from "@/types/database";
 
@@ -115,9 +116,107 @@ async function untrackedLinkKeys(
   return untracked;
 }
 
+// The website keeps ONE stock count per stock group -- variations with the same flavor (and, for
+// ml/L sizes, the same size), see stockGroups.ts -- but POS holds each variation as its own product
+// with its own stock_levels row. Whenever one variation's count changes, the rest of its group are
+// set to the same number so the group moves together; other flavors are left alone.
+// `fromWebsite`: the website already changed its count (an online order, or an edit on its admin),
+// so that count is used. Otherwise it's worked out from the changed rows (a single changed
+// variation is the count itself; several -- e.g. one sale with two sizes of the same flavor -- each
+// started from the same count, so their changes add up).
+async function shareStockAcrossVariations(productIds: string[], fromWebsite = false): Promise<void> {
+  if (productIds.length === 0) return;
+  const { data: changed } = await supabaseAdmin
+    .from("product_site_links")
+    .select("product_id, site, site_product_id, variation_id")
+    .in("product_id", productIds)
+    .eq("site", "bosba-drink-snack")
+    .neq("variation_id", "");
+  if (!changed || changed.length === 0) return;
+
+  const byProduct = new Map<string, { site: ProductSiteLink["site"]; siteProductId: string; links: typeof changed }>();
+  for (const l of changed) {
+    const key = `${l.site}|${l.site_product_id}`;
+    const g = byProduct.get(key) ?? { site: l.site, siteProductId: l.site_product_id, links: [] };
+    g.links.push(l);
+    byProduct.set(key, g);
+  }
+
+  for (const g of byProduct.values()) {
+    // Which variations share a count is read from the website (flavor / size live there).
+    const catalog = catalogForBrandSlug(g.site);
+    const website = catalog ? await getWebsiteProduct(catalog.id, g.siteProductId).catch(() => null) : null;
+    const variations = website?.variations ?? [];
+    if (variations.length < 2) continue;
+
+    const { data: allLinks } = await supabaseAdmin
+      .from("product_site_links")
+      .select("product_id, variation_id")
+      .eq("site", g.site)
+      .eq("site_product_id", g.siteProductId)
+      .neq("variation_id", "");
+    const productIdByVariation = new Map((allLinks ?? []).map((l) => [l.variation_id, l.product_id]));
+
+    // The stock groups that have a changed member.
+    const groups = new Map<string, { memberIds: string[]; changedIds: string[]; websiteStock: number | null }>();
+    for (const l of g.links) {
+      const variation = variations.find((v) => v.id === l.variation_id);
+      if (!variation) continue;
+      const key = stockGroupKey(variation);
+      const members = stockGroupMembers(variations, variation);
+      const group = groups.get(key) ?? {
+        memberIds: members.map((m) => productIdByVariation.get(m.id)).filter((id): id is string => !!id),
+        changedIds: [],
+        websiteStock: members.find((m) => m.stock != null)?.stock ?? null,
+      };
+      group.changedIds.push(l.product_id);
+      groups.set(key, group);
+    }
+
+    for (const group of groups.values()) {
+      if (group.memberIds.length < 2) continue;
+
+      let quantity: number | null = fromWebsite ? group.websiteStock : null;
+      if (quantity === null) {
+        const { data: rows } = await supabaseAdmin
+          .from("stock_levels")
+          .select("quantity")
+          .in("product_id", group.changedIds);
+        const quantities = (rows ?? []).map((r) => r.quantity);
+        if (quantities.length === 0) continue;
+        if (quantities.length === 1) {
+          quantity = quantities[0];
+        } else {
+          // What they all started from: a member this call didn't touch still holds it, else the
+          // website's count (it hasn't heard about this change yet).
+          const untouched = group.memberIds.filter((id) => !group.changedIds.includes(id));
+          const { data: untouchedRow } = untouched.length
+            ? await supabaseAdmin.from("stock_levels").select("quantity").in("product_id", untouched).limit(1).maybeSingle()
+            : { data: null };
+          const base = untouchedRow ? untouchedRow.quantity : group.websiteStock;
+          quantity =
+            base == null
+              ? Math.min(...quantities)
+              : Math.max(0, base + quantities.reduce((sum, q) => sum + (q - base), 0));
+        }
+      }
+
+      await supabaseAdmin
+        .from("stock_levels")
+        .update({ quantity, updated_at: new Date().toISOString() })
+        .in("product_id", group.memberIds);
+    }
+  }
+}
+
+// Inbound counterpart: the website already changed its count (an online order, or an edit on its
+// admin), so the POS count of every variation in that stock group is set to the website's number.
+export async function shareStockFromWebsite(productIds: string[]): Promise<void> {
+  await shareStockAcrossVariations(productIds, true);
+}
+
 export async function pushStockToSites(productIds: string[]): Promise<StockSyncFailure[]> {
   if (productIds.length === 0) return [];
-
   // A POS-only product that follows other products' stock (migration 0084) moves their stock
   // when it changes, so those are pushed to their websites as well.
   const { data: followers } = await supabaseAdmin
@@ -128,6 +227,10 @@ export async function pushStockToSites(productIds: string[]): Promise<StockSyncF
     .not("stock_source_ids", "is", null);
   const sourceIds = (followers ?? []).flatMap((f) => f.stock_source_ids ?? []);
   if (sourceIds.length > 0) productIds = [...new Set([...productIds, ...sourceIds])];
+
+  await shareStockAcrossVariations(productIds).catch((e) =>
+    console.error("couldn't share stock across a product's variations", e)
+  );
 
   const { data: allLinks, error } = await supabaseAdmin
     .from("product_site_links")
@@ -178,11 +281,11 @@ export async function pushStockToSites(productIds: string[]): Promise<StockSyncF
         };
       }
       try {
-        await updateWebsiteProductVariation(
+        await setWebsiteVariationStock(
           catalog.id,
           link.site_product_id,
           link.variation_id,
-          { stock: Math.max(0, stock) }
+          Math.max(0, stock)
         );
         return null;
       } catch (e) {

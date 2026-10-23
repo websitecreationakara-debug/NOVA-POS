@@ -1,4 +1,30 @@
-import type { WebsiteProduct } from "./types";
+import { canPackSize } from "./stockUnits";
+import { stockGroupMembers } from "./stockGroups";
+import type { WebsiteCatalogId, WebsiteProduct, WebsiteProductVariation } from "./types";
+
+// BOSBA Drink & Snack shares one stock count between the variations of a stock group (same flavor /
+// ml-L size, see stockGroups.ts); the other catalogs keep stock on each variation.
+export const SHARED_VARIATION_STOCK_CATALOG: WebsiteCatalogId = "bosba_drink_snack";
+
+// The Sales entry keys of every variation that draws from the same stock count as this one (itself
+// included): its stock group on a shared-stock catalog, else just itself.
+export function stockGroupEntryKeys(
+  catalogId: WebsiteCatalogId,
+  product: WebsiteProduct,
+  variation: WebsiteProductVariation | null
+): string[] {
+  if (!variation) return [product.id];
+  if (catalogId !== SHARED_VARIATION_STOCK_CATALOG) return [`${product.id}::${variation.id}`];
+  return stockGroupMembers(product.variations ?? [], variation).map((m) => `${product.id}::${m.id}`);
+}
+
+// How many units are in the Order against that count: selling one 24can leaves one fewer of the 6can
+// of the same flavor too, so the cards of a stock group always show the same remaining count.
+export function cartQtyForKeys(cartQtyByEntryKey: Map<string, number>, keys: string[]): number {
+  let total = 0;
+  for (const key of keys) total += cartQtyByEntryKey.get(key) ?? 0;
+  return total;
+}
 
 // The stock of every *sellable* unit in a storefront catalog: one number per
 // simple product, and one per size/flavour of a "variable" product (whose own
@@ -22,4 +48,10 @@ export function sellableStocks(products: WebsiteProduct[]): (number | null)[] {
 // are not low -- 0 is out of stock, untracked is neither.
 export function countLowStock(products: WebsiteProduct[]): number {
   return sellableStocks(products).filter((s) => s != null && s > 0 && s <= 5).length;
+}
+
+// How many stock units selling one of this entry takes: a can pack of a shared-stock catalog takes
+// its can count ("24can" -> 24), everything else takes 1. Matches products.stock_units_per_sale.
+export function sellUnits(catalogId: WebsiteCatalogId, variation: WebsiteProductVariation | null): number {
+  return catalogId === SHARED_VARIATION_STOCK_CATALOG && variation ? canPackSize(variation.weight) : 1;
 }

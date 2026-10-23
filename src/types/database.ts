@@ -101,6 +101,9 @@ export type Product = {
   // The POS-only product follows a website product with no stock number (migration 0085): it has
   // no stock of its own to show or run out of.
   stock_untracked: boolean;
+  // How many stock units one sold unit uses (migration 0088) -- 24 for a "24can" pack, so selling
+  // one takes 24 cans off the shared stock. 1 for everything else.
+  stock_units_per_sale: number;
 };
 
 export type RecipeItem = {
@@ -388,8 +391,8 @@ export type Database = {
       >;
       products: Table<
         Product,
-        Omit<Product, "id" | "created_at" | "updated_at" | "cost_price" | "is_ingredient" | "weight_grams" | "auto_created" | "name_km" | "unit_km" | "pos_only" | "stock_source_ids" | "stock_source_name" | "stock_untracked"> &
-          Partial<Pick<Product, "id" | "cost_price" | "is_ingredient" | "weight_grams" | "auto_created" | "name_km" | "unit_km" | "pos_only" | "stock_source_ids" | "stock_source_name" | "stock_untracked">>,
+        Omit<Product, "id" | "created_at" | "updated_at" | "cost_price" | "is_ingredient" | "weight_grams" | "auto_created" | "name_km" | "unit_km" | "pos_only" | "stock_source_ids" | "stock_source_name" | "stock_untracked" | "stock_units_per_sale"> &
+          Partial<Pick<Product, "id" | "cost_price" | "is_ingredient" | "weight_grams" | "auto_created" | "name_km" | "unit_km" | "pos_only" | "stock_source_ids" | "stock_source_name" | "stock_untracked" | "stock_units_per_sale">>,
         [
           {
             foreignKeyName: "products_brand_id_fkey";

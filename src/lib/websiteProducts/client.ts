@@ -555,6 +555,17 @@ export async function updateWebsiteProductVariation(
   return absolutizeMedia(catalogId, unwrap<WebsiteProduct>(payload, ["data", "product"]));
 }
 
+// Writes one size's stock. BOSBA Drink & Snack keeps one count per stock group (same flavor / ml-L
+// size -- see stockGroups.ts) and applies a size's write to its whole group itself.
+export async function setWebsiteVariationStock(
+  catalogId: WebsiteCatalogId,
+  productId: string,
+  variationId: string,
+  stock: number | null
+): Promise<void> {
+  await updateWebsiteProductVariation(catalogId, productId, variationId, { stock });
+}
+
 export function deleteWebsiteProduct(
   catalogId: WebsiteCatalogId,
   id: string
