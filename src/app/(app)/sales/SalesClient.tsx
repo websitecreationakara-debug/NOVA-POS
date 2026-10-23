@@ -36,6 +36,7 @@ const PAYMENT_METHOD_ICONS: Record<PaymentMethod, typeof Banknote> = {
 };
 import type { ProductWithStock } from "@/lib/supabase/queries";
 import type { WebsiteProduct, WebsiteProductVariation } from "@/lib/websiteProducts/types";
+import { cartQtyForKeys, sellUnits, stockGroupEntryKeys } from "@/lib/websiteProducts/stock";
 import SalesWebsiteGrid, { SalesGridPreview } from "./SalesWebsiteGrid";
 import TopBarSlot from "@/components/TopBarSlot";
 import NewCustomerPanel from "@/components/NewCustomerPanel";
@@ -258,6 +259,13 @@ export default function SalesClient({
   // Website products whose POS name has already been synced to the website
   // title this session, so repeat taps don't repeat the write.
   const renamedEntryKeys = useRef<Set<string>>(new Set());
+  // The website's stock for each entry tapped into the Order (null = not tracked), so the "+" on a
+  // cart line can stop at the same limit the card enforces.
+  const siteStockByEntryKey = useRef<Map<string, number | null>>(new Map());
+  // entry key -> the entry keys that draw from the same stock count (same flavor / ml-L size), from
+  // the website grid; an entry not listed counts alone.
+  const [stockGroups, setStockGroups] = useState<Map<string, string[]>>(new Map());
+  const keysOf = (entryKey: string) => stockGroups.get(entryKey) ?? [entryKey];
   const [namePos, setNamePos] = useState<{ bottom: number; left: number; width: number } | null>(
     null
   );
@@ -275,11 +283,30 @@ export default function SalesClient({
 
   // The order being built lives in this component's state, which is thrown away
   // when staff open another page -- so keep a draft in this tab's
-  // sessionStorage (per business) and put it back on return. Not used when
+  // sessionStorage and put it back on return. Not used when
   // editing an existing order, which is seeded from the server instead. The
   // draft is cleared by the same reset a successful charge already does.
-  const draftKey = `nova:sales-draft:${currentBrand.id}`;
+  // One draft for the whole Order, not one per business: an Order can hold products of several
+  // businesses, and switching business keeps it.
+  const draftKey = "nova:sales-draft";
   const [draftLoaded, setDraftLoaded] = useState(false);
+  // Coming back to Sales from another page (the sidebar link carries no ?brand=) lands on the
+  // default business -- so remember the business last worked in, in this tab, and go back to it.
+  useEffect(() => {
+    if (editOrder) return;
+    try {
+      const saved = sessionStorage.getItem("nova:sales-last-brand");
+      const hasBrandParam = new URLSearchParams(window.location.search).has("brand");
+      if (!hasBrandParam && saved && saved !== currentBrand.id && brands.some((b) => b.id === saved)) {
+        router.replace(`/sales?brand=${saved}`);
+        return;
+      }
+      sessionStorage.setItem("nova:sales-last-brand", currentBrand.id);
+    } catch {
+      // storage blocked -- Sales just opens on the default business
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentBrand.id]);
   useEffect(() => {
     if (!editOrder) {
       try {
@@ -568,14 +595,46 @@ export default function SalesClient({
   // remaining-stock display.
   const cartQtyByEntryKey = useMemo(() => {
     const posIdToEntryKey = new Map<string, string>();
-    for (const [key, pos] of posByEntryKey) posIdToEntryKey.set(pos.id, key);
+    const posIdToUnits = new Map<string, number>();
+    const posById = new Map<string, ProductWithStock>();
+    for (const [key, pos] of posByEntryKey) {
+      posIdToEntryKey.set(pos.id, key);
+      posIdToUnits.set(pos.id, Number(pos.stock_units_per_sale) || 1);
+      posById.set(pos.id, pos);
+    }
     const map = new Map<string, number>();
+    const add = (key: string | undefined, qty: number) => {
+      if (key) map.set(key, (map.get(key) ?? 0) + qty);
+    };
+    // Units each product has in the Order (a can pack counts its cans -- migration 0088).
+    const unitsInCart = new Map<string, number>();
     for (const line of cart) {
-      const key = posIdToEntryKey.get(line.productId);
-      if (key) map.set(key, (map.get(key) ?? 0) + line.quantity);
+      const units = line.quantity * (posIdToUnits.get(line.productId) ?? 1);
+      unitsInCart.set(line.productId, (unitsInCart.get(line.productId) ?? 0) + units);
+      add(posIdToEntryKey.get(line.productId), units);
+      // A POS-only product that follows other products' stock (migration 0084) takes it from them:
+      // what's in the Order for it is also gone from the first source that has any left.
+      for (const sourceId of posById.get(line.productId)?.stock_source_ids ?? []) {
+        add(posIdToEntryKey.get(sourceId), units);
+        break;
+      }
+    }
+    // ...and the other way round: a follower shows what is in the Order for the product it follows
+    // -- and for every size that draws from the same stock count (same flavor / ml-L size).
+    for (const [productId, pos] of posById) {
+      const sourceId = pos.stock_source_ids?.[0];
+      const sourceKey = sourceId ? posIdToEntryKey.get(sourceId) : undefined;
+      if (!sourceId || !sourceKey) continue;
+      const groupKeys = new Set(stockGroups.get(sourceKey) ?? [sourceKey]);
+      let units = 0;
+      for (const [otherId] of posById) {
+        const otherKey = posIdToEntryKey.get(otherId);
+        if (otherKey && groupKeys.has(otherKey)) units += unitsInCart.get(otherId) ?? 0;
+      }
+      if (units) add(posIdToEntryKey.get(productId), units);
     }
     return map;
-  }, [cart, posByEntryKey]);
+  }, [cart, posByEntryKey, stockGroups]);
 
   // Tapping a website product (or one size of a "variable" one): if it
   // already maps to a POS product, add it; otherwise create + link one on the
@@ -597,12 +656,16 @@ export default function SalesClient({
     // the Order) -- blocks adding once it hits 0, including tapping past the
     // last unit of something that started in stock. `stock == null` (never
     // tracked) is never treated as out of stock.
-    const inCart = cartQtyByEntryKey.get(entryKey) ?? 0;
+    const inCart = websiteCatalog
+      ? cartQtyForKeys(cartQtyByEntryKey, stockGroupEntryKeys(websiteCatalog.id, wp, variation))
+      : (cartQtyByEntryKey.get(entryKey) ?? 0);
     const remaining = stock == null ? null : stock - inCart;
-    if (remaining != null && remaining <= 0) {
-      setStockNotice(`${title} is out of stock`);
+    const units = websiteCatalog ? sellUnits(websiteCatalog.id, variation) : 1;
+    if (remaining != null && remaining < units) {
+      setStockNotice(notEnoughStockMessage(title, units, remaining));
       return;
     }
+    siteStockByEntryKey.current.set(entryKey, stock ?? null);
 
     // The site's current sale price, if it's on sale -- charge what the card
     // actually shows, not the linked POS product's (possibly stale, always
@@ -637,6 +700,9 @@ export default function SalesClient({
         name: linked.name,
         price: effectivePrice,
         unit: linked.unit,
+        // The product was just created: the page doesn't know its pack size yet, so a "12 cans"
+        // pack would count as 1 in the Order until the page reloads.
+        stock_units_per_sale: sellUnits(websiteCatalog.id, variation),
       } as ProductWithStock;
       setLinkedThisSession((prev) => new Map(prev).set(entryKey, asProduct));
       addToCart(asProduct, weightLabel);
@@ -690,7 +756,28 @@ export default function SalesClient({
     );
   }
 
+  // "test (24can) needs 24 but only 17 left in stock" -- says how much is left, not just "out".
+  function notEnoughStockMessage(name: string, needed: number, left: number): string {
+    const available = Math.max(0, left);
+    return `${name} — not enough stock: needs ${needed}, only ${available} left in stock`;
+  }
+
   function updateQuantity(productId: string, delta: number) {
+    // "+" stops where the card stops: what's left of the website's stock, after everything already
+    // in the Order (a can pack counts its cans), must cover one more.
+    if (delta > 0 && websiteCatalog) {
+      const entry = [...posByEntryKey].find(([, p]) => p.id === productId);
+      const siteStock = entry ? siteStockByEntryKey.current.get(entry[0]) : undefined;
+      if (entry && siteStock != null) {
+        const [key, pos] = entry;
+        const inCart = cartQtyForKeys(cartQtyByEntryKey, keysOf(key));
+        const needed = (Number(pos.stock_units_per_sale) || 1) * delta;
+        if (siteStock - inCart < needed) {
+          setStockNotice(notEnoughStockMessage(pos.name, needed, siteStock - inCart));
+          return;
+        }
+      }
+    }
     setCart((prev) =>
       prev
         .map((l) => (l.productId === productId ? { ...l, quantity: l.quantity + delta } : l))
@@ -1054,6 +1141,7 @@ export default function SalesClient({
               onSelect={addWebsiteProductToCart}
               pendingEntryKey={linkingEntryKey}
               cartQtyByEntryKey={cartQtyByEntryKey}
+              onStockGroups={setStockGroups}
               khmerNames={khmerNamesBySiteProduct}
             />
           </Suspense>

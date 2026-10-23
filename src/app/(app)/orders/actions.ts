@@ -315,8 +315,15 @@ export async function updateOrderAction(
   // minus what the new lines consume. Positive => hand stock back; negative
   // => take more.
   const delta = new Map<string, number>();
+  // A can pack takes its can count off the stock per sold unit (migration 0088).
+  const { data: unitRows, error: unitErr } = await supabaseAdmin
+    .from("products")
+    .select("id, stock_units_per_sale")
+    .in("id", [...new Set([...(existing ?? []).map((r) => r.product_id), ...pricedItems.map((i) => i.productId)])]);
+  if (unitErr) throw unitErr;
+  const unitsOf = new Map((unitRows ?? []).map((r) => [r.id, Number(r.stock_units_per_sale) || 1]));
   for (const row of existing ?? []) {
-    delta.set(row.product_id, (delta.get(row.product_id) ?? 0) + Number(row.quantity));
+    delta.set(row.product_id, (delta.get(row.product_id) ?? 0) + Number(row.quantity) * (unitsOf.get(row.product_id) ?? 1));
   }
   for (const row of existingIngredients ?? []) {
     delta.set(
@@ -325,7 +332,7 @@ export async function updateOrderAction(
     );
   }
   for (const it of pricedItems) {
-    delta.set(it.productId, (delta.get(it.productId) ?? 0) - it.quantity);
+    delta.set(it.productId, (delta.get(it.productId) ?? 0) - it.quantity * (unitsOf.get(it.productId) ?? 1));
     for (const ing of it.ingredients) {
       delta.set(ing.ingredientProductId, (delta.get(ing.ingredientProductId) ?? 0) - ing.quantity);
     }

@@ -1,12 +1,13 @@
 "use client";
 
-import { Fragment, useState, useTransition } from "react";
+import { Fragment, useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Pencil, Store, Trash2, TriangleAlert, X } from "lucide-react";
 import {
   adjustStockAction,
   createPosOnlyProductAction,
   deactivateProductAction,
+  listOtherBrandImageChoicesAction,
   removeProductImageAction,
   renameProductAction,
   setPosOnlyCostAction,
@@ -30,7 +31,16 @@ import type { WebsiteCatalogId } from "@/lib/websiteProducts/types";
 
 // A picture another product of the business already has: its name, the picture address and
 // that product's stock (null = not tracked).
-export type ImageChoice = { name: string; nameKm: string | null; url: string; stock: number | null };
+// url is null for a product with no picture: it is still offered (so searching its name finds it),
+// and picking it only brings its name across.
+export type ImageChoice = {
+  name: string;
+  nameKm: string | null;
+  url: string | null;
+  stock: number | null;
+  // The business it belongs to -- only set for another business's product.
+  brand?: string;
+};
 
 // A website product (or one size of it) a POS-only product can take its stock from.
 export type StockChoice = {
@@ -246,7 +256,21 @@ export function PosOnlyProductsTable({
     run(() => uploadProductImageAction(form));
   }
 
-  const choices = imageChoices.filter((c) => c.name.toLowerCase().includes(pickerSearch.trim().toLowerCase()));
+  // The other businesses' products, fetched the first time the picker opens, so a search finds a
+  // product of any business -- not just this one.
+  const [otherChoices, setOtherChoices] = useState<ImageChoice[] | null>(null);
+  useEffect(() => {
+    if (!pickerOpen || otherChoices !== null) return;
+    let cancelled = false;
+    listOtherBrandImageChoicesAction(brandId)
+      .then((rows) => !cancelled && setOtherChoices(rows))
+      .catch(() => !cancelled && setOtherChoices([]));
+    return () => {
+      cancelled = true;
+    };
+  }, [pickerOpen, otherChoices, brandId]);
+  const allChoices = [...imageChoices, ...(otherChoices ?? [])];
+  const choices = allChoices.filter((c) => c.name.toLowerCase().includes(pickerSearch.trim().toLowerCase()));
 
   const addButton = (
     <button
@@ -739,16 +763,16 @@ export function PosOnlyProductsTable({
                               >
                                 {choices.slice(0, 120).map((c) => (
                                   <button
-                                    key={c.url}
+                                    key={`${c.brand ?? ""}|${c.url ?? `no-image:${c.name}`}`}
                                     type="button"
                                     disabled={isPending}
-                                    title={`Use ${c.name}'s picture and name`}
+                                    title={c.url ? `Use ${c.name}'s picture and name` : `Use ${c.name}'s name (it has no picture)`}
                                     onClick={() =>
                                       run(
                                         () =>
                                           setPosOnlyImageUrlAction({
                                             productId: p.id,
-                                            imageUrl: c.url,
+                                            imageUrl: c.url ?? "",
                                             name: c.name,
                                             nameKm: c.nameKm,
                                           }),
@@ -769,13 +793,19 @@ export function PosOnlyProductsTable({
                                       }`}
                                       style={{ width: "100%", aspectRatio: "1 / 1" }}
                                     >
-                                      {/* eslint-disable-next-line @next/next/no-img-element */}
-                                      <img
-                                        src={c.url}
-                                        alt={c.name}
-                                        loading="lazy"
-                                        style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
-                                      />
+                                      {c.url ? (
+                                        // eslint-disable-next-line @next/next/no-img-element
+                                        <img
+                                          src={c.url}
+                                          alt={c.name}
+                                          loading="lazy"
+                                          style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
+                                        />
+                                      ) : (
+                                        <span className="flex h-full w-full items-center justify-center text-[11px] text-zinc-400">
+                                          No image
+                                        </span>
+                                      )}
                                     </span>
                                     <span
                                       className="block text-[11px] leading-tight text-foreground"
@@ -787,14 +817,15 @@ export function PosOnlyProductsTable({
                                       }}
                                     >
                                       {c.name}
+                                      {c.brand ? <span className="text-zinc-400"> · {c.brand}</span> : null}
                                     </span>
                                   </button>
                                 ))}
                               </div>
                               <p className="text-[11px] text-zinc-400">
                                 {choices.length === 0
-                                  ? "No picture matches."
-                                  : `${choices.length} picture${choices.length === 1 ? "" : "s"} · click one to use it${
+                                  ? "No product matches."
+                                  : `${choices.length} product${choices.length === 1 ? "" : "s"} · click one to use it${
                                       choices.length > 120 ? " (showing 120 — search to narrow)" : ""
                                     }`}
                               </p>

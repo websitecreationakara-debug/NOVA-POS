@@ -1,5 +1,6 @@
 import { supabaseAdmin } from "@/lib/supabase/server";
 import { parseGrams } from "@/lib/weight";
+import { canPackSize } from "./stockUnits";
 import type { WebsiteProduct } from "./types";
 
 const round2 = (n: number) => Math.round((n + Number.EPSILON) * 100) / 100;
@@ -19,7 +20,7 @@ const round2 = (n: number) => Math.round((n + Number.EPSILON) * 100) / 100;
 export async function syncWebsiteToPos(brandSlug: string, siteProducts: WebsiteProduct[]): Promise<number> {
   const siteByKey = new Map<
     string,
-    { image: string | null; price: number | null; name: string | null; weightGrams: number | null }
+    { image: string | null; price: number | null; name: string | null; weightGrams: number | null; stockUnits: number; stock: number | null }
   >();
   const priceOf = (n: unknown) => (typeof n === "number" && Number.isFinite(n) && n > 0 ? round2(n) : null);
   for (const wp of siteProducts) {
@@ -33,6 +34,11 @@ export async function syncWebsiteToPos(brandSlug: string, siteProducts: WebsiteP
           price: priceOf(Number(v.price)),
           name: title ? (size ? `${title} (${size})` : title) : null,
           weightGrams: v.weight ? parseGrams(v.weight) : null,
+          // Drink & Snack counts one shared stock in cans: a "24can" pack takes 24 (migration 0088).
+          stockUnits: brandSlug === "bosba-drink-snack" ? canPackSize(v.weight) : 1,
+          // Drink & Snack's website counts stock per stock group (same flavor / ml-L size) and tells each
+          // size its group's count: POS follows it, so a size never keeps a count from before the groups.
+          stock: brandSlug === "bosba-drink-snack" && typeof v.stock === "number" ? v.stock : null,
         });
       }
     } else {
@@ -41,6 +47,8 @@ export async function syncWebsiteToPos(brandSlug: string, siteProducts: WebsiteP
         price: priceOf(Number(wp.price)),
         name: wp.title?.trim() || null,
         weightGrams: wp.weight ? parseGrams(wp.weight) : null,
+        stockUnits: 1,
+        stock: null,
       });
     }
   }
@@ -53,13 +61,15 @@ export async function syncWebsiteToPos(brandSlug: string, siteProducts: WebsiteP
     image_url: string | null;
     price: number;
     weight_grams: number | null;
+    stock_units_per_sale: number;
+    stock_levels: { quantity: number } | { quantity: number }[] | null;
     product_site_links: Link[] | Link | null;
   };
   const rows: Row[] = [];
   for (let from = 0; ; from += 1000) {
     const { data, error } = await supabaseAdmin
       .from("products")
-      .select("id, name, image_url, price, weight_grams, brands!inner(slug), product_site_links(site_product_id, variation_id)")
+      .select("id, name, image_url, price, weight_grams, stock_units_per_sale, stock_levels(quantity), brands!inner(slug), product_site_links(site_product_id, variation_id)")
       .eq("brands.slug", brandSlug)
       .eq("is_active", true)
       .order("id")
@@ -69,8 +79,9 @@ export async function syncWebsiteToPos(brandSlug: string, siteProducts: WebsiteP
     if (!data || data.length < 1000) break;
   }
 
-  type Patch = { name?: string; image_url?: string; price?: number; weight_grams?: number };
+  type Patch = { name?: string; image_url?: string; price?: number; weight_grams?: number; stock_units_per_sale?: number };
   const updates: { id: string; patch: Patch }[] = [];
+  const stockUpdates: { id: string; quantity: number }[] = [];
   for (const p of rows) {
     const links = Array.isArray(p.product_site_links) ? p.product_site_links : p.product_site_links ? [p.product_site_links] : [];
     const link = links[0];
@@ -80,9 +91,14 @@ export async function syncWebsiteToPos(brandSlug: string, siteProducts: WebsiteP
     const patch: Patch = {};
     if (site.name && site.name !== p.name) patch.name = site.name;
     if (site.weightGrams !== null && site.weightGrams !== Number(p.weight_grams)) patch.weight_grams = site.weightGrams;
+    if (site.stockUnits !== Number(p.stock_units_per_sale)) patch.stock_units_per_sale = site.stockUnits;
     if (site.image && site.image !== p.image_url) patch.image_url = site.image;
     if (site.price !== null && Math.abs(site.price - Number(p.price)) >= 0.005) patch.price = site.price;
     if (Object.keys(patch).length > 0) updates.push({ id: p.id, patch });
+    const level = Array.isArray(p.stock_levels) ? p.stock_levels[0] : p.stock_levels;
+    if (site.stock !== null && level && Number(level.quantity) !== site.stock) {
+      stockUpdates.push({ id: p.id, quantity: site.stock });
+    }
   }
 
   for (let i = 0; i < updates.length; i += 20) {
@@ -93,5 +109,16 @@ export async function syncWebsiteToPos(brandSlug: string, siteProducts: WebsiteP
       })
     );
   }
-  return updates.length;
+  for (let i = 0; i < stockUpdates.length; i += 20) {
+    await Promise.all(
+      stockUpdates.slice(i, i + 20).map(async (u) => {
+        const { error } = await supabaseAdmin
+          .from("stock_levels")
+          .update({ quantity: u.quantity, updated_at: new Date().toISOString() })
+          .eq("product_id", u.id);
+        if (error) throw error;
+      })
+    );
+  }
+  return updates.length + stockUpdates.length;
 }

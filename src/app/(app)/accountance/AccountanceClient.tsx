@@ -829,6 +829,34 @@ export default function AccountanceClient({
       return true;
     });
   }, [marginReport, marginSearch, marginCategoryFilter]);
+  // The Margin Report footer: totals over every row that matches the search/filter (all pages), using the
+  // same cost fallback as the rows. A row with no cost at all adds nothing to the cost columns and is left
+  // out of the profit/margin, so one missing cost never makes the profit look bigger than it is.
+  const marginTotals = useMemo(() => {
+    let units = 0;
+    let revenue = 0;
+    let unitCost = 0;
+    let sellingPrice = 0;
+    let cogs = 0;
+    let costedRevenue = 0;
+    let unknownCost = 0;
+    for (const r of filteredMarginReport) {
+      units += r.unitsSold;
+      revenue += r.revenue;
+      sellingPrice += r.sellingPrice;
+      const rowUnitCost = r.unitCost ?? r.suggestedCost;
+      const rowCogs = r.totalCogs ?? (rowUnitCost === null ? null : rowUnitCost * r.unitsSold);
+      if (rowUnitCost !== null) unitCost += rowUnitCost;
+      if (rowCogs === null) {
+        unknownCost += 1;
+      } else {
+        cogs += rowCogs;
+        costedRevenue += r.revenue;
+      }
+    }
+    const { grossProfit, grossMarginPct } = computeGrossMargin(costedRevenue, cogs);
+    return { units, revenue, unitCost, sellingPrice, cogs, grossProfit, grossMarginPct, unknownCost };
+  }, [filteredMarginReport]);
   const marginCategories = useMemo(
     () =>
       Array.from(new Set(marginReport.map((r) => r.categoryName).filter((c): c is string => Boolean(c)))).sort(),
@@ -2356,12 +2384,25 @@ export default function AccountanceClient({
                   {filteredMarginReport.length > 0 && (
                     <tfoot>
                       <tr className="border-t-2 border-black/[.12] font-semibold dark:border-white/[.2]">
-                        <td className="py-3 pr-3">Total Revenue ({filteredMarginReport.length} products)</td>
-                        <td />
+                        <td className="py-3 pr-3">Total ({filteredMarginReport.length} products)</td>
+                        <td className="py-3 pr-3 text-right">{marginTotals.units}</td>
+                        <td className="py-3 pr-3 text-right">{formatMoney(marginTotals.revenue)}</td>
+                        <td className="py-3 pr-3 text-right">{formatMoney(marginTotals.unitCost)}</td>
+                        <td className="py-3 pr-3 text-right">{formatMoney(marginTotals.sellingPrice)}</td>
                         <td className="py-3 pr-3 text-right">
-                          {formatMoney(filteredMarginReport.reduce((sum, r) => sum + r.revenue, 0))}
+                          {formatMoney(marginTotals.cogs)}
+                          {marginTotals.unknownCost > 0 && (
+                            <div className="text-xs font-normal text-amber-500">
+                              ⚠ {marginTotals.unknownCost} with no cost
+                            </div>
+                          )}
                         </td>
-                        <td colSpan={5} />
+                        <td className="py-3 pr-3 text-right">
+                          {marginTotals.grossProfit === null ? "—" : formatMoney(marginTotals.grossProfit)}
+                        </td>
+                        <td className="py-3 text-right">
+                          {marginTotals.grossMarginPct === null ? "—" : `${marginTotals.grossMarginPct.toFixed(1)}%`}
+                        </td>
                       </tr>
                     </tfoot>
                   )}

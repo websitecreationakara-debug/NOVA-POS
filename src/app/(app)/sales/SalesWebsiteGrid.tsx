@@ -8,6 +8,7 @@ import type {
   WebsiteProduct,
   WebsiteProductVariation,
 } from "@/lib/websiteProducts/types";
+import { cartQtyForKeys, sellUnits, stockGroupEntryKeys } from "@/lib/websiteProducts/stock";
 import { listSellableWebsiteProductsAction } from "../stock/websiteActions";
 import { formatUsd } from "@/lib/formatNumber";
 
@@ -165,6 +166,7 @@ export default function SalesWebsiteGrid({
   onSelect,
   pendingEntryKey,
   cartQtyByEntryKey,
+  onStockGroups,
   khmerNames,
 }: {
   catalogId: WebsiteCatalogId;
@@ -179,6 +181,9 @@ export default function SalesWebsiteGrid({
   // How many of each entry are sitting in the Order right now, so the card
   // can show remaining-after-this-sale stock.
   cartQtyByEntryKey: Map<string, number>;
+  // Tells the Order which entries share one stock count (same flavor / ml-L size), so it can count
+  // them together too.
+  onStockGroups?: (groups: Map<string, string[]>) => void;
   // website product id -> the Khmer name(s) saved on its linked POS product(s),
   // so the search box finds a product by its Khmer name too. The cards still
   // show the English title.
@@ -281,6 +286,18 @@ export default function SalesWebsiteGrid({
     setPrevInitialSig(initialSig);
     setProducts(initialProducts);
   }
+
+  // Report which entries share a stock count to the Order (only a shared-stock catalog has any).
+  useEffect(() => {
+    if (!onStockGroups) return;
+    const groups = new Map<string, string[]>();
+    for (const p of products ?? []) {
+      for (const v of p.variations ?? []) {
+        groups.set(`${p.id}::${v.id}`, stockGroupEntryKeys(catalogId, p, v));
+      }
+    }
+    onStockGroups(groups);
+  }, [products, catalogId, onStockGroups]);
 
   // NFC so Khmer typed with a different composition order still matches.
   const q = search.trim().normalize("NFC").toLowerCase();
@@ -461,9 +478,9 @@ export default function SalesWebsiteGrid({
             const onSale = salePrice != null && salePrice < price;
             // Show stock minus what's already in the Order, so staff see what's
             // left after this sale. The real decrement happens on Charge.
-            const inCart = cartQtyByEntryKey.get(key) ?? 0;
+            const inCart = cartQtyForKeys(cartQtyByEntryKey, stockGroupEntryKeys(catalogId, p, v));
             const remaining = stock == null ? null : stock - inCart;
-            const isOut = remaining != null && remaining <= 0;
+            const isOut = remaining != null && remaining < sellUnits(catalogId, v);
             const pending = pendingEntryKey === key;
             // A "variable" product shows up as several near-identical cards
             // (same photo, same name) -- one per option. `optionLabel` is the
@@ -521,7 +538,7 @@ export default function SalesWebsiteGrid({
                   {(isOut || pending) && (
                     <div className="absolute inset-0 flex items-center justify-center bg-zinc-900/55">
                       <span className="rounded-full bg-zinc-800/90 px-2.5 py-1 text-xs font-bold text-white">
-                        {pending ? "Adding…" : "Out of stock"}
+                        {pending ? "Adding…" : remaining != null && remaining > 0 ? "Not enough stock" : "Out of stock"}
                       </span>
                     </div>
                   )}
@@ -561,7 +578,9 @@ export default function SalesWebsiteGrid({
                   {remaining == null
                     ? "Stock untracked"
                     : isOut
-                      ? "Out of stock"
+                      ? remaining > 0
+                        ? `Only ${remaining} left — needs ${sellUnits(catalogId, v)}`
+                        : "Out of stock"
                       : `${remaining} in stock`}
                 </div>
               </button>

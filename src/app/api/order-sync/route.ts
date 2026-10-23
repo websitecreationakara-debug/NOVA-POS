@@ -5,6 +5,7 @@ import type { ProductSiteLink } from "@/types/database";
 import { ALL_PAYMENT_METHODS, type PaymentMethod } from "@/lib/paymentMethods";
 import { ppDay } from "@/lib/phnomPenhTime";
 import { sendPurchaseEvent } from "@/lib/metaConversions";
+import { pushStockToSites } from "@/lib/site-sync";
 
 const VALID_SITES: ProductSiteLink["site"][] = [
   "bosba-premium-foods",
@@ -256,6 +257,17 @@ export async function POST(request: NextRequest) {
     }
   } catch (e) {
     console.error("order-sync: couldn't set customer_since", e);
+  }
+
+  // The website's stock is shared by all of a product's variations, so the other variations'
+  // POS counts follow the one this order just decremented -- and, since a can pack takes its can
+  // count off in POS but only 1 on the website, POS's number is pushed back to the website too.
+  // Best effort, like the step above.
+  try {
+    const { data: lines } = await supabaseAdmin.from("order_items").select("product_id").eq("order_id", orderId);
+    await pushStockToSites((lines ?? []).map((l) => l.product_id));
+  } catch (e) {
+    console.error("order-sync: couldn't share stock across variations", e);
   }
 
   // Without this, a brand-new online order's stock decrement is correct in
