@@ -114,12 +114,12 @@ function reconciliationFor(brandId: string, fromDate: string, toDate: string) {
   return getReconciliation(brandId, fromDate);
 }
 
-// The Margin Report (one row per product sold, each priced from its current cost) is
-// only shown on the COGS tab, and building it is by far the heaviest query here --
-// so the other tabs skip it.
-function marginReportFor(tab: AccountanceTab, brandId: string, fromDate: string, toDate: string) {
-  if (tab !== "cogs") return Promise.resolve<Awaited<ReturnType<typeof getMarginReport>>>([]);
-  return getMarginReport(brandId, fromDate, toDate);
+// The Margin Report (one row per product sold, each priced from its current cost). Total COGS on
+// every tab is its total -- the same number the Dashboard shows -- so it is built for every tab
+// (it is the heaviest query here). Empty if it could not be built: the page then falls back to
+// the COGS summary's own total.
+function marginReportFor(_tab: AccountanceTab, brandId: string, fromDate: string, toDate: string) {
+  return getMarginReport(brandId, fromDate, toDate).catch(() => []);
 }
 
 export default async function AccountancePage({
@@ -240,14 +240,27 @@ export default async function AccountancePage({
 
   // All three at once (the previous period used to wait for the current one).
   const [
-    [{ summary, orders }, reconciliation, expenses, cogsSummary, marginReport],
+    [{ summary, orders }, reconciliation, expenses, cogsSummaryBase, marginReport],
     wasteLog,
-    [{ summary: prevSummary }, prevExpenses, prevCogsSummary],
+    [{ summary: prevSummary, orders: prevOrders }, prevExpenses, prevCogsSummary],
     stockUnits,
   ] = await Promise.all([currentDataPromise, wasteLogPromise, previousPeriodPromise, stockUnitsPromise]);
 
+  // Total COGS is the Margin Report's: the sum of the products that have a Total COGS there (a
+  // product with no cost price adds nothing) -- what the Dashboard shows, so the two screens match.
+  const cogsSummary =
+    marginReport.length > 0
+      ? {
+          ...cogsSummaryBase,
+          totalCogs: Math.round(marginReport.reduce((sum, r) => sum + (r.totalCogs ?? 0), 0) * 100) / 100,
+          hasUnknownCost: marginReport.some((r) => r.totalCogs === null),
+        }
+      : cogsSummaryBase;
+
   const prevExpenseTotal = prevExpenses.reduce((sum, e) => sum + e.amount, 0);
-  const prevGrossProfit = prevSummary.total - prevCogsSummary.totalCogs;
+  // Same gross profit as the page itself: revenue less delivery fees less COGS.
+  const prevDeliveryFees = prevOrders.reduce((sum, o) => sum + Number(o.delivery_fee ?? 0), 0);
+  const prevGrossProfit = prevSummary.total - prevDeliveryFees - prevCogsSummary.totalCogs;
   // Net profit summary card = total revenue - total expenses.
   const prevNetProfit = prevSummary.total - prevExpenseTotal;
   const previousPeriod = {

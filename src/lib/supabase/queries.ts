@@ -1,12 +1,13 @@
 import { cache } from "react";
 import { supabaseAdmin } from "@/lib/supabase/server";
 import { catalogForBrandSlug, configuredCatalogs } from "@/lib/websiteProducts/catalogs";
-import { getWebsiteProduct, listWebsiteAddons, listWebsiteProducts } from "@/lib/websiteProducts/client";
+import { getWebsiteProduct, listWebsiteAddons, listWebsiteCategories, listWebsiteProducts } from "@/lib/websiteProducts/client";
 import { countLowStock } from "@/lib/websiteProducts/stock";
 import type { WebsiteCatalogId } from "@/lib/websiteProducts/types";
 import { formatInvoiceNumber, invoiceMonthStamp, invoiceMonthStartIso } from "@/lib/invoiceNumber";
-import { ppDayEnd, ppDayStart } from "@/lib/phnomPenhTime";
+import { ppDay, ppDayEnd, ppDayStart, ppToday } from "@/lib/phnomPenhTime";
 import { STOCK_TRACKING_START } from "@/lib/stockTracking";
+import { buildDailyLedger, daysOfMonth, type DailyLedgerRow, type LedgerDeletion, type LedgerSiteItem } from "@/lib/dailyLedger";
 import { COUNTED_FULFILLMENT_STATUSES } from "@/lib/orderStatus";
 import { orderForBrandShare } from "@/lib/orderBrandShare";
 import { ALL_PAYMENT_METHODS, type PaymentMethod } from "@/lib/paymentMethods";
@@ -17,6 +18,7 @@ import {
   getEffectiveProductCost,
   getEffectiveProductCosts,
   getLinkedStockCost10pcts,
+  getLinkedStockOriginalCosts,
 } from "@/lib/websiteProducts/purchaseCosts";
 import type {
   Brand,
@@ -2045,4 +2047,261 @@ export async function getExpensesForDateRange(
 
   if (error) throw error;
   return data ?? [];
+}
+
+// The Daily Ledger's data (see lib/dailyLedger.ts): one business, one month ("YYYY-MM").
+export async function getDailyLedger(brandId: string, month: string): Promise<DailyLedgerRow[]> {
+  const days = daysOfMonth(month);
+  const fromDay = days[0];
+  const toDay = days[days.length - 1];
+  const from = ppDayStart(fromDay);
+  const to = ppDayEnd(toDay);
+
+  const [products, movements, movementsAfter, adjustments, soldLines] = await Promise.all([
+    selectAll(
+      supabaseAdmin
+        .from("products")
+        .select("id, sku, name, unit, price, pos_only, is_active, categories(name), stock_levels(quantity), product_site_links(site_product_id, variation_id)")
+        .eq("brand_id", brandId)
+        .order("id")
+    ),
+    selectAll(
+      supabaseAdmin
+        .from("stock_movements")
+        .select("product_id, delta, created_at, products!inner(brand_id)")
+        .eq("products.brand_id", brandId)
+        .gte("created_at", from)
+        .lte("created_at", to)
+        .order("id")
+    ),
+    selectAll(
+      supabaseAdmin
+        .from("stock_movements")
+        .select("product_id, delta, products!inner(brand_id)")
+        .eq("products.brand_id", brandId)
+        .gt("created_at", to)
+        .order("id")
+    ),
+    selectAll(
+      supabaseAdmin
+        .from("stock_adjustments")
+        .select("product_id, delta, reason, created_at, products!inner(brand_id)")
+        .eq("products.brand_id", brandId)
+        .gte("created_at", from)
+        .lte("created_at", to)
+        .order("id")
+    ),
+    selectAll(
+      supabaseAdmin
+        .from("order_items")
+        .select(
+          "product_id, quantity, products!inner(brand_id, stock_units_per_sale), orders!inner(status, list_at)"
+        )
+        .eq("products.brand_id", brandId)
+        .eq("orders.status", "paid")
+        .in("orders.fulfillment_status", COUNTED_FULFILLMENT_STATUSES)
+        .gte("orders.list_at", from)
+        .lte("orders.list_at", to)
+        .order("id")
+    ),
+  ]);
+  for (const r of [products, movements, movementsAfter, adjustments, soldLines]) if (r.error) throw r.error;
+
+  // What staff typed into the ledger for this month (migration 0089). Before that migration is
+  // applied the ledger just shows the worked-out numbers.
+  const typed = await selectAll(
+    supabaseAdmin
+      .from("daily_ledger_entries")
+      .select("product_id, field, value, products!inner(brand_id)")
+      .eq("products.brand_id", brandId)
+      .eq("month", month)
+      .order("product_id")
+      .order("field")
+  );
+  if (typed.error && !/daily_ledger_entries/.test(typed.error.message)) throw typed.error;
+
+  // Removed products dropped from the ledger with its Delete button (migration 0090; before it is
+  // applied nothing is hidden).
+  const hiddenRes = await selectAll(supabaseAdmin.from("daily_ledger_hidden").select("product_id").order("product_id"));
+  if (hiddenRes.error && !/daily_ledger_hidden/.test(hiddenRes.error.message)) throw hiddenRes.error;
+  const hiddenIds = new Set<string>((hiddenRes.error ? [] : hiddenRes.data).map((h) => h.product_id as string));
+
+  type ProductRow = {
+    id: string;
+    sku: string | null;
+    name: string;
+    unit: string;
+    price: number;
+    pos_only: boolean;
+    is_active: boolean;
+    categories: { name: string } | null;
+    stock_levels: { quantity: number } | { quantity: number }[] | null;
+    product_site_links: { site_product_id: string; variation_id: string }[];
+  };
+  const allProductRows = products.data as unknown as ProductRow[];
+
+  // The same list Stock shows: the business's website products (one row per size/flavor) and add-ons,
+  // plus its POS-only products -- named and grouped the way Stock names and groups them. A product the
+  // website no longer lists is not in Stock, so it is not here. If the website can't be reached the
+  // ledger falls back to every active POS product.
+  const { data: brandRow } = await supabaseAdmin.from("brands").select("slug").eq("id", brandId).single();
+  const catalog = brandRow ? catalogForBrandSlug(brandRow.slug) : null;
+  type StockViewItem = { name: string; size: string; category: string; site: LedgerSiteItem; deletion: LedgerDeletion };
+  const stockView = new Map<string, StockViewItem>();
+  let websiteLoaded = false;
+  if (catalog) {
+    try {
+      const [siteProducts, addons, siteCategories] = await Promise.all([
+        listWebsiteProducts(catalog.id),
+        listWebsiteAddons(catalog.id).catch(() => []),
+        listWebsiteCategories(catalog.id).catch(() => []),
+      ]);
+      const categoryName = new Map(siteCategories.map((c) => [c.id, c.name]));
+      for (const wp of siteProducts) {
+        const category = (wp.category_id && categoryName.get(wp.category_id)) || "Uncategorized";
+        const entries = (wp.type === "variable" || wp.type === "variant") && (wp.variations?.length ?? 0) > 0
+          ? wp.variations!.map((v) => ({ id: v.id, size: v.weight || v.flavor || "", price: v.price, stock: v.stock, image: v.image_url ?? wp.image_url }))
+          : [{ id: "", size: wp.weight ?? "", price: wp.price, stock: wp.stock, image: wp.image_url }];
+        for (const s of entries) {
+          const title = [wp.title, s.id ? s.size : ""].filter(Boolean).join(" ");
+          stockView.set(`${wp.id}::${s.id}`, {
+            name: wp.title,
+            size: s.size,
+            category,
+            site: { catalogId: catalog.id, siteProductId: wp.id, variationId: s.id, title, price: s.price, imageUrl: s.image, stock: s.stock },
+            // Deleting the only size deletes the whole product, as it does in Stock.
+            deletion:
+              s.id && entries.length > 1
+                ? { kind: "size", catalogId: catalog.id, productId: wp.id, variationId: s.id, sizeLabel: s.size }
+                : { kind: "product", catalogId: catalog.id, productId: wp.id },
+          });
+        }
+      }
+      for (const a of addons) {
+        stockView.set(`${a.id}::`, {
+          name: a.title,
+          size: "",
+          category: "Add-ons",
+          site: { catalogId: catalog.id, siteProductId: a.id, variationId: "", title: a.title, price: a.price, imageUrl: a.image_url, stock: a.stock },
+          deletion: { kind: "addon", catalogId: catalog.id, addonId: a.id },
+        });
+      }
+      websiteLoaded = true;
+    } catch {
+      // Storefront unreachable: keep every active POS product, as named in POS.
+    }
+  }
+  const stockInfo = (p: ProductRow) => {
+    for (const l of p.product_site_links) {
+      const hit = stockView.get(`${l.site_product_id}::${l.variation_id || ""}`);
+      if (hit) return hit;
+    }
+    return null;
+  };
+  const inStock = (p: ProductRow) => p.is_active && (!websiteLoaded || p.pos_only || !!stockInfo(p));
+  // A product taken out of Stock (deleted on the website, or hidden) stays in the ledger, under its own
+  // group. A deleted POS-only product, or one that was linked to a website listing, is always kept; any
+  // other leftover only while it has stock or anything happened to it in the month (the old imported
+  // products would otherwise flood the list). One still on the website under another record is shown by
+  // that record instead, and a nameless draft is never shown.
+  const onWebsite = (p: ProductRow) => p.product_site_links.some((l) => stockView.has(`${l.site_product_id}::${l.variation_id || ""}`));
+  // A "Set" (a bundle sold as one product, e.g. "Fresh Salmon Set (250g)") has no stock of its own, so it
+  // is not in the ledger.
+  const isSet = (name: string) => /\bset\b/i.test(name);
+  const productRows = allProductRows.filter(
+    (p) =>
+      !isSet(stockInfo(p)?.name ?? p.name) &&
+      (inStock(p) || (!onWebsite(p) && p.name.trim() !== "" && !hiddenIds.has(p.id)))
+  );
+  const productIds = productRows.map((p) => p.id);
+  const originalCosts = await getLinkedStockOriginalCosts(productIds).catch(() => new Map<string, number | null>());
+
+  // Stock added by hand is a purchase; stock taken out by hand is "other out". The adjustments an
+  // order's own cancel/delete writes ("Order ...") are not either -- the order is the sale.
+  const purchases: { productId: string; day: string; qty: number }[] = [];
+  const other: { productId: string; day: string; qty: number }[] = [];
+  for (const a of adjustments.data as unknown as { product_id: string; delta: number; reason: string | null; created_at: string }[]) {
+    if ((a.reason ?? "").startsWith("Order ")) continue;
+    const day = ppDay(a.created_at);
+    const delta = Number(a.delta);
+    if (delta > 0) purchases.push({ productId: a.product_id, day, qty: delta });
+    else if (delta < 0) other.push({ productId: a.product_id, day, qty: -delta });
+  }
+
+  // Website products with no POS product yet still belong in the list (Stock shows them). They get a
+  // placeholder id and carry what is needed to create their POS product when something is first typed in.
+  const linkedKeys = new Set(productRows.filter(inStock).flatMap((p) => p.product_site_links.map((l) => `${l.site_product_id}::${l.variation_id || ""}`)));
+  const unlinked = [...stockView.entries()]
+    .filter(([key, v]) => !linkedKeys.has(key) && !isSet(v.name))
+    .map(([key, v]) => ({
+      id: `site:${key}`,
+      sku: null,
+      fullName: v.name,
+      name: v.name,
+      size: v.size,
+      unit: "pcs",
+      categoryName: v.category,
+      price: v.site.price,
+      originalCost: null,
+      cost10: null,
+      quantityNow: Math.max(0, v.site.stock ?? 0),
+      cost: null,
+      site: v.site,
+      deletion: v.deletion,
+    }));
+
+  return buildDailyLedger({
+    month,
+    today: ppToday(),
+    products: [...productRows.map((p) => {
+      const level = Array.isArray(p.stock_levels) ? p.stock_levels[0] : p.stock_levels;
+      return {
+        id: p.id,
+        sku: p.sku,
+        fullName: p.name,
+        ...(inStock(p) && stockInfo(p) ? { name: stockInfo(p)!.name, size: stockInfo(p)!.size } : {}),
+        deletion: !inStock(p) ? ({ kind: "ledger" } as const) : p.pos_only ? ({ kind: "pos" } as const) : (stockInfo(p)?.deletion ?? ({ kind: "pos" } as const)),
+        ...(inStock(p) || p.pos_only || p.product_site_links.length > 0 ? {} : { hideWhenEmpty: true }),
+        unit: p.unit,
+        categoryName: !inStock(p)
+          ? "Removed from Stock"
+          : websiteLoaded
+            ? (stockInfo(p)?.category ?? "POS only")
+            : (p.categories?.name ?? "Uncategorized"),
+        price: Number(p.price),
+        originalCost: originalCosts.get(p.id) ?? null,
+        // Like Total Cost, TC+10% is the ledger's own column: typed in, never taken from Stock.
+        cost10: null,
+        quantityNow: Number(level?.quantity ?? 0),
+        // The ledger's Total Cost is its own column: it starts empty and is typed in, never taken from Stock's Total.
+        cost: null,
+      };
+    }), ...unlinked],
+    movements: (movements.data as unknown as { product_id: string; delta: number; created_at: string }[]).map((m) => ({
+      productId: m.product_id,
+      day: ppDay(m.created_at),
+      qty: Number(m.delta),
+    })),
+    movementsAfter: (movementsAfter.data as unknown as { product_id: string; delta: number }[]).map((m) => ({
+      productId: m.product_id,
+      qty: Number(m.delta),
+    })),
+    purchases,
+    sold: (
+      soldLines.data as unknown as {
+        product_id: string;
+        quantity: number;
+        products: { stock_units_per_sale: number } | null;
+        orders: { list_at: string | null } | null;
+      }[]
+    )
+      .filter((l) => l.orders?.list_at)
+      .map((l) => ({
+        productId: l.product_id,
+        day: ppDay(l.orders!.list_at),
+        qty: Number(l.quantity) * (Number(l.products?.stock_units_per_sale) || 1),
+      })),
+    other,
+    entries: (typed.error ? [] : typed.data).map((e) => ({ productId: e.product_id, field: e.field, value: e.value })),
+  });
 }
