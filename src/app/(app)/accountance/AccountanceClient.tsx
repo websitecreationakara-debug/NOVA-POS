@@ -791,7 +791,10 @@ export default function AccountanceClient({
   // Gross profit = revenue - COGS; net profit also backs out operating
   // expenses and the cost of waste/spillage/comps -- see the plan's
   // confirmed decision on folding waste/promo into net profit.
-  const grossProfit = summary.total - cogsSummary.totalCogs;
+  // Delivery fees are passed on to the courier, not product profit, so they come off too -- the same
+  // gross profit the Dashboard shows (see getDashboardStats).
+  const deliveryFeeTotal = orders.reduce((sum, o) => sum + Number(o.delivery_fee ?? 0), 0);
+  const grossProfit = summary.total - deliveryFeeTotal - cogsSummary.totalCogs;
   const netProfit = grossProfit - expenseTotal - wastePromoTotal;
   // The Net profit summary card is simply Total revenue - Total expenses; the
   // Profit & Loss breakdown below keeps the full COGS/waste waterfall.
@@ -1800,6 +1803,12 @@ export default function AccountanceClient({
                     <span className="text-zinc-500">Gross sales</span>
                     <span className="font-medium tabular-nums">{formatMoney(summary.total)}</span>
                   </div>
+                  {deliveryFeeTotal > 0 && (
+                    <div className="flex justify-between">
+                      <span className="text-zinc-500">Delivery fees</span>
+                      <span className="font-medium tabular-nums">-{formatMoney(deliveryFeeTotal)}</span>
+                    </div>
+                  )}
                   <div className="flex justify-between">
                     <span className="text-zinc-500">
                       Cost of goods sold

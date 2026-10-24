@@ -252,6 +252,31 @@ export type StockAdjustment = {
   cost_impact: number | null;
 };
 
+// One logged change of a product's stock quantity (migration 0074): written by a trigger on
+// stock_levels, never by the app.
+export type StockMovement = {
+  id: number;
+  product_id: string;
+  delta: number;
+  quantity_after: number;
+  kind: "baseline" | "change";
+  created_at: string;
+};
+
+// A value typed into the Stock > Daily Ledger (migration 0089), shown in place of the worked-out number.
+export type DailyLedgerHidden = {
+  product_id: string;
+  hidden_at: string;
+};
+
+export type DailyLedgerEntry = {
+  product_id: string;
+  month: string;
+  field: string;
+  value: string;
+  updated_at: string;
+};
+
 export type Promotion = {
   id: string;
   brand_id: string | null;
@@ -436,6 +461,45 @@ export type Database = {
         [
           {
             foreignKeyName: "stock_adjustments_product_id_fkey";
+            columns: ["product_id"];
+            isOneToOne: false;
+            referencedRelation: "products";
+            referencedColumns: ["id"];
+          },
+        ]
+      >;
+      daily_ledger_entries: Table<
+        DailyLedgerEntry,
+        Omit<DailyLedgerEntry, "updated_at"> & Partial<Pick<DailyLedgerEntry, "updated_at">>,
+        [
+          {
+            foreignKeyName: "daily_ledger_entries_product_id_fkey";
+            columns: ["product_id"];
+            isOneToOne: false;
+            referencedRelation: "products";
+            referencedColumns: ["id"];
+          },
+        ]
+      >;
+      daily_ledger_hidden: Table<
+        DailyLedgerHidden,
+        Omit<DailyLedgerHidden, "hidden_at"> & Partial<Pick<DailyLedgerHidden, "hidden_at">>,
+        [
+          {
+            foreignKeyName: "daily_ledger_hidden_product_id_fkey";
+            columns: ["product_id"];
+            isOneToOne: true;
+            referencedRelation: "products";
+            referencedColumns: ["id"];
+          },
+        ]
+      >;
+      stock_movements: Table<
+        StockMovement,
+        Omit<StockMovement, "id" | "created_at" | "kind"> & Partial<Pick<StockMovement, "id" | "created_at" | "kind">>,
+        [
+          {
+            foreignKeyName: "stock_movements_product_id_fkey";
             columns: ["product_id"];
             isOneToOne: false;
             referencedRelation: "products";

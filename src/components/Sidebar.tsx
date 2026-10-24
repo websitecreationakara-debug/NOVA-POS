@@ -67,6 +67,10 @@ const ACCOUNTANCE_LINKS = [
 ];
 const ACCOUNTANCE_ROLES = ["admin", "accountance"];
 
+// Pages under Stock, listed below it in the sidebar. They live under /stock, so they follow the
+// same access as Stock itself.
+const STOCK_LINKS = [{ href: "/stock/ledger", label: "Daily Ledger" }];
+
 // Remembered per browser so the sidebar stays how the staff member left it.
 const COLLAPSED_KEY = "nova:sidebar-collapsed";
 
@@ -100,6 +104,15 @@ export default function Sidebar({ role }: { role: string }) {
   }
 
   const showAccountance = ACCOUNTANCE_ROLES.includes(role);
+
+  // Stock's sub-list opens the same way as Accountance's above.
+  const isOnStock = pathname.startsWith("/stock");
+  const [stockOpen, setStockOpen] = useState(isOnStock);
+  const [wasOnStock, setWasOnStock] = useState(isOnStock);
+  if (isOnStock !== wasOnStock) {
+    setWasOnStock(isOnStock);
+    if (isOnStock) setStockOpen(true);
+  }
 
   // Collapsed = icons only. Read from storage after mount (the server can't
   // know it), so a collapsed sidebar briefly renders open on a fresh load.
@@ -233,6 +246,46 @@ export default function Sidebar({ role }: { role: string }) {
           .filter((item) => item.roles.includes(role))
           .map((item) => {
             const isActive = item.href === "/" ? pathname === "/" : pathname.startsWith(item.href);
+            if (item.href === "/stock") {
+              return (
+                <div key={item.href}>
+                  <div
+                    className={`flex items-center gap-3 rounded-lg text-sm font-medium transition-colors ${
+                      collapsed ? "justify-center px-3" : "pr-2 pl-3"
+                    } ${isActive ? NAV_ACTIVE : "text-muted-foreground hover:bg-muted"}`}
+                  >
+                    <Link
+                      href={item.href}
+                      title={collapsed ? item.label : undefined}
+                      className={`flex items-center gap-3 py-2.5 ${collapsed ? "" : "flex-1"}`}
+                    >
+                      <item.icon className="size-4" />
+                      {!collapsed && item.label}
+                    </Link>
+                    {!collapsed && (
+                      <button
+                        type="button"
+                        onClick={() => setStockOpen((open) => !open)}
+                        aria-expanded={stockOpen}
+                        aria-label={stockOpen ? "Collapse Stock" : "Expand Stock"}
+                        className={`rounded p-1 ${isActive ? "hover:bg-white/20" : "hover:bg-black/5 dark:hover:bg-white/10"}`}
+                      >
+                        <ChevronDown className={`size-4 transition-transform ${stockOpen ? "rotate-180" : ""}`} />
+                      </button>
+                    )}
+                  </div>
+                  {stockOpen && !collapsed && (
+                    <div className="mt-1 flex flex-col gap-0.5 border-l border-border pl-4">
+                      {STOCK_LINKS.map((l) => (
+                        <Link key={l.href} href={l.href} className={subLinkClass(pathname.startsWith(l.href))}>
+                          {l.label}
+                        </Link>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            }
             return (
               <Link
                 key={item.href}

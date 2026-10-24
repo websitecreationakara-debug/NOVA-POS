@@ -134,10 +134,11 @@ export function unitsSoldByCost(lines: MarginLine[]): { unitCost: number; units:
 // `currentOnly` makes Unit Cost exactly currentCost (null when there is none): no
 // fallback to what the sales were recorded at. The
 // Margin Report passes it for a product linked to a Stock listing, whose Unit Cost
-// is Stock's Total Cost 10% (or a cost typed into the report, which wins when every
-// sold line carries it) and nothing else -- so when that cost exists, every
-// sold line is costed at it too (a sale recorded at Stock's Total no longer shows
-// "sold at" a different cost); with none, there is no Unit Cost and no COGS either
+// is Stock's Total Cost 10% (or a cost typed into the report, which becomes the Unit
+// Cost when every sold line carries it) and nothing else -- so when that cost exists,
+// every sold line is costed at it too (a sale recorded at Stock's Total no longer shows
+// "sold at" a different cost), except a line whose cost was typed into the report,
+// which keeps that typed cost; with none, there is no Unit Cost and no COGS either
 // (the recorded sale costs are not shown), so the row reads "Add cost price".
 export function summarizeMarginLines(lines: MarginLine[], currentCost: number | null = null, currentOnly = false) {
   // A cost typed into the report (on every sold line, all at one cost) is shown as
@@ -149,11 +150,14 @@ export function summarizeMarginLines(lines: MarginLine[], currentCost: number | 
       : null;
   if (currentOnly) {
     currentCost = typedCost ?? currentCost;
-    lines = lines.map((l) => ({
-      ...l,
-      unitCost: currentCost,
-      cogs: currentCost === null ? null : round2(currentCost * l.quantity),
-    }));
+    // Each sold line is costed at Total Cost 10%, except a line whose cost was typed into the
+    // report: that one keeps the cost typed for it (so a month's COGS is the same whether it is
+    // read day by day or all at once).
+    const stockCost = currentCost;
+    lines = lines.map((l) => {
+      const cost = l.costOverridden && l.unitCost !== null ? l.unitCost : stockCost;
+      return { ...l, unitCost: cost, cogs: cost === null ? null : round2(cost * l.quantity) };
+    });
   }
   const unitsSold = lines.reduce((s, l) => s + l.quantity, 0);
   const revenue = lines.reduce((s, l) => s + l.lineTotal, 0);
