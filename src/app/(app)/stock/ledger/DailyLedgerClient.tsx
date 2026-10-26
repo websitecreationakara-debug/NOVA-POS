@@ -190,7 +190,9 @@ export default function DailyLedgerClient({
     const scroller = scrollerRef.current;
     const th = todayRef.current;
     if (!scroller || !th) return;
-    scroller.scrollTo({ left: th.offsetLeft - FROZEN, behavior: smooth ? "smooth" : "auto" });
+    // On a phone only Name (150px) is frozen; from md up SKU and Name both are.
+    const frozen = window.matchMedia("(min-width: 768px)").matches ? FROZEN : 150;
+    scroller.scrollTo({ left: th.offsetLeft - frozen, behavior: smooth ? "smooth" : "auto" });
   }
 
   // Opens on today's column when it's the current month.
@@ -364,6 +366,10 @@ export default function DailyLedgerClient({
 
   // Frozen cells need a solid background so the scrolling days do not show through them.
   const sticky = "sticky z-10";
+  // SKU is frozen only from md up and the Month totals only from lg up: with Name frozen as well they
+  // would fill a phone's (or a tablet's) whole width and leave nothing to scroll.
+  const stickyMd = "md:sticky md:z-10";
+  const stickyLg = "lg:sticky lg:z-10";
   const headBase =
     "border-b-2 border-border bg-muted px-2.5 py-2 text-[10.5px] font-semibold tracking-wide text-muted-foreground uppercase";
   const subHead = "border-b border-border bg-muted px-1 py-1 text-center text-[10.5px] font-semibold text-muted-foreground";
@@ -450,7 +456,7 @@ export default function DailyLedgerClient({
         >
           Today
         </button>
-        <span className="ml-auto flex items-center gap-3">
+        <span className="flex w-full items-center gap-2 sm:ml-auto sm:w-auto sm:gap-3">
           {error && <span className="text-xs text-red-500">{error}</span>}
           <button
             type="button"
@@ -458,7 +464,7 @@ export default function DailyLedgerClient({
               setAddError(null);
               setAdding(true);
             }}
-            className="inline-flex items-center gap-2 rounded-lg border border-border bg-card px-4 py-2 text-sm font-medium shadow-sm hover:bg-muted"
+            className="inline-flex flex-1 items-center justify-center gap-2 rounded-lg border border-border bg-card px-4 py-2 text-sm font-medium shadow-sm hover:bg-muted sm:flex-none"
           >
             <Plus className="size-4" />
             Add product
@@ -467,7 +473,7 @@ export default function DailyLedgerClient({
             type="button"
             onClick={exportExcel}
             disabled={exporting}
-            className="inline-flex items-center gap-2 rounded-lg bg-brand px-4 py-2 text-sm font-medium text-white shadow-sm hover:brightness-95 disabled:opacity-60"
+            className="inline-flex flex-1 items-center justify-center gap-2 rounded-lg bg-brand px-4 py-2 text-sm font-medium text-white shadow-sm hover:brightness-95 disabled:opacity-60 sm:flex-none"
           >
             {exporting ? <Loader2 className="size-4 animate-spin" /> : <FileSpreadsheet className="size-4" />}
             {exporting ? "Preparing…" : "Export to Excel"}
@@ -514,10 +520,10 @@ export default function DailyLedgerClient({
           >
             <thead className="sticky top-0 z-20">
               <tr>
-                <th rowSpan={2} className={`${headBase} ${sticky} text-left`} style={{ left: LEFT.sku, minWidth: W.sku }}>
+                <th rowSpan={2} className={`${headBase} ${stickyMd} text-left`} style={{ left: LEFT.sku, minWidth: W.sku }}>
                   SKU
                 </th>
-                <th rowSpan={2} className={`${headBase} ${sticky} border-r text-left`} style={{ left: LEFT.name, minWidth: W.name }}>
+                <th rowSpan={2} className={`${headBase} ${sticky} left-0 min-w-[150px] border-r text-left md:left-24 md:min-w-[220px]`}>
                   Name
                 </th>
                 <th rowSpan={2} className={`${headBase} text-left`} style={{ minWidth: W.weight }}>
@@ -567,7 +573,7 @@ export default function DailyLedgerClient({
                 })}
                 <th
                   colSpan={5}
-                  className={`${sticky} border-l border-b-2 border-border bg-muted px-2 py-2 text-center text-[10.5px] font-semibold tracking-wide text-muted-foreground uppercase`}
+                  className={`${stickyLg} border-l border-b-2 border-border bg-muted px-2 py-2 text-center text-[10.5px] font-semibold tracking-wide text-muted-foreground uppercase`}
                   style={{ right: 0 }}
                 >
                   Month totals
@@ -588,19 +594,19 @@ export default function DailyLedgerClient({
                     </th>
                   ));
                 })}
-                <th className={`${subHead} ${sticky} border-l text-right`} style={{ right: RIGHT.totalIn, minWidth: TW.totalIn }}>
+                <th className={`${subHead} ${stickyLg} border-l text-right`} style={{ right: RIGHT.totalIn, minWidth: TW.totalIn }}>
                   Total In
                 </th>
-                <th className={`${subHead} ${sticky} text-right`} style={{ right: RIGHT.totalSold, minWidth: TW.totalSold }}>
+                <th className={`${subHead} ${stickyLg} text-right`} style={{ right: RIGHT.totalSold, minWidth: TW.totalSold }}>
                   Total Sold
                 </th>
-                <th className={`${subHead} ${sticky} text-right`} style={{ right: RIGHT.totalOther, minWidth: TW.totalOther }}>
+                <th className={`${subHead} ${stickyLg} text-right`} style={{ right: RIGHT.totalOther, minWidth: TW.totalOther }}>
                   Total Other
                 </th>
-                <th className={`${subHead} ${sticky} text-right`} style={{ right: RIGHT.ending, minWidth: TW.ending }}>
+                <th className={`${subHead} ${stickyLg} text-right`} style={{ right: RIGHT.ending, minWidth: TW.ending }}>
                   Ending
                 </th>
-                <th className={`${subHead} ${sticky} text-right`} style={{ right: RIGHT.value, minWidth: TW.value }}>
+                <th className={`${subHead} ${stickyLg} text-right`} style={{ right: RIGHT.value, minWidth: TW.value }}>
                   Ending value
                 </th>
               </tr>
@@ -639,14 +645,13 @@ export default function DailyLedgerClient({
                     <tr key={r.productId} className="group">
                       <td
                         {...cellProps(r, "sku")}
-                        className={`${cellBase} ${sticky} bg-card font-mono text-[11px] text-muted-foreground group-hover:bg-muted ${typedTint(r, "sku")}`}
+                        className={`${cellBase} ${stickyMd} bg-card font-mono text-[11px] text-muted-foreground group-hover:bg-muted ${typedTint(r, "sku")}`}
                         style={{ left: LEFT.sku }}
                       >
                         {isEditing(r, "sku") ? editor(r, "sku", "left") : (r.sku || dash)}
                       </td>
                       <td
-                        className={`${cellBase} ${sticky} overflow-hidden border-r bg-card font-medium text-ellipsis group-hover:bg-muted`}
-                        style={{ left: LEFT.name, maxWidth: W.name, minWidth: W.name }}
+                        className={`${cellBase} ${sticky} left-0 max-w-[150px] min-w-[150px] overflow-hidden border-r bg-card font-medium text-ellipsis group-hover:bg-muted md:left-24 md:max-w-[220px] md:min-w-[220px]`}
                         title={r.name}
                       >
                         <div className="flex items-center justify-between gap-2">
@@ -756,19 +761,19 @@ export default function DailyLedgerClient({
                           </Fragment>
                         );
                       })}
-                      <td className={`${cellBase} ${sticky} border-l bg-muted text-right tabular-nums`} style={{ right: RIGHT.totalIn }}>
+                      <td className={`${cellBase} ${stickyLg} border-l bg-muted text-right tabular-nums`} style={{ right: RIGHT.totalIn }}>
                         {fmt(r.totalIn)}
                       </td>
-                      <td className={`${cellBase} ${sticky} bg-muted text-right tabular-nums`} style={{ right: RIGHT.totalSold }}>
+                      <td className={`${cellBase} ${stickyLg} bg-muted text-right tabular-nums`} style={{ right: RIGHT.totalSold }}>
                         {fmt(r.totalSold)}
                       </td>
-                      <td className={`${cellBase} ${sticky} bg-muted text-right tabular-nums`} style={{ right: RIGHT.totalOther }}>
+                      <td className={`${cellBase} ${stickyLg} bg-muted text-right tabular-nums`} style={{ right: RIGHT.totalOther }}>
                         {fmt(r.totalOther)}
                       </td>
-                      <td className={`${cellBase} ${sticky} bg-muted text-right font-semibold tabular-nums`} style={{ right: RIGHT.ending }}>
+                      <td className={`${cellBase} ${stickyLg} bg-muted text-right font-semibold tabular-nums`} style={{ right: RIGHT.ending }}>
                         {fmt(r.ending)}
                       </td>
-                      <td className={`${cellBase} ${sticky} bg-muted text-right font-medium tabular-nums`} style={{ right: RIGHT.value }}>
+                      <td className={`${cellBase} ${stickyLg} bg-muted text-right font-medium tabular-nums`} style={{ right: RIGHT.value }}>
                         {r.endingValue === null ? (
                           <span className="text-[11px] text-amber-600/80" title="No cost recorded for this product">
                             no cost
@@ -789,9 +794,9 @@ export default function DailyLedgerClient({
                     Total ending value
                   </td>
                   <td colSpan={LEFT_COLUMNS - 2 + days.length * 4} className="border-t-2 border-border bg-muted" />
-                  <td colSpan={4} className={`${sticky} border-t-2 border-border bg-muted`} style={{ right: RIGHT.ending }} />
+                  <td colSpan={4} className={`${stickyLg} border-t-2 border-border bg-muted`} style={{ right: RIGHT.ending }} />
                   <td
-                    className={`${sticky} border-t-2 border-border bg-muted px-2.5 py-2.5 text-right text-sm font-bold tabular-nums`}
+                    className={`${stickyLg} border-t-2 border-border bg-muted px-2.5 py-2.5 text-right text-sm font-bold tabular-nums`}
                     style={{ right: RIGHT.value }}
                   >
                     {formatUsd(totalEndingValue)}

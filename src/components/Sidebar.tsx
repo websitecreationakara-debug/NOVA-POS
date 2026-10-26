@@ -122,7 +122,11 @@ export default function Sidebar({ role }: { role: string }) {
     () => window.matchMedia(DESKTOP_QUERY).matches,
     () => true
   );
-  const collapsed = collapsedPref && isDesktop;
+  const collapsedBase = collapsedPref && isDesktop;
+  // Hovering the icon-only sidebar opens it (labels shown, the page moves over); the saved collapsed
+  // choice is unchanged.
+  const [hovered, setHovered] = useState(false);
+  const collapsed = collapsedBase && !hovered;
 
   // The slide-out menu (phones/tablets), opened by the TopBar's hamburger.
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -216,6 +220,8 @@ export default function Sidebar({ role }: { role: string }) {
       />
     )}
     <aside
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
       className={`print:hidden fixed inset-y-0 left-0 z-40 flex shrink-0 flex-col gap-8 overflow-y-auto border-r border-border bg-card transition-[width,transform] duration-200 lg:static lg:z-auto lg:min-h-screen lg:translate-x-0 lg:overflow-visible ${
         mobileOpen ? "translate-x-0 shadow-2xl" : "-translate-x-full"
       } ${collapsed ? "w-[4.75rem] px-3 py-6" : "w-64 p-6"}`}
@@ -418,14 +424,14 @@ export default function Sidebar({ role }: { role: string }) {
       <button
         type="button"
         onClick={toggleCollapsed}
-        aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+        aria-label={collapsedBase ? "Expand sidebar" : "Collapse sidebar"}
         title={collapsed ? "Expand sidebar" : undefined}
         className={`mt-auto hidden items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-muted-foreground transition-colors hover:bg-muted lg:flex ${
           collapsed ? "justify-center border border-border" : ""
         }`}
       >
-        {collapsed ? <PanelLeftOpen className="size-4" /> : <PanelLeftClose className="size-4" />}
-        {!collapsed && "Collapse"}
+        {collapsedBase ? <PanelLeftOpen className="size-4" /> : <PanelLeftClose className="size-4" />}
+        {!collapsed && (collapsedBase ? "Expand" : "Collapse")}
       </button>
     </aside>
     </>

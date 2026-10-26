@@ -216,6 +216,8 @@ export type ProductSet = {
   labor_cost: number | null;
   competitor_name: string | null;
   competitor_base_price: number | null;
+  // Free-text note, edited from the note icon in the Cost Control list (migration 0094).
+  note: string | null;
   // The `products` row this Set is sellable as once Active -- see
   // activateSetListing in costControlActions.ts. null until first activated.
   linked_product_id: string | null;
@@ -620,6 +622,7 @@ export type Database = {
           | "labor_cost"
           | "competitor_name"
           | "competitor_base_price"
+          | "note"
           | "linked_product_id"
         > &
           Partial<
@@ -634,6 +637,7 @@ export type Database = {
               | "labor_cost"
               | "competitor_name"
               | "competitor_base_price"
+              | "note"
               | "linked_product_id"
             >
           >,
