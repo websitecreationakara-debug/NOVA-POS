@@ -3,10 +3,11 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ChevronLeft, ChevronRight, FileSpreadsheet, Loader2, Search, Trash2, TriangleAlert } from "lucide-react";
+import { ChevronLeft, ChevronRight, FileSpreadsheet, Loader2, Plus, Search, Trash2, TriangleAlert } from "lucide-react";
 import TopBarSlot from "@/components/TopBarSlot";
 import { applyLedgerEntry, daysOfMonth, LEDGER_TEXT_FIELDS, recalcRow, type DailyLedgerRow } from "@/lib/dailyLedger";
 import { formatUsd } from "@/lib/formatNumber";
+import { ENGLISH_SCALES } from "@/lib/khmerScales";
 import type { Brand } from "@/types/database";
 import type { WebsiteCatalogId } from "@/lib/websiteProducts/types";
 import { deactivateProductAction } from "../actions";
@@ -15,7 +16,13 @@ import {
   deleteWebsiteProductAction,
   deleteWebsiteProductVariationAction,
 } from "../websiteActions";
-import { exportDailyLedgerAction, hideRemovedLedgerProductAction, setLedgerEntryAction } from "./actions";
+import {
+  createLedgerProductAction,
+  deleteLedgerProductAction,
+  exportDailyLedgerAction,
+  hideRemovedLedgerProductAction,
+  setLedgerEntryAction,
+} from "./actions";
 
 // Column widths (px). The first five columns stay put while the days scroll, and so do the month
 // totals on the right, so each sticky cell needs its own offset.
@@ -33,7 +40,10 @@ const RIGHT = {
   totalIn: TW.value + TW.ending + TW.totalOther + TW.totalSold,
 };
 
-const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+// The Category pick that means "type a new category".
+const NEW_CATEGORY = "\u0000new";
+
+const WEEKDAYS =["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const fmt = (n: number) => String(Math.round(n * 100) / 100);
 
 function shiftMonth(month: string, by: number): string {
@@ -97,14 +107,27 @@ export default function DailyLedgerClient({
   const [deleting, setDeleting] = useState<DailyLedgerRow | null>(null);
   const [deletePending, setDeletePending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // The "Add product" popup: a new product for this business (a POS-only product, like Stock's).
+  const [adding, setAdding] = useState(false);
+  const [addPending, setAddPending] = useState(false);
+  const [addError, setAddError] = useState<string | null>(null);
+  const [newName, setNewName] = useState("");
+  const [newUnit, setNewUnit] = useState("pcs");
+  const [newPrice, setNewPrice] = useState("");
+  // "" = no category (Added in ledger), NEW_CATEGORY = type a new one, else an existing category's name.
+  const [newCategory, setNewCategory] = useState("");
+  const [newCategoryText, setNewCategoryText] = useState("");
   // The rows as shown: what the page worked out, with what was typed into the ledger applied. They
   // are replaced whenever the page sends fresh ones.
-  const [localRows, setLocalRows] = useState(rows);
+  const [stateRows, setLocalRows] = useState(rows);
   const [prevRows, setPrevRows] = useState(rows);
   if (rows !== prevRows) {
     setPrevRows(rows);
     setLocalRows(rows);
   }
+  // The rest of this render still runs before React redoes it with the new state, so it must already
+  // use the new rows: old ones have the old month's number of days (31 vs 28/30) and `days[i]` breaks.
+  const localRows = rows !== prevRows ? rows : stateRows;
   // The cell being typed into, and whether Escape was pressed to throw the typing away.
   const [editing, setEditing] = useState<{ id: string; field: string } | null>(null);
   const cancelEdit = useRef(false);
@@ -112,7 +135,51 @@ export default function DailyLedgerClient({
   const scrollerRef = useRef<HTMLDivElement>(null);
 
   const days = useMemo(() => daysOfMonth(month), [month]);
+  // The categories already in the ledger, for the Add product popup (not the catch-all groups).
+  const categoryOptions = useMemo(
+    () =>
+      [...new Set(localRows.map((r) => r.categoryName))]
+        .filter((c) => c && c !== "Removed from Stock" && c !== "Added in ledger")
+        .sort((a, b) => a.localeCompare(b)),
+    [localRows]
+  );
   const thisMonth = today.slice(0, 7);
+
+  async function addProduct() {
+    const name = newName.trim();
+    if (!name) {
+      setAddError("Type the product name");
+      return;
+    }
+    const category = newCategory === NEW_CATEGORY ? newCategoryText.trim() : newCategory;
+    if (newCategory === NEW_CATEGORY && !category) {
+      setAddError("Type the new category name");
+      return;
+    }
+    setAddPending(true);
+    setAddError(null);
+    try {
+      await createLedgerProductAction({
+        brandId: currentBrandId,
+        name,
+        price: Number(newPrice) || 0,
+        unit: newUnit,
+        category,
+        month,
+      });
+      setAdding(false);
+      setNewName("");
+      setNewUnit("pcs");
+      setNewPrice("");
+      setNewCategory("");
+      setNewCategoryText("");
+      router.refresh();
+    } catch (e) {
+      setAddError(e instanceof Error ? e.message : "Couldn't add the product");
+    } finally {
+      setAddPending(false);
+    }
+  }
 
   function go(nextMonth: string, brandId = currentBrandId) {
     router.push(`/stock/ledger?brand=${brandId}&month=${nextMonth}`);
@@ -242,6 +309,7 @@ export default function DailyLedgerClient({
     const d = row.deletion;
     const name = row.name ? `“${row.name}”` : "this product";
     if (d.kind === "ledger") return `Removes ${name} from the Daily Ledger. This can’t be undone.`;
+    if (d.kind === "own") return `Removes ${name} and everything typed into it from the Daily Ledger. This can’t be undone.`;
     if (d.kind === "pos") return `Removes ${name} from the POS (Stock and Sales). This can’t be undone.`;
     if (d.kind === "size") return `Removes ${d.sizeLabel ? `“${d.sizeLabel}”` : "this size"} of ${name} from the website. This can’t be undone.`;
     return `Removes ${name} from the website. This can’t be undone.`;
@@ -251,8 +319,9 @@ export default function DailyLedgerClient({
     setDeletePending(true);
     try {
       const d = row.deletion;
-      if (d.kind === "ledger") {
-        await hideRemovedLedgerProductAction({ productId: row.productId });
+      if (d.kind === "ledger" || d.kind === "own") {
+        if (d.kind === "own") await deleteLedgerProductAction({ productId: row.productId });
+        else await hideRemovedLedgerProductAction({ productId: row.productId });
         setLocalRows((prev) => prev.filter((r) => r.productId !== row.productId));
       } else {
         if (d.kind === "pos") await deactivateProductAction({ productId: row.productId });
@@ -336,7 +405,26 @@ export default function DailyLedgerClient({
           >
             <ChevronLeft className="size-4" />
           </button>
-          <span className="min-w-36 px-3 text-center text-sm font-semibold">{monthLabel(month)}</span>
+          {/* The label is the button: a transparent month input on top opens the browser's month/year picker. */}
+          <label className="relative min-w-36 cursor-pointer px-3 text-center text-sm font-semibold hover:bg-muted">
+            {monthLabel(month)}
+            <input
+              type="month"
+              aria-label="Pick a month"
+              value={month}
+              onChange={(e) => {
+                if (/^\d{4}-(0[1-9]|1[0-2])$/.test(e.target.value)) go(e.target.value);
+              }}
+              onClick={(e) => {
+                try {
+                  e.currentTarget.showPicker();
+                } catch {
+                  /* the browser only opens the picker from a user gesture */
+                }
+              }}
+              className="absolute inset-0 cursor-pointer opacity-0"
+            />
+          </label>
           <button
             type="button"
             onClick={() => go(shiftMonth(month, 1))}
@@ -364,6 +452,17 @@ export default function DailyLedgerClient({
         </button>
         <span className="ml-auto flex items-center gap-3">
           {error && <span className="text-xs text-red-500">{error}</span>}
+          <button
+            type="button"
+            onClick={() => {
+              setAddError(null);
+              setAdding(true);
+            }}
+            className="inline-flex items-center gap-2 rounded-lg border border-border bg-card px-4 py-2 text-sm font-medium shadow-sm hover:bg-muted"
+          >
+            <Plus className="size-4" />
+            Add product
+          </button>
           <button
             type="button"
             onClick={exportExcel}
@@ -703,6 +802,106 @@ export default function DailyLedgerClient({
           </table>
         </div>
       </div>
+      {adding && (
+        <div
+          className="fixed inset-0 z-[70] flex items-center justify-center bg-black/60 p-4"
+          onClick={() => {
+            if (!addPending) setAdding(false);
+          }}
+        >
+          <form
+            aria-label="Add product"
+            className="w-full max-w-sm rounded-2xl border border-border bg-card p-6 shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+            onSubmit={(e) => {
+              e.preventDefault();
+              void addProduct();
+            }}
+          >
+            <h2 className="text-base font-semibold text-foreground">Add product</h2>
+            <label className="mt-4 block text-xs text-muted-foreground">
+              Name
+              <input
+                autoFocus
+                value={newName}
+                onChange={(e) => setNewName(e.target.value)}
+                className="mt-1 w-full rounded-lg border border-border bg-transparent px-3 py-2 text-sm text-foreground outline-none focus:border-brand"
+              />
+            </label>
+            <label className="mt-3 block text-xs text-muted-foreground">
+              Category
+              <select
+                value={newCategory}
+                onChange={(e) => setNewCategory(e.target.value)}
+                className="mt-1 w-full rounded-lg border border-border bg-card px-3 py-2 text-sm text-foreground outline-none [color-scheme:light] focus:border-brand dark:[color-scheme:dark]"
+              >
+                <option value="">None (Added in ledger)</option>
+                {categoryOptions.map((c) => (
+                  <option key={c} value={c}>
+                    {c}
+                  </option>
+                ))}
+                <option value={NEW_CATEGORY}>+ New category…</option>
+              </select>
+              {newCategory === NEW_CATEGORY && (
+                <input
+                  autoFocus
+                  value={newCategoryText}
+                  onChange={(e) => setNewCategoryText(e.target.value)}
+                  placeholder="New category name"
+                  className="mt-2 w-full rounded-lg border border-border bg-transparent px-3 py-2 text-sm text-foreground outline-none focus:border-brand"
+                />
+              )}
+            </label>
+            <div className="mt-3 grid grid-cols-2 gap-3">
+              <label className="block text-xs text-muted-foreground">
+                Unit
+                <select
+                  value={newUnit}
+                  onChange={(e) => setNewUnit(e.target.value)}
+                  className="mt-1 w-full rounded-lg border border-border bg-card px-3 py-2 text-sm text-foreground outline-none [color-scheme:light] focus:border-brand dark:[color-scheme:dark]"
+                >
+                  {ENGLISH_SCALES.map((u) => (
+                    <option key={u} value={u}>
+                      {u}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="block text-xs text-muted-foreground">
+                Unit price
+                <input
+                  type="number"
+                  min={0}
+                  step="0.01"
+                  value={newPrice}
+                  onChange={(e) => setNewPrice(e.target.value)}
+                  placeholder="0"
+                  className="mt-1 w-full rounded-lg border border-border bg-transparent px-3 py-2 text-sm text-foreground outline-none focus:border-brand"
+                />
+              </label>
+            </div>
+            {addError && <p className="mt-3 text-xs text-red-500">{addError}</p>}
+            <div className="mt-6 flex gap-2">
+              <button
+                type="button"
+                disabled={addPending}
+                onClick={() => setAdding(false)}
+                className="flex-1 rounded-full border border-border px-4 py-2 text-sm font-medium transition-colors hover:bg-muted disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                disabled={addPending}
+                className="flex-1 rounded-full bg-brand px-4 py-2 text-sm font-medium text-white transition-colors hover:brightness-95 disabled:opacity-50"
+              >
+                {addPending ? "Adding…" : "Add"}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
       {deleting && (
         <div
           className="fixed inset-0 z-[70] flex items-center justify-center bg-black/60 p-4"
