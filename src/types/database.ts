@@ -277,6 +277,20 @@ export type DailyLedgerEntry = {
   updated_at: string;
 };
 
+// A product added from the Daily Ledger itself (migration 0091): in the ledger only, not in Stock.
+export type DailyLedgerProduct = {
+  id: string;
+  brand_id: string;
+  name: string;
+  unit: string;
+  unit_price: number;
+  // Migration 0092; null = "Added in ledger".
+  category: string | null;
+  // Migration 0093: not listed in months before this one; null = every month.
+  first_month: string | null;
+  created_at: string;
+};
+
 export type Promotion = {
   id: string;
   brand_id: string | null;
@@ -477,6 +491,33 @@ export type Database = {
             columns: ["product_id"];
             isOneToOne: false;
             referencedRelation: "products";
+            referencedColumns: ["id"];
+          },
+        ]
+      >;
+      daily_ledger_products: Table<
+        DailyLedgerProduct,
+        Omit<DailyLedgerProduct, "id" | "created_at" | "unit" | "unit_price" | "category" | "first_month"> &
+          Partial<Pick<DailyLedgerProduct, "id" | "created_at" | "unit" | "unit_price" | "category" | "first_month">>,
+        [
+          {
+            foreignKeyName: "daily_ledger_products_brand_id_fkey";
+            columns: ["brand_id"];
+            isOneToOne: false;
+            referencedRelation: "brands";
+            referencedColumns: ["id"];
+          },
+        ]
+      >;
+      daily_ledger_product_entries: Table<
+        DailyLedgerEntry,
+        Omit<DailyLedgerEntry, "updated_at"> & Partial<Pick<DailyLedgerEntry, "updated_at">>,
+        [
+          {
+            foreignKeyName: "daily_ledger_product_entries_product_id_fkey";
+            columns: ["product_id"];
+            isOneToOne: false;
+            referencedRelation: "daily_ledger_products";
             referencedColumns: ["id"];
           },
         ]

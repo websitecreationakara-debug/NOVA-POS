@@ -10,16 +10,21 @@
 // A day after today is "future": it has no R until something is typed into its P, S or O.
 // What the Delete button on a row does -- the same thing Stock's delete does for that kind of product.
 //   ledger   a product already out of Stock: just dropped from the ledger
-//   pos      a POS-only product: hidden from POS (Stock and Sales)
+//   own      a product added from the ledger itself (daily_ledger_products): deleted, nothing else has it
+//   pos     a POS-only product: hidden from POS (Stock and Sales)
 //   addon    a website add-on: removed from the website
 //   product  a whole website product: removed from the website
 //   size     one size of a website product that has others: that size is removed from the website
 export type LedgerDeletion =
   | { kind: "ledger" }
+  | { kind: "own" }
   | { kind: "pos" }
   | { kind: "addon"; catalogId: string; addonId: string }
   | { kind: "product"; catalogId: string; productId: string }
   | { kind: "size"; catalogId: string; productId: string; variationId: string; sizeLabel: string };
+
+// A product added from the ledger itself has this in front of its id (the rest is daily_ledger_products.id).
+export const LEDGER_OWN_PREFIX = "ledger:";
 
 export type LedgerSiteItem = {
   catalogId: string;

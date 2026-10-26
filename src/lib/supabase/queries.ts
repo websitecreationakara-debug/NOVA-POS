@@ -7,7 +7,7 @@ import type { WebsiteCatalogId } from "@/lib/websiteProducts/types";
 import { formatInvoiceNumber, invoiceMonthStamp, invoiceMonthStartIso } from "@/lib/invoiceNumber";
 import { ppDay, ppDayEnd, ppDayStart, ppToday } from "@/lib/phnomPenhTime";
 import { STOCK_TRACKING_START } from "@/lib/stockTracking";
-import { buildDailyLedger, daysOfMonth, type DailyLedgerRow, type LedgerDeletion, type LedgerSiteItem } from "@/lib/dailyLedger";
+import { buildDailyLedger, daysOfMonth, LEDGER_OWN_PREFIX, type DailyLedgerRow, type LedgerDeletion, type LedgerSiteItem } from "@/lib/dailyLedger";
 import { COUNTED_FULFILLMENT_STATUSES } from "@/lib/orderStatus";
 import { orderForBrandShare } from "@/lib/orderBrandShare";
 import { ALL_PAYMENT_METHODS, type PaymentMethod } from "@/lib/paymentMethods";
@@ -2049,8 +2049,82 @@ export async function getExpensesForDateRange(
   return data ?? [];
 }
 
+// Products added from the ledger itself (migrations 0091 / 0092) and what was typed into them, in the
+// shape buildDailyLedger takes. Before migration 0091 is applied there are none.
+async function getOwnLedgerProducts(brandId: string, month: string) {
+  const ownQuery = (columns: string) =>
+    supabaseAdmin.from("daily_ledger_products").select(columns).eq("brand_id", brandId).order("created_at");
+  // category is migration 0092 and first_month 0093; without them the products still show, under
+  // "Added in ledger" and in every month.
+  let res = await ownQuery("id, name, unit, unit_price, category, first_month");
+  if (res.error && /first_month/.test(res.error.message)) res = await ownQuery("id, name, unit, unit_price, category");
+  if (res.error && /category/.test(res.error.message)) res = await ownQuery("id, name, unit, unit_price");
+  if (res.error && !/daily_ledger_products/.test(res.error.message)) throw res.error;
+  const rows = ((res.error ? [] : (res.data ?? [])) as unknown as {
+    id: string;
+    name: string;
+    unit: string;
+    unit_price: number;
+    category?: string | null;
+    first_month?: string | null;
+  }[]).filter((o) => !o.first_month || o.first_month <= month);
+  // Joined to the products (not .in(ids)): hundreds of ids would overflow the request URL.
+  const typedRes = rows.length
+    ? await selectAll(
+        supabaseAdmin
+          .from("daily_ledger_product_entries")
+          .select("product_id, field, value, daily_ledger_products!inner(brand_id)")
+          .eq("daily_ledger_products.brand_id", brandId)
+          .eq("month", month)
+          .order("product_id")
+          .order("field")
+      )
+    : null;
+  if (typedRes?.error) throw typedRes.error;
+  return {
+    products: rows.map((o) => ({
+      id: `${LEDGER_OWN_PREFIX}${o.id}`,
+      sku: null,
+      fullName: o.name,
+      name: o.name,
+      size: "",
+      deletion: { kind: "own" } as const,
+      unit: o.unit,
+      categoryName: o.category?.trim() || "Added in ledger",
+      price: Number(o.unit_price),
+      originalCost: null,
+      cost10: null,
+      quantityNow: 0,
+      cost: null,
+    })),
+    entries: (typedRes?.data ?? []).map((e) => ({
+      productId: `${LEDGER_OWN_PREFIX}${e.product_id}`,
+      field: e.field as string,
+      value: e.value as string,
+    })),
+  };
+}
+
+// The Daily Ledger lists only the products added to it (from the import or "Add product"), not Stock's.
+// Set to true to list the business's Stock products in it as well.
+const LEDGER_INCLUDES_STOCK = false;
+
 // The Daily Ledger's data (see lib/dailyLedger.ts): one business, one month ("YYYY-MM").
 export async function getDailyLedger(brandId: string, month: string): Promise<DailyLedgerRow[]> {
+  if (!LEDGER_INCLUDES_STOCK) {
+    const own = await getOwnLedgerProducts(brandId, month);
+    return buildDailyLedger({
+      month,
+      today: ppToday(),
+      products: own.products,
+      movements: [],
+      movementsAfter: [],
+      purchases: [],
+      sold: [],
+      other: [],
+      entries: own.entries,
+    });
+  }
   const days = daysOfMonth(month);
   const fromDay = days[0];
   const toDay = days[days.length - 1];
@@ -2207,9 +2281,17 @@ export async function getDailyLedger(brandId: string, month: string): Promise<Da
   const onWebsite = (p: ProductRow) => p.product_site_links.some((l) => stockView.has(`${l.site_product_id}::${l.variation_id || ""}`));
   // A "Set" (a bundle sold as one product, e.g. "Fresh Salmon Set (250g)") has no stock of its own, so it
   // is not in the ledger.
+  // Besides the name, any product a Cost Control Set is linked to (sets.linked_product_id) is a set.
+  const setRes = await supabaseAdmin.from("sets").select("linked_product_id").eq("brand_id", brandId).not("linked_product_id", "is", null);
+  if (setRes.error) throw setRes.error;
+  const setProductIds = new Set<string>((setRes.data ?? []).map((s) => s.linked_product_id as string));
+  const setSiteKeys = new Set(
+    allProductRows.filter((p) => setProductIds.has(p.id)).flatMap((p) => p.product_site_links.map((l) => `${l.site_product_id}::${l.variation_id || ""}`))
+  );
   const isSet = (name: string) => /\bset\b/i.test(name);
   const productRows = allProductRows.filter(
     (p) =>
+      !setProductIds.has(p.id) &&
       !isSet(stockInfo(p)?.name ?? p.name) &&
       (inStock(p) || (!onWebsite(p) && p.name.trim() !== "" && !hiddenIds.has(p.id)))
   );
@@ -2232,7 +2314,7 @@ export async function getDailyLedger(brandId: string, month: string): Promise<Da
   // placeholder id and carry what is needed to create their POS product when something is first typed in.
   const linkedKeys = new Set(productRows.filter(inStock).flatMap((p) => p.product_site_links.map((l) => `${l.site_product_id}::${l.variation_id || ""}`)));
   const unlinked = [...stockView.entries()]
-    .filter(([key, v]) => !linkedKeys.has(key) && !isSet(v.name))
+    .filter(([key, v]) => !linkedKeys.has(key) && !setSiteKeys.has(key) && !isSet(v.name))
     .map(([key, v]) => ({
       id: `site:${key}`,
       sku: null,
@@ -2250,10 +2332,12 @@ export async function getDailyLedger(brandId: string, month: string): Promise<Da
       deletion: v.deletion,
     }));
 
+  const own = await getOwnLedgerProducts(brandId, month);
+
   return buildDailyLedger({
     month,
     today: ppToday(),
-    products: [...productRows.map((p) => {
+    products: [...own.products, ...productRows.map((p) => {
       const level = Array.isArray(p.stock_levels) ? p.stock_levels[0] : p.stock_levels;
       return {
         id: p.id,
@@ -2302,6 +2386,9 @@ export async function getDailyLedger(brandId: string, month: string): Promise<Da
         qty: Number(l.quantity) * (Number(l.products?.stock_units_per_sale) || 1),
       })),
     other,
-    entries: (typed.error ? [] : typed.data).map((e) => ({ productId: e.product_id, field: e.field, value: e.value })),
+    entries: [
+      ...(typed.error ? [] : typed.data).map((e) => ({ productId: e.product_id, field: e.field, value: e.value })),
+      ...own.entries,
+    ],
   });
 }

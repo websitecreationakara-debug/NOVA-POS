@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { supabaseAdmin } from "@/lib/supabase/server";
 import { requireStockAccess } from "@/lib/stockAccess";
 import { buildXlsx, type XlsxCell, type XlsxColumn } from "@/lib/xlsxWriter";
-import { daysOfMonth, isLedgerField, LEDGER_TEXT_FIELDS, type LedgerSiteItem } from "@/lib/dailyLedger";
+import { daysOfMonth, isLedgerField, LEDGER_OWN_PREFIX, LEDGER_TEXT_FIELDS, type LedgerSiteItem } from "@/lib/dailyLedger";
 import { ensurePosProductForSiteProduct } from "@/app/(app)/sales/websiteActions";
 import type { WebsiteCatalogId } from "@/lib/websiteProducts/types";
 import { getBrands, getDailyLedger } from "@/lib/supabase/queries";
@@ -28,6 +28,29 @@ export async function setLedgerEntryAction(input: {
   if (value.length > 40) throw new Error("That is too long");
   if (value !== "" && !LEDGER_TEXT_FIELDS.includes(input.field) && !Number.isFinite(Number(value))) {
     throw new Error("Type a number");
+  }
+
+  // A product added from the ledger itself keeps its typed values in its own table.
+  if (input.productId.startsWith(LEDGER_OWN_PREFIX)) {
+    const ownId = input.productId.slice(LEDGER_OWN_PREFIX.length);
+    const q =
+      value === ""
+        ? supabaseAdmin
+            .from("daily_ledger_product_entries")
+            .delete()
+            .eq("product_id", ownId)
+            .eq("month", input.month)
+            .eq("field", input.field)
+        : supabaseAdmin
+            .from("daily_ledger_product_entries")
+            .upsert(
+              { product_id: ownId, month: input.month, field: input.field, value, updated_at: new Date().toISOString() },
+              { onConflict: "product_id,month,field" }
+            );
+    const { error } = await q;
+    if (error) throw new Error(error.message);
+    revalidatePath("/stock/ledger");
+    return;
   }
 
   let productId = input.productId;
@@ -63,6 +86,54 @@ export async function setLedgerEntryAction(input: {
       );
     }
   }
+  revalidatePath("/stock/ledger");
+}
+
+// The ledger's "Add product" button: a product that exists in the Daily Ledger only (migration 0091) --
+// not in Stock, Sales or the website. Everything else about it is typed into the ledger.
+export async function createLedgerProductAction(input: {
+  brandId: string;
+  name: string;
+  unit: string;
+  price: number;
+  // The group it sits under (an existing category or a new one); blank = "Added in ledger".
+  category?: string;
+  // The month being viewed: the product is listed from this month on.
+  month: string;
+}): Promise<void> {
+  await requireStockAccess();
+  if (!MONTH_RE.test(input.month)) throw new Error("Pick a month");
+  const name = input.name.trim();
+  if (!name) throw new Error("Type the product name");
+  if (!Number.isFinite(input.price) || input.price < 0) throw new Error("Price cannot be negative");
+  const category = input.category?.trim() || null;
+  if (category && category.length > 60) throw new Error("The category name is too long");
+  const { error } = await supabaseAdmin
+    .from("daily_ledger_products")
+    .insert({ brand_id: input.brandId, name, unit: input.unit.trim() || "pcs", unit_price: input.price, category, first_month: input.month });
+  if (error) {
+    throw new Error(
+      /first_month/.test(error.message)
+        ? "Run migration 0093 first, then try again."
+        : /category/.test(error.message)
+        ? "Run migration 0092 first, then try again."
+        : /daily_ledger_products/.test(error.message)
+          ? "Run migration 0091 first, then try again."
+          : error.message
+    );
+  }
+  revalidatePath("/stock/ledger");
+}
+
+// The Delete button on a product added from the ledger: it and what was typed into it are removed.
+export async function deleteLedgerProductAction(input: { productId: string }): Promise<void> {
+  await requireStockAccess();
+  if (!input.productId.startsWith(LEDGER_OWN_PREFIX)) throw new Error("Not a ledger product");
+  const { error } = await supabaseAdmin
+    .from("daily_ledger_products")
+    .delete()
+    .eq("id", input.productId.slice(LEDGER_OWN_PREFIX.length));
+  if (error) throw new Error(error.message);
   revalidatePath("/stock/ledger");
 }
 

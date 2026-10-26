@@ -2127,7 +2127,7 @@ export default function AccountanceClient({
                             <span>{withoutBareNumberSuffix(r.name)}</span>
                           </div>
                         </td>
-                        <td className="py-2 pr-3 text-right">{r.unitsSold}</td>
+                        <td className="py-2 pr-3 text-right">{Math.round(r.unitsSold * 100) / 100}</td>
                         <td className="py-2 pr-3 text-right">
                           {r.discount > 0 || r.deliveryFee > 0 ? (
                             <div
@@ -2254,7 +2254,7 @@ export default function AccountanceClient({
                                   {r.soldAt.slice(0, MARGIN_SOLD_AT_PREVIEW).map((s) =>
                                     editingSoldAt?.productId === r.productId && editingSoldAt.cost === s.unitCost ? (
                                       <div key={s.unitCost} className="flex items-center justify-end gap-1">
-                                        <span>{s.units} sold at $</span>
+                                        <span>{Math.round(s.units * 100) / 100} sold at $</span>
                                         <input
                                           autoFocus
                                           type="number"
@@ -2298,7 +2298,7 @@ export default function AccountanceClient({
                                           }}
                                           className="inline-flex items-center gap-1 rounded px-1 hover:bg-black/[.05] hover:text-foreground dark:hover:bg-white/[.08]"
                                         >
-                                          {s.units} sold at {formatMoney(s.unitCost)}
+                                          {Math.round(s.units * 100) / 100} sold at {formatMoney(s.unitCost)}
                                           <Pencil className="size-3" />
                                         </button>
                                       </div>
@@ -2394,7 +2394,7 @@ export default function AccountanceClient({
                     <tfoot>
                       <tr className="border-t-2 border-black/[.12] font-semibold dark:border-white/[.2]">
                         <td className="py-3 pr-3">Total ({filteredMarginReport.length} products)</td>
-                        <td className="py-3 pr-3 text-right">{marginTotals.units}</td>
+                        <td className="py-3 pr-3 text-right">{Math.round(marginTotals.units * 100) / 100}</td>
                         <td className="py-3 pr-3 text-right">{formatMoney(marginTotals.revenue)}</td>
                         <td className="py-3 pr-3 text-right">{formatMoney(marginTotals.unitCost)}</td>
                         <td className="py-3 pr-3 text-right">{formatMoney(marginTotals.sellingPrice)}</td>
