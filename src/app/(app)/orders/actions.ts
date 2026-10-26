@@ -167,6 +167,9 @@ export type OrderEditInput = {
   customerName: string;
   customerPhone: string;
   customerAddress: string;
+  // Set when staff picked an existing customer from the suggestions: the order
+  // moves onto that customer. undefined keeps the order's current customer.
+  customerId?: string;
   brandId: string;
   items: OrderItemInput[];
   // Staff enter a % and a flat "minus" separately; both fold into the
@@ -405,6 +408,7 @@ export async function updateOrderAction(
       brand_id: input.brandId,
       customer_phone: phone || null,
       customer_name: name || null,
+      ...(input.customerId ? { customer_id: input.customerId } : {}),
       subtotal,
       discount,
       delivery_fee: deliveryFee,
@@ -419,18 +423,20 @@ export async function updateOrderAction(
   // has to be written there. Keep the customer's phone in step too, but only
   // when no other customer already owns that number (customers.phone is
   // unique -- migration 0011).
-  if (order.customer_id) {
+  const customerId = input.customerId ?? order.customer_id;
+  if (customerId) {
     const patch: { address: string | null; phone?: string } = { address: address || null };
-    if (phone) {
+    // A picked customer keeps their own number (it may be their 2nd phone).
+    if (phone && !input.customerId) {
       const { data: clash } = await supabaseAdmin
         .from("customers")
         .select("id")
         .eq("phone", phone)
-        .neq("id", order.customer_id)
+        .neq("id", customerId)
         .maybeSingle();
       if (!clash) patch.phone = phone;
     }
-    await supabaseAdmin.from("customers").update(patch).eq("id", order.customer_id);
+    await supabaseAdmin.from("customers").update(patch).eq("id", customerId);
   }
 
   for (const [productId, move] of delta) {

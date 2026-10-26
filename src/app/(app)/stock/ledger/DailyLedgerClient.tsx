@@ -311,7 +311,6 @@ export default function DailyLedgerClient({
           value={currentBrandId}
           onChange={(e) => go(month, e.target.value)}
         >
-          <option value="all">All businesses</option>
           {brands.map((b) => (
             <option key={b.id} value={b.id}>
               {b.name}

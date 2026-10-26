@@ -1,10 +1,15 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Check, Pencil, Plus, RefreshCw, Trash2, X } from "lucide-react";
 import { updateOrderAction } from "@/app/(app)/orders/actions";
+import {
+  searchCustomersByName,
+  searchCustomersByPhone,
+  type CustomerSuggestion,
+} from "@/app/(app)/sales/actions";
 import { notifyOrdersChanged } from "@/lib/ordersChanged";
 import { PAYMENT_METHOD_LABELS, type PaymentMethod } from "@/lib/paymentMethods";
 import { khmerNameWeight } from "@/lib/weight";
@@ -115,6 +120,11 @@ export default function OrderEditor({
   const [dDeliveryAt, setDDeliveryAt] = useState("");
   const [dPaymentMethod, setDPaymentMethod] = useState<PaymentMethod | "">("");
   const [dNote, setDNote] = useState("");
+  // Existing customer picked from the suggestions (the order moves onto them).
+  const [dCustomerId, setDCustomerId] = useState<string | undefined>();
+  const [suggestions, setSuggestions] = useState<CustomerSuggestion[]>([]);
+  const [suggestFor, setSuggestFor] = useState<"name" | "phone" | null>(null);
+  const searchDebounce = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Escape closes the product pop-up.
   useEffect(() => {
@@ -141,6 +151,27 @@ export default function OrderEditor({
 
   const brandName = brands.find((b) => b.id === brandId)?.name ?? "—";
 
+  const suggestionList = (field: "name" | "phone") =>
+    suggestFor === field && suggestions.length > 0 ? (
+      <div className="absolute left-0 right-0 top-full z-20 mt-1 max-h-64 overflow-y-auto rounded-lg border border-border bg-card shadow-xl">
+        {suggestions.map((c) => (
+          <button
+            type="button"
+            key={c.id}
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => pickCustomer(c)}
+            className="flex w-full flex-col px-3 py-2 text-left text-sm hover:bg-black/[.04] dark:hover:bg-white/[.06]"
+          >
+            <span>{field === "name" ? c.name : c.phone}</span>
+            <span className="text-xs text-muted-foreground">
+              {field === "name" ? c.phone : c.name}
+              {c.address ? ` · ${c.address}` : ""}
+            </span>
+          </button>
+        ))}
+      </div>
+    ) : null;
+
   function startEdit() {
     setDraft(toRows(items));
     setDPhone(customerPhone);
@@ -153,8 +184,45 @@ export default function OrderEditor({
     setDDeliveryAt(deliveryAt ? isoToLocalMinute(deliveryAt) : "");
     setDPaymentMethod(paymentMethod ?? "");
     setDNote(note);
+    setDCustomerId(undefined);
+    setSuggestions([]);
+    setSuggestFor(null);
     setError(null);
     setEditing(true);
+  }
+
+  // Typing a name or phone looks up existing customers, same as the Sales page.
+  function lookup(field: "name" | "phone", value: string) {
+    if (field === "name") setDName(value);
+    else setDPhone(value);
+    setDCustomerId(undefined);
+    setSuggestFor(field);
+    if (searchDebounce.current) clearTimeout(searchDebounce.current);
+    const trimmed = value.trim();
+    if (!trimmed) {
+      setSuggestions([]);
+      return;
+    }
+    searchDebounce.current = setTimeout(async () => {
+      try {
+        setSuggestions(
+          field === "name"
+            ? await searchCustomersByName(trimmed)
+            : await searchCustomersByPhone(trimmed)
+        );
+      } catch {
+        setSuggestions([]);
+      }
+    }, 250);
+  }
+
+  function pickCustomer(c: CustomerSuggestion) {
+    setDName(c.name);
+    setDPhone(c.phone);
+    setDAddress(c.address ?? "");
+    setDCustomerId(c.id);
+    setSuggestions([]);
+    setSuggestFor(null);
   }
 
   function cancel() {
@@ -190,6 +258,7 @@ export default function OrderEditor({
         customerName: dName,
         customerPhone: dPhone,
         customerAddress: dAddress,
+        customerId: dCustomerId,
         brandId: dBrandId,
         items: payload,
         discountPercent: Number(dPercent) || 0,
@@ -261,26 +330,36 @@ export default function OrderEditor({
       </div>
 
       <div className="mt-3 grid grid-cols-2 gap-x-4 gap-y-3 text-sm sm:grid-cols-3">
-        <div>
+        <div className="relative">
           <p className="mb-1 text-muted-foreground">Customer name</p>
           {editing ? (
-            <input
-              value={dName}
-              onChange={(e) => setDName(e.target.value)}
-              className={fieldCls}
-            />
+            <>
+              <input
+                value={dName}
+                autoComplete="off"
+                onChange={(e) => lookup("name", e.target.value)}
+                onBlur={() => setTimeout(() => setSuggestFor(null), 150)}
+                className={fieldCls}
+              />
+              {suggestionList("name")}
+            </>
           ) : (
             <p className="font-medium">{customerName || "—"}</p>
           )}
         </div>
-        <div>
+        <div className="relative">
           <p className="mb-1 text-muted-foreground">Phone Number</p>
           {editing ? (
-            <input
-              value={dPhone}
-              onChange={(e) => setDPhone(e.target.value)}
-              className={fieldCls}
-            />
+            <>
+              <input
+                value={dPhone}
+                autoComplete="off"
+                onChange={(e) => lookup("phone", e.target.value)}
+                onBlur={() => setTimeout(() => setSuggestFor(null), 150)}
+                className={fieldCls}
+              />
+              {suggestionList("phone")}
+            </>
           ) : (
             <p className="font-medium">{customerPhone || "—"}</p>
           )}
