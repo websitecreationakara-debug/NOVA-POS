@@ -7,6 +7,8 @@ import {
   computeLineCogs,
   computeRecipeUnitCost,
   splitByWeight,
+  summarizeCogsByDay,
+  summarizeMarginLines,
 } from "./cogs";
 
 describe("computeRecipeUnitCost", () => {
@@ -128,5 +130,32 @@ describe("splitByWeight", () => {
   it("splits evenly when every weight is 0, and handles no lines", () => {
     expect(splitByWeight(1, [0, 0])).toEqual([0.5, 0.5]);
     expect(splitByWeight(1, [])).toEqual([]);
+  });
+});
+
+describe("summarizeCogsByDay", () => {
+  const sale = (paidAt: string, quantity: number) => ({
+    quantity,
+    lineTotal: quantity * 10,
+    cogs: null,
+    unitCost: 0.33,
+    paidAt,
+  });
+  const lines = [sale("2026-10-01T10:00:00+07:00", 1.5), sale("2026-10-02T10:00:00+07:00", 1.5)];
+
+  it("rounds each day's cost on its own and adds the days up", () => {
+    // 1.5 x 0.33 = 0.495 -> 0.5 a day, so 1.0; the 3 units costed together are 3 x 0.33 = 0.99.
+    expect(summarizeMarginLines([sale("2026-10-02T10:00:00+07:00", 3)], 0.33, true).totalCogs).toBe(0.99);
+    expect(summarizeCogsByDay(lines, 0.33, true)).toBe(1);
+  });
+
+  it("is the same as costing one day when there is only one day", () => {
+    expect(summarizeCogsByDay(lines.slice(0, 1), 0.33, true)).toBe(
+      summarizeMarginLines(lines.slice(0, 1), 0.33, true).totalCogs
+    );
+  });
+
+  it("is null when a day has a sale with no cost", () => {
+    expect(summarizeCogsByDay([{ ...lines[0], unitCost: null }], null, false)).toBeNull();
   });
 });
