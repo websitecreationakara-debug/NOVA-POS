@@ -349,8 +349,8 @@ export type Order = {
   channel: string;
   site: string | null;
   site_order_id: string | null;
-  // How a "pos" order was placed -- in_store, telegram, or meta (migration
-  // 0037). Not meaningful for "online" orders (those show their site instead).
+  // How a "pos" order was placed -- in_store, telegram, meta, tiktok or pickup (migrations
+  // 0037, 0095). Not meaningful for "online" orders (those show their site instead).
   order_source: OrderSource;
 };
 
