@@ -5,7 +5,7 @@ import DailyLedgerClient from "./DailyLedgerClient";
 const MONTH_RE = /^\d{4}-(0[1-9]|1[0-2])$/;
 
 // Stock > Daily Ledger: one month, every product's day-by-day stock (see lib/dailyLedger.ts), for
-// all businesses (shown as separate sections) or just one picked with ?brand=. Read-only; the figures come from the stock history, the manual stock
+// the business picked with ?brand=. Read-only; the figures come from the stock history, the manual stock
 // adjustments and the sold lines.
 export default async function StockLedgerPage({
   searchParams,
@@ -25,13 +25,9 @@ export default async function StockLedgerPage({
       </main>
     );
   }
-  const currentBrand = brands.find((b) => b.id === brandParam);
-  const shown = currentBrand ? [currentBrand] : brands;
-  const rows = (
-    await Promise.all(
-      shown.map(async (b) => (await getDailyLedger(b.id, month)).map((r) => ({ ...r, brandId: b.id })))
-    )
-  ).flat();
+  // No "All businesses" view: no/unknown ?brand= falls back to the first business.
+  const currentBrand = brands.find((b) => b.id === brandParam) ?? brands[0];
+  const rows = (await getDailyLedger(currentBrand.id, month)).map((r) => ({ ...r, brandId: currentBrand.id }));
 
-  return <DailyLedgerClient brands={brands} currentBrandId={currentBrand?.id ?? "all"} month={month} today={today} rows={rows} />;
+  return <DailyLedgerClient brands={brands} currentBrandId={currentBrand.id} month={month} today={today} rows={rows} />;
 }
