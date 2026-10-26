@@ -80,12 +80,28 @@ describe("buildOrdersCsv", () => {
     expect(rows[1]).toContain("Pink");
   });
 
+  it("writes one row per order, with no product columns, when asked for orders only", () => {
+    const rows = parse(
+      buildOrdersCsv(
+        [order({})],
+        [item({}), item({ product_id: "p2", products: { name: "Salmon Roe Ikura (250g)" } })],
+        undefined,
+        false
+      )
+    );
+    expect(rows).toHaveLength(2);
+    expect(rows[0]).not.toContain("product_name");
+    expect(rows[1]).not.toContain("Fresh Sea Urchin");
+    expect(rows[1].split(",")[0]).toBe("o1");
+  });
+
   it("shows the date-based invoice number and the time in Cambodia", () => {
     const rows = parse(buildOrdersCsv([order({})], [item({})]));
     // 06:09:59 UTC = 13:09:59 in Phnom Penh; first paid order of Oct 2026
     expect(rows[1]).toContain("202610-1");
     expect(rows[1]).toContain("2026-10-02 13:09:59");
-    expect(rows[1]).toContain("INV-000001");
+    expect(rows[0]).not.toContain("old_invoice_number");
+    expect(rows[1]).not.toContain("INV-000001");
   });
 
   it("numbers invoices oldest-first within each Cambodia month", () => {
@@ -121,6 +137,6 @@ describe("buildOrdersCsv", () => {
   it("does not invent an invoice number for an unpaid order", () => {
     const rows = parse(buildOrdersCsv([order({ status: "cancelled", paid_at: null, invoice_number: "INV-000009" })], []));
     expect(rows[1].split(",")[1]).toBe("");
-    expect(rows[1]).toContain("INV-000009");
+    expect(rows[1]).not.toContain("INV-000009");
   });
 });
