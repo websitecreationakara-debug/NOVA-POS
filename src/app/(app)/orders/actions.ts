@@ -7,7 +7,7 @@ import { getCategoriesFingerprintAction } from "@/app/(app)/stock/actions";
 import { computeLineCogs, computeRecipeUnitCost } from "@/lib/cogs";
 import { getEffectiveProductCost } from "@/lib/websiteProducts/purchaseCosts";
 import { getSessionUser } from "@/lib/supabase/auth-server";
-import { buildOrdersCsv, buildOrdersSheet } from "@/lib/ordersCsv";
+import { buildOrdersCsv, buildOrdersSheet, inRange, type OrdersRange } from "@/lib/ordersCsv";
 import { fetchOrdersBackupData } from "@/lib/ordersBackupData";
 import { buildXlsx } from "@/lib/xlsxWriter";
 import { ppToday } from "@/lib/phnomPenhTime";
@@ -36,8 +36,8 @@ export type DueDelivery = {
 // per item -- see lib/ordersCsv.ts. Two formats:
 //   "xlsx" -- an Excel workbook laid out to be read (plain-English columns first,
 //             phones kept as text, dates as real dates, Khmer intact);
-//   "csv"  -- the flat technical file with every column on every row, for other
-//             tools or restoring.
+//   "csv"  -- the flat technical file for other tools: one row per ORDER (no
+//             product lines -- the Excel file has those).
 // The file holds customer names, phones and addresses, so it is limited to
 // Administration and Cooperate Admin. Read in pages of 1000 (the database caps a
 // single query), so a long history is complete rather than silently cut off.
@@ -46,30 +46,39 @@ export type DueDelivery = {
 const BACKUP_ROLES = new Set(["admin", "accountance"]);
 
 export async function exportOrdersBackupAction(
-  format: "xlsx" | "csv"
+  format: "xlsx" | "csv",
+  // Only the orders dated in this range (Orders list dates); left out = every order.
+  range?: OrdersRange
 ): Promise<{ filename: string; mime: string; base64: string; orderCount: number }> {
   const user = await getSessionUser();
   if (!user || !BACKUP_ROLES.has(user.role)) {
     throw new Error("Only Administration and Cooperate Admin can back up orders");
   }
 
-  const { orders, items } = await fetchOrdersBackupData();
+  const day = /^\d{4}-\d{2}-\d{2}$/;
+  const from = range?.from && day.test(range.from) ? range.from : undefined;
+  const to = range?.to && day.test(range.to) ? range.to : undefined;
+  const picked = from || to ? { from, to } : undefined;
+  const { orders, items } = await fetchOrdersBackupData(picked, format === "xlsx");
 
-  const stem = `nova-pos-orders-backup-${ppToday()}`;
+  const orderCount = orders.filter((o) => inRange(o, picked)).length;
+  const stem = picked
+    ? `nova-pos-orders-${from ?? "start"}-to-${to ?? ppToday()}`
+    : `nova-pos-orders-backup-${ppToday()}`;
   if (format === "xlsx") {
-    const { columns, rows } = buildOrdersSheet(orders, items);
+    const { columns, rows } = buildOrdersSheet(orders, items, picked);
     return {
       filename: `${stem}.xlsx`,
       mime: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
       base64: buildXlsx("Orders", columns, rows).toString("base64"),
-      orderCount: orders.length,
+      orderCount,
     };
   }
   return {
     filename: `${stem}.csv`,
     mime: "text/csv;charset=utf-8",
-    base64: Buffer.from(buildOrdersCsv(orders, items), "utf8").toString("base64"),
-    orderCount: orders.length,
+    base64: Buffer.from(buildOrdersCsv(orders, items, picked, false), "utf8").toString("base64"),
+    orderCount,
   };
 }
 
