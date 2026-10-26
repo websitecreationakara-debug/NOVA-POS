@@ -47,6 +47,7 @@ export type SetSummary = {
   code: string;
   name: string;
   status: SetStatus;
+  note: string | null;
   itemCount: number;
   totalCost: number | null;
   itemsMissingCost: number;
@@ -122,6 +123,7 @@ export async function listSetsAction(
       code: s.code,
       name: s.name,
       status: s.status,
+      note: s.note ?? null,
       itemCount: items.length,
       totalCost,
       itemsMissingCost: countItemsMissingCost(itemCosts),
@@ -178,6 +180,7 @@ export type SetDetail = {
   code: string;
   name: string;
   status: SetStatus;
+  note: string | null;
   suggestedSellPrice: number | null;
   items: SetItemDetail[];
   totalCost: number | null;
@@ -284,6 +287,7 @@ async function loadSet(setId: string): Promise<{ detail: SetDetail; staleProduct
       code: set.code,
       name: set.name,
       status: set.status,
+      note: set.note ?? null,
       suggestedSellPrice: set.suggested_sell_price,
       items,
       totalCost,
@@ -516,6 +520,7 @@ export async function updateSetAction(
     laborCost: number | null;
     competitorName: string | null;
     competitorBasePrice: number | null;
+    note: string | null;
   }>
 ): Promise<void> {
   await requireMarketingAccess();
@@ -529,6 +534,7 @@ export async function updateSetAction(
     labor_cost?: number | null;
     competitor_name?: string | null;
     competitor_base_price?: number | null;
+    note?: string | null;
   } = { updated_at: new Date().toISOString() };
   if (input.code !== undefined) {
     const code = input.code.trim();
@@ -546,9 +552,11 @@ export async function updateSetAction(
   if (input.laborCost !== undefined) fields.labor_cost = input.laborCost;
   if (input.competitorName !== undefined) fields.competitor_name = input.competitorName?.trim() || null;
   if (input.competitorBasePrice !== undefined) fields.competitor_base_price = input.competitorBasePrice;
+  if (input.note !== undefined) fields.note = input.note?.trim() || null;
 
   const { error } = await supabaseAdmin.from("sets").update(fields).eq("id", setId);
   if (error) {
+    if (/note/.test(error.message)) throw new Error("Run migration 0094 first, then try again.");
     if (error.code === "23505") throw new Error(`Set ID "${input.code}" is already in use`);
     throw new Error(error.message);
   }
