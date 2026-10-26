@@ -1528,9 +1528,14 @@ export async function getStockPickerItems(
   brandSlug: string,
   options?: { includeAddons?: boolean }
 ): Promise<StockPickerItem[]> {
-  const [{ products: posProducts }, catalog] = await Promise.all([
+  const catalog = catalogForBrandSlug(brandSlug);
+  // The POS products and the storefront's product and add-on lists are read at the same time (each is
+  // a separate round trip); a failed storefront read is null and falls back to POS-only below.
+  const settle = <T,>(p: Promise<T>) => p.then((value) => ({ value }), () => null);
+  const [{ products: posProducts }, sitePrefetch, addonPrefetch] = await Promise.all([
     getCatalogForBrand(brandId),
-    Promise.resolve(catalogForBrandSlug(brandSlug)),
+    catalog ? settle(listWebsiteProducts(catalog.id)) : null,
+    catalog && options?.includeAddons ? settle(listWebsiteAddons(catalog.id)) : null,
   ]);
 
   const items: StockPickerItem[] = [];
@@ -1538,7 +1543,8 @@ export async function getStockPickerItems(
 
   if (catalog) {
     try {
-      const siteProducts = await listWebsiteProducts(catalog.id);
+      if (!sitePrefetch) throw new Error("Storefront unreachable");
+      const siteProducts = sitePrefetch.value;
       for (const wp of siteProducts) {
         const isVariable =
           (wp.type === "variable" || wp.type === "variant") && (wp.variations?.length ?? 0) > 0;
@@ -1602,7 +1608,8 @@ export async function getStockPickerItems(
 
     if (options?.includeAddons) {
       try {
-        const addons = await listWebsiteAddons(catalog.id);
+        if (!addonPrefetch) throw new Error("Storefront unreachable");
+        const addons = addonPrefetch.value;
         for (const a of addons) {
           const addonKey = `${a.id}::`;
           const linked =

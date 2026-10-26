@@ -227,16 +227,16 @@ export default function Sidebar({ role }: { role: string }) {
       } ${collapsed ? "w-[4.75rem] px-3 py-6" : "w-64 p-6"}`}
     >
       {!collapsed && (
-        <div className="flex items-start justify-between">
-          <Link href="/" aria-label="NOVA POS" onClick={() => setMobileOpen(false)}>
+        <div className="relative flex items-center justify-center border-b border-border pb-6">
+          <Link href="/" aria-label="NOVA POS" onClick={() => setMobileOpen(false)} className="transition-transform hover:scale-105">
             {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src="/logos/nova-pos.png" alt="NOVA POS" width={300} height={247} className="h-20 w-auto" />
+            <img src="/logos/nova-pos.png" alt="NOVA POS" width={300} height={247} className="h-28 w-auto drop-shadow-sm" />
           </Link>
           <button
             type="button"
             onClick={() => setMobileOpen(false)}
             aria-label="Close menu"
-            className="rounded-lg p-1.5 text-muted-foreground hover:bg-muted lg:hidden"
+            className="absolute top-0 right-0 rounded-lg p-1.5 text-muted-foreground hover:bg-muted lg:hidden"
           >
             <X className="size-5" />
           </button>
