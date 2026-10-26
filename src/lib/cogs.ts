@@ -4,6 +4,8 @@
 // Kept side-effect free and DB-free so it's unit-testable without a live
 // Postgres instance -- see cogs.test.ts.
 
+import { ppDay } from "./phnomPenhTime";
+
 function round2(n: number): number {
   return Math.round(n * 100) / 100;
 }
@@ -182,6 +184,42 @@ export function summarizeMarginLines(lines: MarginLine[], currentCost: number | 
     grossMarginPct,
     hasUnknownCost,
   };
+}
+
+// A product's Total COGS with every day costed on its own and the days added up -- the same figure as
+// adding the daily totals by hand. Costing the whole range at once rounds each cost group once, so it
+// can land a few cents off that sum. Within a day, sales at the same price and cost are one line (as
+// margin_report groups them), so a day reads the same here as when that day alone is viewed.
+export function summarizeCogsByDay(
+  lines: MarginLine[],
+  currentCost: number | null = null,
+  currentOnly = false
+): number | null {
+  const byDay = new Map<string, Map<string, MarginLine>>();
+  for (const l of lines) {
+    const day = ppDay(l.paidAt);
+    const cost = l.unitCost ?? (l.cogs !== null && l.quantity ? l.cogs / l.quantity : null);
+    const unitCost = cost === null ? null : round2(cost);
+    const key = [l.unitPrice ?? "", unitCost ?? "", l.cogs === null, l.costOverridden === true].join("|");
+    const groups = byDay.get(day) ?? new Map<string, MarginLine>();
+    const g = groups.get(key);
+    if (g) {
+      g.quantity += l.quantity;
+      g.lineTotal += l.lineTotal;
+      g.cogs = g.cogs === null || l.cogs === null ? null : g.cogs + l.cogs;
+      if (l.paidAt && (!g.paidAt || l.paidAt > g.paidAt)) g.paidAt = l.paidAt;
+    } else {
+      groups.set(key, { ...l, unitCost });
+    }
+    byDay.set(day, groups);
+  }
+  let total = 0;
+  for (const groups of byDay.values()) {
+    const dayCogs = summarizeMarginLines([...groups.values()], currentCost, currentOnly).totalCogs;
+    if (dayCogs === null) return null;
+    total += dayCogs;
+  }
+  return round2(total);
 }
 
 // For one product's own row in the Margin Report: any sold line with an

@@ -11,7 +11,14 @@ import { buildDailyLedger, daysOfMonth, LEDGER_OWN_PREFIX, type DailyLedgerRow, 
 import { COUNTED_FULFILLMENT_STATUSES } from "@/lib/orderStatus";
 import { orderForBrandShare } from "@/lib/orderBrandShare";
 import { ALL_PAYMENT_METHODS, type PaymentMethod } from "@/lib/paymentMethods";
-import { computeGrossMargin, splitByWeight, summarizeMarginLines, unitsSoldByCost, type MarginLine } from "@/lib/cogs";
+import {
+  computeGrossMargin,
+  splitByWeight,
+  summarizeCogsByDay,
+  summarizeMarginLines,
+  unitsSoldByCost,
+  type MarginLine,
+} from "@/lib/cogs";
 import { productWeightGrams } from "@/lib/costControl";
 import { readAllPages } from "@/lib/supabase/readAllPages";
 import {
@@ -1757,13 +1764,18 @@ export async function getMarginReport(
 
   // Grouped in the database (migration 0075): each product comes back with its
   // lines already collapsed to one per recorded unit cost. If that isn't applied
-  // yet, read every sold line and group them here (slower) -- same numbers.
-  const { data: report, error: reportError } = await supabaseAdmin.rpc("margin_report", {
-    p_statuses: COUNTED_FULFILLMENT_STATUSES,
-    p_brand_id: brandId === ALL_BUSINESSES_ID ? null : brandId,
-    p_from: ppDayStart(fromDate),
-    p_to: ppDayEnd(toDate),
-  });
+  // yet, read every sold line and group them here (slower) -- same numbers. More
+  // than one day reads every line too, since Total COGS is costed day by day
+  // (summarizeCogsByDay) and the grouped lines no longer say which day each was.
+  const multiDay = fromDate !== toDate;
+  const { data: report, error: reportError } = multiDay
+    ? { data: null, error: null }
+    : await supabaseAdmin.rpc("margin_report", {
+        p_statuses: COUNTED_FULFILLMENT_STATUSES,
+        p_brand_id: brandId === ALL_BUSINESSES_ID ? null : brandId,
+        p_from: ppDayStart(fromDate),
+        p_to: ppDayEnd(toDate),
+      });
   if (!reportError && report) {
     const rows = report as unknown as {
       product_id: string;
@@ -1892,11 +1904,12 @@ export async function getMarginReport(
 
   const rows = Array.from(byProduct.entries()).map(([productId, lines]) => {
     const product = productById.get(productId);
-    const summary = summarizeMarginLines(
-      lines,
-      currentCostByProduct.get(productId) ?? null,
-      cost10ByProduct.has(productId)
-    );
+    const currentCost = currentCostByProduct.get(productId) ?? null;
+    const summary = summarizeMarginLines(lines, currentCost, cost10ByProduct.has(productId));
+    // Costed day by day and added up (the range as one costs a few cents differently).
+    const totalCogs = multiDay
+      ? summarizeCogsByDay(lines, currentCost, cost10ByProduct.has(productId))
+      : summary.totalCogs;
     const adjustment = adjustmentsByProduct.get(productId);
     const discount = Math.min(round2(adjustment?.discount ?? 0), summary.revenue);
     const deliveryFee = round2(adjustment?.deliveryFee ?? 0);
@@ -1907,11 +1920,12 @@ export async function getMarginReport(
       imageUrl: imageById.get(productId) ?? product?.image_url ?? null,
       categoryName: (product?.categories as { name: string } | null)?.name ?? null,
       ...summary,
+      totalCogs,
       revenue,
       revenueBeforeDiscount: round2(summary.revenue + deliveryFee),
       discount,
       deliveryFee,
-      ...computeGrossMargin(revenue, summary.totalCogs),
+      ...computeGrossMargin(revenue, totalCogs),
       suggestedCost: null as number | null,
       sellingPrice: product?.price ?? round2(summary.revenue / summary.unitsSold),
     };
@@ -2006,6 +2020,7 @@ export async function getProductMarginDetail(
 
   const lines: MarginLine[] = sales.map((s) => ({
     quantity: s.quantity,
+    unitPrice: s.unitPrice,
     lineTotal: s.lineTotal,
     cogs: s.cogs,
     unitCost: s.unitCost,
@@ -2014,7 +2029,10 @@ export async function getProductMarginDetail(
   const currentCost = linked
     ? cost10
     : await getEffectiveProductCost(productId).catch(() => null);
-  const baseSummary = summarizeMarginLines(lines, currentCost, linked);
+  const rangeSummary = summarizeMarginLines(lines, currentCost, linked);
+  // Costed day by day and added up, like the Margin Report row it opens from.
+  const baseSummary =
+    fromDate === toDate ? rangeSummary : { ...rangeSummary, totalCogs: summarizeCogsByDay(lines, currentCost, linked) };
   const adjustment = (
     await getOrderAdjustmentsByProduct(brandId, fromDate, toDate).catch(
       () => new Map<string, { discount: number; deliveryFee: number }>()
