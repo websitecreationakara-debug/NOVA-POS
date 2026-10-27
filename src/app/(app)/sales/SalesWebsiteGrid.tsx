@@ -407,10 +407,10 @@ export default function SalesWebsiteGrid({
         <div className="mb-4 flex flex-wrap gap-2">
           <button
             onClick={() => setActiveCategoryId("all")}
-            className={`rounded-full border px-3 py-1 text-xs ${
+            className={`rounded-full border px-3.5 py-1.5 text-xs font-medium transition-all ${
               activeCategoryId === "all"
-                ? "border-brand bg-brand text-white"
-                : "border-black/[.15] dark:border-white/[.2]"
+                ? "border-transparent bg-gradient-to-r from-[#2879bd] to-[#3f9fd0] text-white shadow-md shadow-brand/30"
+                : "border-border bg-card text-muted-foreground hover:-translate-y-px hover:border-brand/40 hover:text-foreground hover:shadow-sm"
             }`}
           >
             All
@@ -419,10 +419,10 @@ export default function SalesWebsiteGrid({
             <button
               key={c.id}
               onClick={() => setActiveCategoryId(c.id)}
-              className={`rounded-full border px-3 py-1 text-xs ${
+              className={`rounded-full border px-3.5 py-1.5 text-xs font-medium transition-all ${
                 activeCategoryId === c.id
-                  ? "border-brand bg-brand text-white"
-                  : "border-black/[.15] dark:border-white/[.2]"
+                  ? "border-transparent bg-gradient-to-r from-[#2879bd] to-[#3f9fd0] text-white shadow-md shadow-brand/30"
+                  : "border-border bg-card text-muted-foreground hover:-translate-y-px hover:border-brand/40 hover:text-foreground hover:shadow-sm"
               }`}
             >
               {c.label}
@@ -431,10 +431,10 @@ export default function SalesWebsiteGrid({
           {uncategorised > 0 && (
             <button
               onClick={() => setActiveCategoryId("__uncategorised")}
-              className={`rounded-full border px-3 py-1 text-xs ${
+              className={`rounded-full border px-3.5 py-1.5 text-xs font-medium transition-all ${
                 activeCategoryId === "__uncategorised"
-                  ? "border-brand bg-brand text-white"
-                  : "border-black/[.15] dark:border-white/[.2]"
+                  ? "border-transparent bg-gradient-to-r from-[#2879bd] to-[#3f9fd0] text-white shadow-md shadow-brand/30"
+                  : "border-border bg-card text-muted-foreground hover:-translate-y-px hover:border-brand/40 hover:text-foreground hover:shadow-sm"
               }`}
             >
               Uncategorized
@@ -449,7 +449,7 @@ export default function SalesWebsiteGrid({
           placeholder="Search website products…"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          className="w-64 rounded border border-black/[.15] bg-transparent px-3 py-1.5 text-sm dark:border-white/[.2]"
+          className="w-64 rounded-full border border-border bg-card px-4 py-2 text-sm shadow-sm transition-shadow outline-none focus:border-brand/50 focus:shadow-md focus:shadow-brand/10"
         />
       </div>
       </div>

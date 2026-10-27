@@ -1298,21 +1298,21 @@ export default function WebsiteProductsPanel({
           placeholder="Search products…"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          className="min-w-[12rem] flex-1 rounded border border-black/[.15] bg-transparent px-3 py-1.5 text-sm dark:border-white/[.2]"
+          className="min-w-[12rem] flex-1 rounded-full border border-border bg-card px-4 py-2 text-sm shadow-sm transition-shadow outline-none focus:border-brand/50 focus:shadow-md focus:shadow-brand/10"
         />
         <button
           onClick={() => setShowForm((v) => !v)}
-          className={`shrink-0 rounded px-3 py-1.5 text-sm font-medium ${
+          className={`shrink-0 rounded-full px-4 py-2 text-sm font-semibold transition-all ${
             showForm
-              ? "border border-black/[.15] dark:border-white/[.2]"
-              : "bg-brand text-white hover:brightness-95"
+              ? "border border-border bg-card shadow-sm hover:shadow-md"
+              : "bg-gradient-to-r from-[#2879bd] to-[#3f9fd0] text-white shadow-md shadow-brand/30 hover:-translate-y-px hover:shadow-lg"
           }`}
         >
           {showForm ? "Cancel" : "+ Add product"}
         </button>
         <button
           onClick={exportCsv}
-          className="flex shrink-0 items-center gap-1.5 rounded border border-black/[.15] px-3 py-1.5 text-sm dark:border-white/[.2]"
+          className="flex shrink-0 items-center gap-1.5 rounded-full border border-border bg-card px-4 py-2 text-sm font-medium shadow-sm transition-all hover:-translate-y-px hover:shadow-md"
         >
           <Download className="size-3.5" />
           Export CSV
@@ -1320,7 +1320,7 @@ export default function WebsiteProductsPanel({
         <button
           onClick={load}
           disabled={refreshing}
-          className="flex shrink-0 items-center gap-1.5 rounded border border-black/[.15] px-3 py-1.5 text-sm disabled:opacity-60 dark:border-white/[.2]"
+          className="flex shrink-0 items-center gap-1.5 rounded-full border border-border bg-card px-4 py-2 text-sm font-medium shadow-sm transition-all hover:-translate-y-px hover:shadow-md disabled:opacity-60"
         >
           <RefreshCw className={`size-3.5 ${refreshing ? "animate-spin" : ""}`} />
           {refreshing ? "Refreshing…" : "Refresh"}
@@ -1330,10 +1330,10 @@ export default function WebsiteProductsPanel({
             setLowStockOnly((v) => !v);
             setOutOfStockOnly(false);
           }}
-          className={`flex shrink-0 items-center gap-1.5 rounded-full border px-3 py-1.5 text-sm ${
+          className={`flex shrink-0 items-center gap-1.5 rounded-full border px-4 py-2 text-sm font-medium transition-all ${
             lowStockOnly
-              ? "border-amber-500 bg-amber-500 text-white"
-              : "border-black/[.15] dark:border-white/[.2]"
+              ? "border-amber-500 bg-amber-500 text-white shadow-md shadow-amber-500/30"
+              : "border-border bg-card shadow-sm hover:-translate-y-px hover:shadow-md"
           }`}
         >
           Low stock
@@ -1350,10 +1350,10 @@ export default function WebsiteProductsPanel({
             setOutOfStockOnly((v) => !v);
             setLowStockOnly(false);
           }}
-          className={`flex shrink-0 items-center gap-1.5 rounded-full border px-3 py-1.5 text-sm ${
+          className={`flex shrink-0 items-center gap-1.5 rounded-full border px-4 py-2 text-sm font-medium transition-all ${
             outOfStockOnly
-              ? "border-red-500 bg-red-500 text-white"
-              : "border-black/[.15] dark:border-white/[.2]"
+              ? "border-red-500 bg-red-500 text-white shadow-md shadow-red-500/30"
+              : "border-border bg-card shadow-sm hover:-translate-y-px hover:shadow-md"
           }`}
         >
           Out of stock
@@ -1368,10 +1368,10 @@ export default function WebsiteProductsPanel({
         <button
           onClick={() => setRecentOnly((v) => !v)}
           title="Products whose stock was changed in the last 7 days, newest first"
-          className={`flex shrink-0 items-center gap-1.5 rounded-full border px-3 py-1.5 text-sm ${
+          className={`flex shrink-0 items-center gap-1.5 rounded-full border px-4 py-2 text-sm font-medium transition-all ${
             recentOnly
-              ? "border-brand bg-brand text-white"
-              : "border-black/[.15] dark:border-white/[.2]"
+              ? "border-transparent bg-gradient-to-r from-[#2879bd] to-[#3f9fd0] text-white shadow-md shadow-brand/30"
+              : "border-border bg-card shadow-sm hover:-translate-y-px hover:shadow-md"
           }`}
         >
           Recently updated
@@ -1390,10 +1390,10 @@ export default function WebsiteProductsPanel({
         <button
           type="button"
           onClick={() => setCategoryFilter("")}
-          className={`rounded-full border px-3 py-1 text-xs ${
+          className={`rounded-full border px-3.5 py-1.5 text-xs font-medium transition-all ${
             categoryFilter === ""
-              ? "border-brand bg-brand text-white"
-              : "border-black/[.15] dark:border-white/[.2]"
+              ? "border-transparent bg-gradient-to-r from-[#2879bd] to-[#3f9fd0] text-white shadow-md shadow-brand/30"
+              : "border-border bg-card text-muted-foreground hover:-translate-y-px hover:border-brand/40 hover:text-foreground hover:shadow-sm"
           }`}
         >
           All
@@ -1403,10 +1403,10 @@ export default function WebsiteProductsPanel({
             key={c.id}
             type="button"
             onClick={() => setCategoryFilter(c.id)}
-            className={`rounded-full border px-3 py-1 text-xs ${
+            className={`rounded-full border px-3.5 py-1.5 text-xs font-medium transition-all ${
               categoryFilter === c.id
-                ? "border-brand bg-brand text-white"
-                : "border-black/[.15] dark:border-white/[.2]"
+                ? "border-transparent bg-gradient-to-r from-[#2879bd] to-[#3f9fd0] text-white shadow-md shadow-brand/30"
+                : "border-border bg-card text-muted-foreground hover:-translate-y-px hover:border-brand/40 hover:text-foreground hover:shadow-sm"
             }`}
           >
             {c.label}
@@ -1415,10 +1415,10 @@ export default function WebsiteProductsPanel({
         <button
           type="button"
           onClick={() => setCategoryFilter("__none__")}
-          className={`rounded-full border px-3 py-1 text-xs ${
+          className={`rounded-full border px-3.5 py-1.5 text-xs font-medium transition-all ${
             categoryFilter === "__none__"
-              ? "border-brand bg-brand text-white"
-              : "border-black/[.15] dark:border-white/[.2]"
+              ? "border-transparent bg-gradient-to-r from-[#2879bd] to-[#3f9fd0] text-white shadow-md shadow-brand/30"
+              : "border-border bg-card text-muted-foreground hover:-translate-y-px hover:border-brand/40 hover:text-foreground hover:shadow-sm"
           }`}
         >
           Uncategorized
@@ -1427,10 +1427,10 @@ export default function WebsiteProductsPanel({
           <button
             type="button"
             onClick={() => setCategoryFilter(ADDONS_FILTER_ID)}
-            className={`rounded-full border px-3 py-1 text-xs ${
+            className={`rounded-full border px-3.5 py-1.5 text-xs font-medium transition-all ${
               categoryFilter === ADDONS_FILTER_ID
-                ? "border-brand bg-brand text-white"
-                : "border-black/[.15] dark:border-white/[.2]"
+                ? "border-transparent bg-gradient-to-r from-[#2879bd] to-[#3f9fd0] text-white shadow-md shadow-brand/30"
+                : "border-border bg-card text-muted-foreground hover:-translate-y-px hover:border-brand/40 hover:text-foreground hover:shadow-sm"
             }`}
           >
             Addons ({addons.length})
@@ -1440,10 +1440,10 @@ export default function WebsiteProductsPanel({
           type="button"
           onClick={() => setCategoryFilter(POS_ONLY_FILTER_ID)}
           title="Products sold at the POS only, not on the website"
-          className={`rounded-full border px-3 py-1 text-xs ${
+          className={`rounded-full border px-3.5 py-1.5 text-xs font-medium transition-all ${
             categoryFilter === POS_ONLY_FILTER_ID
-              ? "border-brand bg-brand text-white"
-              : "border-black/[.15] dark:border-white/[.2]"
+              ? "border-transparent bg-gradient-to-r from-[#2879bd] to-[#3f9fd0] text-white shadow-md shadow-brand/30"
+              : "border-border bg-card text-muted-foreground hover:-translate-y-px hover:border-brand/40 hover:text-foreground hover:shadow-sm"
           }`}
         >
           POS only ({posOnlyProducts.length})
