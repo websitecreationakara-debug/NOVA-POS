@@ -338,7 +338,9 @@ export default async function Home({
   return (
     <main className="mx-auto w-full max-w-7xl space-y-6 p-4 sm:space-y-8 sm:p-8">
       <header>
-        <h1 className="font-display text-3xl font-bold">NOVA POS</h1>
+        <h1 className="font-display bg-gradient-to-r from-[#2879bd] to-[#3f9fd0] bg-clip-text text-4xl font-extrabold tracking-tight text-transparent drop-shadow-sm sm:text-5xl">
+          NOVA POS
+        </h1>
         <DashboardRangeBar
           brands={brandsOrdered}
           brandId={currentBrandId}

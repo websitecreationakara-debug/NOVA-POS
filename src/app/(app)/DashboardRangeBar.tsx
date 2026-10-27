@@ -144,15 +144,15 @@ export default function DashboardRangeBar({
   return (
     <>
       {showBrands && (
-      <div className="mt-2 flex flex-wrap gap-2">
+      <div className="mt-3 flex flex-wrap gap-2">
         <button
           type="button"
           onClick={() => switchBrand(ALL_BUSINESSES_ID)}
           aria-pressed={brandId === ALL_BUSINESSES_ID}
-          className={`rounded-full border px-2.5 py-1 text-xs font-medium transition-colors ${
+          className={`rounded-full border px-3.5 py-1.5 text-xs font-semibold transition-all ${
             brandId === ALL_BUSINESSES_ID
-              ? "border-brand bg-brand text-white"
-              : "border-border bg-muted/60 text-muted-foreground hover:text-foreground"
+              ? "border-transparent bg-gradient-to-r from-[#2879bd] to-[#3f9fd0] text-white shadow-md shadow-brand/30"
+              : "border-border bg-card text-muted-foreground hover:-translate-y-px hover:border-brand/40 hover:text-foreground hover:shadow-sm"
           }`}
         >
           All Business
@@ -163,10 +163,10 @@ export default function DashboardRangeBar({
             type="button"
             onClick={() => switchBrand(b.id)}
             aria-pressed={brandId === b.id}
-            className={`rounded-full border px-2.5 py-1 text-xs font-medium transition-colors ${
+            className={`rounded-full border px-3.5 py-1.5 text-xs font-semibold transition-all ${
               brandId === b.id
-                ? "border-brand bg-brand text-white"
-                : "border-border bg-muted/60 text-muted-foreground hover:text-foreground"
+                ? "border-transparent bg-gradient-to-r from-[#2879bd] to-[#3f9fd0] text-white shadow-md shadow-brand/30"
+                : "border-border bg-card text-muted-foreground hover:-translate-y-px hover:border-brand/40 hover:text-foreground hover:shadow-sm"
             }`}
           >
             {b.name}
@@ -175,17 +175,17 @@ export default function DashboardRangeBar({
       </div>
       )}
 
-      <div className={`${showBrands ? "mt-3" : ""} flex flex-wrap items-center gap-3 rounded-lg border border-black/[.08] p-3 dark:border-white/[.145]`}>
-        <div className="inline-flex rounded-full border border-black/[.15] p-0.5 dark:border-white/[.2]">
+      <div className={`${showBrands ? "mt-3" : ""} flex flex-wrap items-center gap-3 rounded-2xl border border-border bg-card p-3 shadow-sm`}>
+        <div className="inline-flex rounded-full bg-muted p-1">
           {(["day", "week", "month", "quarter", "year"] as const).map((m) => (
             <button
               key={m}
               type="button"
               onClick={() => switchMode(m)}
               aria-pressed={mode === m}
-              className={`rounded-full px-3 py-1 text-xs font-medium capitalize transition-colors ${
+              className={`rounded-full px-3.5 py-1 text-xs font-semibold capitalize transition-all ${
                 mode === m
-                  ? "bg-brand text-white"
+                  ? "bg-brand text-white shadow-sm"
                   : "text-zinc-600 hover:text-foreground dark:text-zinc-400"
               }`}
             >
