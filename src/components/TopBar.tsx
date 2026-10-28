@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { usePathname } from "next/navigation";
 import { LogOut, Menu } from "lucide-react";
 import { logoutAction } from "@/app/login/actions";
 import ThemeToggle from "@/components/ThemeToggle";
@@ -37,6 +38,33 @@ export default function TopBar({
     };
   }, [profileOpen]);
 
+  // Hide on scroll down, show on scroll up. The bar is in normal flow above
+  // #app-scroll-area, so hiding pulls it up by its own height (negative margin)
+  // and the content slides up to fill the space.
+  const headerRef = useRef<HTMLElement>(null);
+  const pathname = usePathname();
+
+  useEffect(() => {
+    const header = headerRef.current;
+    const area = document.getElementById("app-scroll-area");
+    if (!header || !area) return;
+    const setHidden = (hidden: boolean) => {
+      header.style.marginTop = hidden ? `-${header.offsetHeight}px` : "0px";
+    };
+    setHidden(false);
+    let lastTop = area.scrollTop;
+    function onScroll() {
+      const top = area!.scrollTop;
+      const delta = top - lastTop;
+      if (top < 60) setHidden(false);
+      else if (delta > 6) setHidden(true);
+      else if (delta < -6) setHidden(false);
+      if (Math.abs(delta) > 6) lastTop = top;
+    }
+    area.addEventListener("scroll", onScroll, { passive: true });
+    return () => area.removeEventListener("scroll", onScroll);
+  }, [pathname]);
+
   const initials =
     fullName
       .split(/\s+/)
@@ -46,7 +74,10 @@ export default function TopBar({
       .join("") || "?";
 
   return (
-    <header className="print:hidden flex shrink-0 items-center gap-2 border-b border-border bg-card px-3 py-3 sm:gap-3 sm:px-6">
+    <header
+      ref={headerRef}
+      className="print:hidden relative z-30 flex shrink-0 items-center gap-2 border-b border-border bg-card px-3 py-3 transition-[margin] duration-300 sm:gap-3 sm:px-6"
+    >
       <LiveOrdersWatcher />
       {/* Phones/tablets: the sidebar is a slide-out menu opened from here. */}
       <button

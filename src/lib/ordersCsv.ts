@@ -55,7 +55,7 @@ const HEADERS = [
   "order_id",
   "invoice_number",
   "paid_at_cambodia",
-  "created_at_cambodia",
+  "invoice_date",
   "status",
   "fulfillment_status",
   "business",
