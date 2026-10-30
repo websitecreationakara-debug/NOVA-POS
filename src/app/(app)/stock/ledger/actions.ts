@@ -89,6 +89,62 @@ export async function setLedgerEntryAction(input: {
   revalidatePath("/stock/ledger");
 }
 
+// The ledger's "Import CSV" button: many typed values at once, saved exactly as setLedgerEntryAction
+// would save them one by one (blank values are never sent, so an import can't erase anything).
+export async function importLedgerEntriesAction(input: {
+  month: string;
+  entries: { productId: string; field: string; value: string; site?: LedgerSiteItem }[];
+}): Promise<{ saved: number }> {
+  await requireStockAccess();
+  if (!MONTH_RE.test(input.month)) throw new Error("Pick a month");
+  if (input.entries.length > 2000) throw new Error("Too many values in one go");
+  const now = new Date().toISOString();
+  const own: { product_id: string; month: string; field: string; value: string; updated_at: string }[] = [];
+  const linked: typeof own = [];
+  const posIds = new Map<string, string>();
+  for (const e of input.entries) {
+    const value = e.value.trim();
+    if (!isLedgerField(e.field) || value === "" || value.length > 40) continue;
+    if (!LEDGER_TEXT_FIELDS.includes(e.field) && !Number.isFinite(Number(value))) continue;
+    if (e.productId.startsWith(LEDGER_OWN_PREFIX)) {
+      own.push({ product_id: e.productId.slice(LEDGER_OWN_PREFIX.length), month: input.month, field: e.field, value, updated_at: now });
+      continue;
+    }
+    let productId = e.productId;
+    if (e.site) {
+      let id = posIds.get(e.productId);
+      if (!id) {
+        id = (
+          await ensurePosProductForSiteProduct({
+            ...e.site,
+            catalogId: e.site.catalogId as WebsiteCatalogId,
+            variationId: e.site.variationId || null,
+          })
+        ).id;
+        posIds.set(e.productId, id);
+      }
+      productId = id;
+    }
+    linked.push({ product_id: productId, month: input.month, field: e.field, value, updated_at: now });
+  }
+  // One row per cell: an upsert can't touch the same row twice (a file may list a product twice).
+  const unique = (rows: typeof own) => [...new Map(rows.map((r) => [`${r.product_id}|${r.field}`, r])).values()];
+  if (own.length) {
+    const { error } = await supabaseAdmin.from("daily_ledger_product_entries").upsert(unique(own), { onConflict: "product_id,month,field" });
+    if (error) throw new Error(error.message);
+  }
+  if (linked.length) {
+    const { error } = await supabaseAdmin.from("daily_ledger_entries").upsert(unique(linked), { onConflict: "product_id,month,field" });
+    if (error) {
+      throw new Error(
+        /daily_ledger_entries/.test(error.message) ? "Run migration 0089 first, then try again." : error.message
+      );
+    }
+  }
+  revalidatePath("/stock/ledger");
+  return { saved: own.length + linked.length };
+}
+
 // The ledger's "Add product" button: a product that exists in the Daily Ledger only (migration 0091) --
 // not in Stock, Sales or the website. Everything else about it is typed into the ledger.
 export async function createLedgerProductAction(input: {

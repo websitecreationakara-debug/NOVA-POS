@@ -3,8 +3,9 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ChevronLeft, ChevronRight, FileSpreadsheet, Loader2, Plus, Search, Trash2, TriangleAlert } from "lucide-react";
+import { ChevronLeft, ChevronRight, FileSpreadsheet, Loader2, Plus, Search, Trash2, TriangleAlert, Upload } from "lucide-react";
 import TopBarSlot from "@/components/TopBarSlot";
+import { decodeCsvBytes, normalizeDate, parseCsv } from "@/lib/customerCsv";
 import { applyLedgerEntry, daysOfMonth, LEDGER_TEXT_FIELDS, recalcRow, type DailyLedgerRow } from "@/lib/dailyLedger";
 import { formatUsd } from "@/lib/formatNumber";
 import { ENGLISH_SCALES } from "@/lib/khmerScales";
@@ -21,8 +22,21 @@ import {
   deleteLedgerProductAction,
   exportDailyLedgerAction,
   hideRemovedLedgerProductAction,
+  importLedgerEntriesAction,
   setLedgerEntryAction,
 } from "./actions";
+
+// The export's column headers -> the ledger cell each one fills. Name, Weight, Unit, Category and the
+// worked-out columns (R, totals) are not imported.
+const CSV_FIELDS: Record<string, string> = {
+  "unit price": "unit_price",
+  "ex-date": "ex_date",
+  "s-price loka": "s_price_loka",
+  "tc+10%": "tc10",
+  "total cost": "total_cost",
+  "begining stock": "begin",
+  "beginning stock": "begin",
+};
 
 // Column widths (px). The first five columns stay put while the days scroll, and so do the month
 // totals on the right, so each sticky cell needs its own offset.
@@ -103,6 +117,9 @@ export default function DailyLedgerClient({
   const router = useRouter();
   const [filter, setFilter] = useState("");
   const [exporting, setExporting] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
+  const importRef = useRef<HTMLInputElement>(null);
   // The removed product whose Delete popup is open, and whether it is being deleted.
   const [deleting, setDeleting] = useState<DailyLedgerRow | null>(null);
   const [deletePending, setDeletePending] = useState(false);
@@ -364,6 +381,111 @@ export default function DailyLedgerClient({
     }
   }
 
+  // Reads a CSV laid out like the export, matches its rows to the products shown (by SKU, else name +
+  // weight) and saves every filled cell that differs. Blank cells are skipped, so nothing is erased.
+  async function importCsv(file: File) {
+    setImporting(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const table = parseCsv(decodeCsvBytes(await file.arrayBuffer()));
+      // The header row is the one with SKU and Name (the sheet has a title row or two above it).
+      const lower = (cells: string[]) => cells.map((h) => h.trim().toLowerCase());
+      const headerAt = table.slice(0, 10).findIndex((r) => lower(r).includes("sku") && lower(r).includes("name"));
+      if (headerAt < 0) throw new Error("This doesn't look like a Daily Ledger CSV (no row with SKU and Name).");
+      const header = lower(table[headerAt]);
+      // The sheet puts the date ("1/Oct") on the row above its P S O R columns; our export has "01 P".
+      const above = table[headerAt - 1] ?? [];
+      const monthNames = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
+      const viewedMonth = Number(month.slice(5));
+      const col = (...names: string[]) => header.findIndex((h) => names.includes(h));
+      const cols: { i: number; field: string }[] = [];
+      let wrongMonth = 0;
+      const addDay = (i: number, dayNum: number) => {
+        if (!days.some((d) => Number(d.slice(8)) === dayNum)) return;
+        const dd = String(dayNum).padStart(2, "0");
+        (["p", "s", "o"] as const).forEach((k, n) => cols.push({ i: i + n, field: `${k}:${dd}` }));
+      };
+      header.forEach((h, i) => {
+        const day = /^(\d{1,2}) ([pso])$/.exec(h);
+        if (day) cols.push({ i, field: `${day[2]}:${day[1].padStart(2, "0")}` });
+        else if (CSV_FIELDS[h]) cols.push({ i, field: CSV_FIELDS[h] });
+        else if (h === "p" && header[i + 1] === "s" && header[i + 2] === "o") {
+          const label = above.slice(i, i + 4).map((c) => c.trim()).find(Boolean) ?? "";
+          const m = /^(\d{1,2})\s*[/-]\s*([a-z]{3})/i.exec(label);
+          if (!m) return;
+          if (monthNames.indexOf(m[2].toLowerCase()) + 1 !== viewedMonth) wrongMonth++;
+          else addDay(i, Number(m[1]));
+        }
+      });
+      if (wrongMonth > 0 && !cols.some((c) => /^[pso]:/.test(c.field))) {
+        throw new Error(`This CSV is for a different month than ${monthLabel(month)} -- pick that month first.`);
+      }
+      const skuCol = col("sku");
+      const nameCol = col("name");
+      if (cols.length === 0) throw new Error("No ledger columns found in this CSV.");
+      const bySku = new Map(localRows.filter((r) => r.sku).map((r) => [r.sku!.toLowerCase(), r]));
+      const byName = new Map(localRows.map((r) => [`${r.name}|${r.size}`.toLowerCase(), r]));
+      const entries: { productId: string; field: string; value: string; site?: DailyLedgerRow["site"] }[] = [];
+      let matched = 0;
+      let unmatched = 0;
+      let invalid = 0;
+      const sizeCol = col("weight", "weight/size");
+      for (const line of table.slice(headerAt + 1)) {
+        const sku = skuCol >= 0 ? (line[skuCol] ?? "").trim().toLowerCase() : "";
+        const name = nameCol >= 0 ? (line[nameCol] ?? "").trim() : "";
+        // Category rows ("FROZEN FOOD") have no name; they are headings, not products.
+        if (!name) continue;
+        const size = sizeCol >= 0 ? (line[sizeCol] ?? "").trim() : "";
+        const row = (sku && bySku.get(sku)) || byName.get(`${name}|${size}`.toLowerCase());
+        if (!row) {
+          unmatched++;
+          continue;
+        }
+        let used = false;
+        for (const { i, field } of cols) {
+          let value = (line[i] ?? "").trim();
+          if (value === "" || value === "-") continue;
+          if (field === "ex_date") {
+            // The sheet often has just month/year ("12/2026"): kept as the 1st of that month.
+            const my = /^(\d{1,2})\/(\d{4})$/.exec(value);
+            const date = my ? `${my[2]}-${my[1].padStart(2, "0")}-01` : normalizeDate(value);
+            if (date === null) {
+              invalid++;
+              continue;
+            }
+            value = date;
+          } else {
+            value = value.replace(/[$,\s]/g, "");
+            if (!Number.isFinite(Number(value))) {
+              invalid++;
+              continue;
+            }
+          }
+          const current = rawValue(row, field);
+          if (current === value || (current !== "" && !LEDGER_TEXT_FIELDS.includes(field) && Number(current) === Number(value))) continue;
+          entries.push({ productId: row.productId, field, value, site: row.site });
+          used = true;
+        }
+        if (used) matched++;
+      }
+      for (let i = 0; i < entries.length; i += 1000) {
+        await importLedgerEntriesAction({ month, entries: entries.slice(i, i + 1000) });
+      }
+      setNotice(
+        `Imported ${entries.length} value${entries.length === 1 ? "" : "s"} for ${matched} product${matched === 1 ? "" : "s"}` +
+          (unmatched ? ` · ${unmatched} row${unmatched === 1 ? "" : "s"} not found` : "") +
+          (invalid ? ` · ${invalid} bad value${invalid === 1 ? "" : "s"} skipped` : "")
+      );
+      router.refresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Import failed");
+    } finally {
+      setImporting(false);
+      if (importRef.current) importRef.current.value = "";
+    }
+  }
+
   // Frozen cells need a solid background so the scrolling days do not show through them.
   const sticky = "sticky z-10";
   // SKU is frozen only from md up and the Month totals only from lg up: with Name frozen as well they
@@ -458,6 +580,26 @@ export default function DailyLedgerClient({
         </button>
         <span className="flex w-full items-center gap-2 sm:ml-auto sm:w-auto sm:gap-3">
           {error && <span className="text-xs text-red-500">{error}</span>}
+          {notice && !error && <span className="text-xs text-green-600 dark:text-green-400">{notice}</span>}
+          <input
+            ref={importRef}
+            type="file"
+            accept=".csv,text/csv"
+            className="hidden"
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              if (f) void importCsv(f);
+            }}
+          />
+          <button
+            type="button"
+            onClick={() => importRef.current?.click()}
+            disabled={importing}
+            className="inline-flex flex-1 items-center justify-center gap-2 rounded-lg border border-border bg-card px-4 py-2 text-sm font-medium shadow-sm hover:bg-muted disabled:opacity-60 sm:flex-none"
+          >
+            {importing ? <Loader2 className="size-4 animate-spin" /> : <Upload className="size-4" />}
+            {importing ? "Importing…" : "Import CSV"}
+          </button>
           <button
             type="button"
             onClick={() => {
