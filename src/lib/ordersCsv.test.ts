@@ -134,6 +134,11 @@ describe("buildOrdersCsv", () => {
     expect(rows[1]).toContain('"He said ""ok"""');
   });
 
+  it("writes a digits-only phone as text so Excel doesn't turn it into 8.55965E+11", () => {
+    const rows = parse(buildOrdersCsv([order({ customer_phone: "85596500000" })], []));
+    expect(rows[1]).toContain('"=""85596500000"""');
+  });
+
   it("does not invent an invoice number for an unpaid order", () => {
     const rows = parse(buildOrdersCsv([order({ status: "cancelled", paid_at: null, invoice_number: "INV-000009" })], []));
     expect(rows[1].split(",")[1]).toBe("");

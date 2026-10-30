@@ -477,8 +477,8 @@ export default function OrdersTable({
             ))}
           </ul>
           <table className="hidden w-full text-sm md:table">
-            <thead>
-              <tr className="border-b border-border text-left text-xs font-semibold text-muted-foreground">
+            <thead className="[&_th]:sticky [&_th]:top-0 [&_th]:z-10 [&_th]:bg-background [&_th]:shadow-[inset_0_-1px_0_var(--border)]">
+              <tr className="text-left text-xs font-semibold text-muted-foreground">
                 <th className="w-8 py-2 pr-2">
                   <input
                     type="checkbox"

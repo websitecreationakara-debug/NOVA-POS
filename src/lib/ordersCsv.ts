@@ -95,6 +95,13 @@ export function csvCell(value: unknown): string {
   return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 }
 
+// A phone made only of digits (optionally a leading +) is written as ="855..." so Excel keeps it as
+// text: otherwise it shows long numbers as 8.55965E+11 and drops leading zeros.
+function csvPhone(phone: string | null): string {
+  const p = (phone ?? "").trim();
+  return /^\+?\d+$/.test(p) ? `="${p}"` : p;
+}
+
 // "2026-10-02 13:09:59" -- an instant as wall-clock time at a UTC offset in hours
 // (Phnom Penh is +7 all year, no daylight saving). "" for a missing/invalid
 // timestamp. Excel reads this as a date and shows it in the computer's own date style.
@@ -167,7 +174,7 @@ export function buildOrdersCsv(
       o.site_order_id ?? "",
       o.order_source ?? "",
       o.customer_name ?? "",
-      o.customer_phone ?? "",
+      csvPhone(o.customer_phone),
       o.customer_email ?? "",
       o.customers?.address ?? "",
       o.payment_method ?? "",
