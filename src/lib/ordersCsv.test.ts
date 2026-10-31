@@ -104,6 +104,25 @@ describe("buildOrdersCsv", () => {
     expect(rows[1]).not.toContain("INV-000001");
   });
 
+  it("lists rows in invoice-number order and prefers a hand-typed number", () => {
+    const paid = (n: number) => `2026-10-${String(n).padStart(2, "0")}T01:00:00Z`;
+    const rows = parse(
+      buildOrdersCsv(
+        [
+          // created last but paid first -> invoice 1 must still come first
+          order({ id: "b", paid_at: paid(2), created_at: paid(9), invoice_number: null }),
+          order({ id: "c", paid_at: paid(3), created_at: paid(3), invoice_number: null }),
+          order({ id: "a", paid_at: paid(1), created_at: paid(1), invoice_number: null, custom_invoice_number: "202610-10" }),
+        ],
+        [],
+        undefined,
+        false
+      )
+    ).slice(1);
+    // a is typed as 202610-10, so it sorts after 202610-2 and 202610-3 (numeric, not text, order)
+    expect(rows.map((r) => r.split(",")[1])).toEqual(["202610-2", "202610-3", "202610-10"]);
+  });
+
   it("numbers invoices oldest-first within each Cambodia month", () => {
     const rows = parse(
       buildOrdersCsv(
