@@ -48,13 +48,24 @@ export default function TopBar({
     const header = headerRef.current;
     const area = document.getElementById("app-scroll-area");
     if (!header || !area) return;
+    let isHidden = false;
+    // Hiding/showing resizes the scroll area, which can clamp scrollTop (e.g. at
+    // the bottom of a page) and fire scroll events that aren't the user's. Without
+    // ignoring them, the clamp reads as "scrolled up" and the bar flickers.
+    let ignoreUntil = 0;
     const setHidden = (hidden: boolean) => {
+      if (hidden !== isHidden) ignoreUntil = performance.now() + 350;
+      isHidden = hidden;
       header.style.marginTop = hidden ? `-${header.offsetHeight}px` : "0px";
     };
     setHidden(false);
     let lastTop = area.scrollTop;
     function onScroll() {
       const top = area!.scrollTop;
+      if (performance.now() < ignoreUntil) {
+        lastTop = top;
+        return;
+      }
       const delta = top - lastTop;
       if (top < 60) setHidden(false);
       else if (delta > 6) setHidden(true);
