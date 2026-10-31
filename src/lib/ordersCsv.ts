@@ -11,6 +11,8 @@ import type { XlsxCell, XlsxColumn } from "./xlsxWriter";
 export type BackupOrder = {
   id: string;
   invoice_number: string | null;
+  // A number typed in by hand (migration 0087); shown instead of the YYYYMM-N one.
+  custom_invoice_number?: string | null;
   paid_at: string | null;
   // The date the Orders list shows and filters by (a Pre-Order keeps its own date).
   list_at?: string | null;
@@ -131,6 +133,29 @@ function invoiceNumbers(orders: BackupOrder[]): Map<string, string> {
   return out;
 }
 
+// The invoice number as shown in the file (a hand-typed one wins over the YYYYMM-N one).
+function shownNumber(o: BackupOrder, numbers: Map<string, string>): string {
+  return o.custom_invoice_number || (numbers.get(o.id) ?? "");
+}
+
+// Rows in invoice-number order: YYYYMM-N orders by month, then N (so -9 comes before -10).
+// Orders with no such number (unpaid, or a hand-typed number in another format) follow,
+// newest first.
+function byInvoiceNumber(orders: BackupOrder[], numbers: Map<string, string>): BackupOrder[] {
+  const key = (o: BackupOrder) => {
+    const m = /^(\d{6})-(\d+)$/.exec(shownNumber(o, numbers));
+    return m ? ([Number(m[1]), Number(m[2])] as const) : null;
+  };
+  return [...orders].sort((a, b) => {
+    const ka = key(a);
+    const kb = key(b);
+    if (ka && kb) return ka[0] - kb[0] || ka[1] - kb[1];
+    if (ka) return -1;
+    if (kb) return 1;
+    return a.created_at < b.created_at ? 1 : -1;
+  });
+}
+
 // Only the orders whose Orders-list date (Phnom Penh day) falls in [from, to]; either end may be
 // left out. Invoice numbers are worked out first, from every order, since an order's number is its
 // place in its whole month -- a partial month would number it wrongly.
@@ -159,11 +184,10 @@ export function buildOrdersCsv(
   const numbers = invoiceNumbers(orders);
 
   const lines: string[] = [(withItems ? [...HEADERS, ...ITEM_HEADERS] : HEADERS).join(",")];
-  const newestFirst = orders.filter((o) => inRange(o, range)).sort((a, b) => (a.created_at < b.created_at ? 1 : -1));
-  for (const o of newestFirst) {
+  for (const o of byInvoiceNumber(orders.filter((o) => inRange(o, range)), numbers)) {
     const orderCells = [
       o.id,
-      numbers.get(o.id) ?? "",
+      shownNumber(o, numbers),
       cambodiaTime(o.paid_at),
       cambodiaTime(o.created_at),
       o.status,
@@ -277,15 +301,14 @@ export function buildOrdersSheet(
   const numbers = invoiceNumbers(orders);
 
   const rows: XlsxCell[][] = [];
-  const newestFirst = orders.filter((o) => inRange(o, range)).sort((a, b) => (a.created_at < b.created_at ? 1 : -1));
-  for (const o of newestFirst) {
+  for (const o of byInvoiceNumber(orders.filter((o) => inRange(o, range)), numbers)) {
     const orderedVia = o.channel === "online" ? `Website ${o.site ?? ""}`.trim() : (o.order_source ?? "");
     const lines = itemsByOrder.get(o.id) ?? [];
     const lineRows: (BackupItem | null)[] = lines.length ? lines : [null];
     lineRows.forEach((it, index) => {
       const first = index === 0;
       rows.push([
-        numbers.get(o.id) ?? "",
+        shownNumber(o, numbers),
         cambodiaSerial(o.paid_at),
         o.brands?.name ?? "",
         o.customer_name ?? "",
