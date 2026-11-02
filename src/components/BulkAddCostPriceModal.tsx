@@ -65,7 +65,8 @@ export default function BulkAddCostPriceModal({
         const rawPrice = priceDrafts[r.productId];
         const price = rawPrice === undefined ? r.sellingPrice : parseFloat(rawPrice);
         return {
-          productId: r.productId,
+          // A row that is several same-named products costs every one of them.
+          productIds: r.productIds,
           costPrice,
           price: Number.isNaN(price) || price < 0 ? r.sellingPrice : price,
           priceChanged: price !== r.sellingPrice,
@@ -82,10 +83,12 @@ export default function BulkAddCostPriceModal({
     startTransition(async () => {
       try {
         await Promise.all(
-          toSave.flatMap((r) => [
-            setProductCostAction({ productId: r.productId, costPrice: r.costPrice }),
-            ...(r.priceChanged ? [setProductPriceAction({ productId: r.productId, price: r.price })] : []),
-          ])
+          toSave.flatMap((r) =>
+            r.productIds.flatMap((productId) => [
+              setProductCostAction({ productId, costPrice: r.costPrice }),
+              ...(r.priceChanged ? [setProductPriceAction({ productId, price: r.price })] : []),
+            ])
+          )
         );
         router.refresh();
         onClose();

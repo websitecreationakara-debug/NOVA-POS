@@ -928,7 +928,7 @@ export default function AccountanceClient({
   const [editingMarginId, setEditingMarginId] = useState<string | null>(null);
   // The "N sold at $X" line being edited (one at a time): which product and which
   // cost group, plus the new cost typed so far.
-  const [editingSoldAt, setEditingSoldAt] = useState<{ productId: string; cost: number } | null>(null);
+  const [editingSoldAt, setEditingSoldAt] = useState<{ productId: string; productIds: string[]; cost: number } | null>(null);
   const [soldAtDraft, setSoldAtDraft] = useState("");
   const [bulkCostModalOpen, setBulkCostModalOpen] = useState(false);
   const [wasteModalOpen, setWasteModalOpen] = useState(false);
@@ -1001,15 +1001,18 @@ export default function AccountanceClient({
 
     startTransition(async () => {
       try {
-        if (costChanged)
-          await setMarginUnitCostAction({
-            productId: r.productId,
-            unitCost: costPrice as number,
-            brandId: currentBrand.id,
-            fromDate,
-            toDate,
-          });
-        if (priceChanged) await setProductPriceAction({ productId: r.productId, price: price as number });
+        // A row that is several same-named products changes every one of them.
+        for (const productId of r.productIds) {
+          if (costChanged)
+            await setMarginUnitCostAction({
+              productId,
+              unitCost: costPrice as number,
+              brandId: currentBrand.id,
+              fromDate,
+              toDate,
+            });
+          if (priceChanged) await setProductPriceAction({ productId, price: price as number });
+        }
         router.refresh();
       } catch (e) {
         setError(e instanceof Error ? e.message : "Failed to save");
@@ -1024,7 +1027,7 @@ export default function AccountanceClient({
   // in Stock stay as they are.
   function saveSoldAt() {
     if (!editingSoldAt) return;
-    const { productId, cost } = editingSoldAt;
+    const { productIds, cost } = editingSoldAt;
     const next = parseFloat(soldAtDraft);
     if (Number.isNaN(next) || next < 0) {
       setError("Cost cannot be negative");
@@ -1037,14 +1040,15 @@ export default function AccountanceClient({
     }
     startTransition(async () => {
       try {
-        await setMarginSoldAtCostAction({
-          productId,
-          fromCost: cost,
-          toCost: next,
-          brandId: currentBrand.id,
-          fromDate,
-          toDate,
-        });
+        // Only some of a combined row's products may have sales at that cost: each one that does is
+        // re-priced, and it is an error only if none did.
+        const results = await Promise.allSettled(
+          productIds.map((productId) =>
+            setMarginSoldAtCostAction({ productId, fromCost: cost, toCost: next, brandId: currentBrand.id, fromDate, toDate })
+          )
+        );
+        const failed = results.find((r): r is PromiseRejectedResult => r.status === "rejected");
+        if (failed && results.every((r) => r.status === "rejected")) throw failed.reason;
         router.refresh();
       } catch (e) {
         setError(e instanceof Error ? e.message : "Failed to save");
@@ -2105,6 +2109,8 @@ export default function AccountanceClient({
                               from: fromDate,
                               to: toDate,
                               back: urlFor({}),
+                              // Several same-named products shown as one row open together.
+                              ...(r.productIds.length > 1 ? { ids: r.productIds.join(",") } : {}),
                             })}`
                           );
                         }}
@@ -2294,7 +2300,7 @@ export default function AccountanceClient({
                                           title="Edit the cost these units were sold at"
                                           onClick={() => {
                                             setSoldAtDraft(String(s.unitCost));
-                                            setEditingSoldAt({ productId: r.productId, cost: s.unitCost });
+                                            setEditingSoldAt({ productId: r.productId, productIds: r.productIds, cost: s.unitCost });
                                           }}
                                           className="inline-flex items-center gap-1 rounded px-1 hover:bg-black/[.05] hover:text-foreground dark:hover:bg-white/[.08]"
                                         >

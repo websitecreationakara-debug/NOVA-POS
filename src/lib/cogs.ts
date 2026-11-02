@@ -186,6 +186,28 @@ export function summarizeMarginLines(lines: MarginLine[], currentCost: number | 
   };
 }
 
+// One product's sold lines costed the way summarizeMarginLines costs them -- a product linked to a Stock listing
+// (`currentOnly`) has every line at its current / typed cost -- plus the Unit Cost that results. The lines of
+// several products can then be added up as one Margin Report row (see getMarginReport).
+export function resolveMarginLines(
+  lines: MarginLine[],
+  currentCost: number | null,
+  currentOnly: boolean
+): { lines: MarginLine[]; unitCost: number | null } {
+  if (!currentOnly) return { lines, unitCost: currentCost };
+  const typedSoldAt = unitsSoldByCost(lines);
+  const typedCost =
+    lines.length > 0 && lines.every((l) => l.costOverridden) && typedSoldAt.length === 1 ? typedSoldAt[0].unitCost : null;
+  const stockCost = typedCost ?? currentCost;
+  return {
+    lines: lines.map((l) => {
+      const cost = l.costOverridden && l.unitCost !== null ? l.unitCost : stockCost;
+      return { ...l, unitCost: cost, cogs: cost === null ? null : round2(cost * l.quantity) };
+    }),
+    unitCost: stockCost,
+  };
+}
+
 // A product's Total COGS with every day costed on its own and the days added up -- the same figure as
 // adding the daily totals by hand. Costing the whole range at once rounds each cost group once, so it
 // can land a few cents off that sum. Within a day, sales at the same price and cost are one line (as

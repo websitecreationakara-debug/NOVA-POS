@@ -69,7 +69,10 @@ const ACCOUNTANCE_ROLES = ["admin", "accountance"];
 
 // Pages under Stock, listed below it in the sidebar. They live under /stock, so they follow the
 // same access as Stock itself.
-const STOCK_LINKS = [{ href: "/stock/ledger", label: "Daily Ledger" }];
+const STOCK_LINKS = [
+  { href: "/stock/ledger", label: "Daily Ledger" },
+  { href: "/stock/invoices", label: "Supplier Invoices" },
+];
 
 // Remembered per browser so the sidebar stays how the staff member left it.
 const COLLAPSED_KEY = "nova:sidebar-collapsed";

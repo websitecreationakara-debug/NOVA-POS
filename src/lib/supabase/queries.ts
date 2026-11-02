@@ -13,6 +13,7 @@ import { orderForBrandShare } from "@/lib/orderBrandShare";
 import { ALL_PAYMENT_METHODS, type PaymentMethod } from "@/lib/paymentMethods";
 import {
   computeGrossMargin,
+  resolveMarginLines,
   splitByWeight,
   summarizeCogsByDay,
   summarizeMarginLines,
@@ -302,7 +303,7 @@ export async function getRecentStockUpdates(brandId: string, days: number): Prom
 // taken off the site -- can be left out), and the subset of keys whose stock is actually counted
 // (add-ons and some products have no stock number, i.e. unlimited). null for a business with no
 // website or one that can't be reached -- the caller then falls back to the POS stock.
-async function websiteStock(
+export async function websiteStock(
   brandSlug: string
 ): Promise<{ units: number; keys: Set<string>; trackedKeys: Set<string> } | null> {
   const catalog = catalogForBrandSlug(brandSlug);
@@ -1663,6 +1664,10 @@ export async function getStockPickerItems(
 
 export type MarginReportRow = {
   productId: string;
+  // Every POS product behind the row, `productId` (the one with the most revenue) included. More than one when
+  // products have the same name -- same weight / size -- and are shown as one row; a different weight or size is
+  // its own row. Editing the row's cost or price edits all of them.
+  productIds: string[];
   name: string;
   // The product's picture (its POS copy, kept in step with the website's).
   imageUrl: string | null;
@@ -1886,7 +1891,7 @@ export async function getMarginReport(
       Array.from({ length: Math.ceil(imageIds.length / 150) }, (_, i) =>
         supabaseAdmin
           .from("products")
-          .select("id, image_url")
+          .select("id, image_url, brand_id")
           .in("id", imageIds.slice(i * 150, (i + 1) * 150))
       )
     ),
@@ -1897,25 +1902,32 @@ export async function getMarginReport(
     ),
   ]);
   const imageById = new Map<string, string | null>();
-  for (const { data } of imagePages) for (const p of data ?? []) imageById.set(p.id, p.image_url);
+  const brandById = new Map<string, string>();
+  for (const { data } of imagePages) {
+    for (const p of data ?? []) {
+      imageById.set(p.id, p.image_url);
+      brandById.set(p.id, p.brand_id);
+    }
+  }
   // A product linked to a Stock listing takes its Unit Cost from Total Cost 10%
   // only (null when empty) -- not Stock's Total, a typed cost or a recorded sale.
   for (const [id, c] of cost10ByProduct) currentCostByProduct.set(id, c);
 
-  const rows = Array.from(byProduct.entries()).map(([productId, lines]) => {
+  // One row per product...
+  const singleRows = Array.from(byProduct.entries()).map(([productId, lines]) => {
     const product = productById.get(productId);
+    const linked = cost10ByProduct.has(productId);
     const currentCost = currentCostByProduct.get(productId) ?? null;
-    const summary = summarizeMarginLines(lines, currentCost, cost10ByProduct.has(productId));
+    const summary = summarizeMarginLines(lines, currentCost, linked);
     // Costed day by day and added up (the range as one costs a few cents differently).
-    const totalCogs = multiDay
-      ? summarizeCogsByDay(lines, currentCost, cost10ByProduct.has(productId))
-      : summary.totalCogs;
+    const totalCogs = multiDay ? summarizeCogsByDay(lines, currentCost, linked) : summary.totalCogs;
     const adjustment = adjustmentsByProduct.get(productId);
     const discount = Math.min(round2(adjustment?.discount ?? 0), summary.revenue);
     const deliveryFee = round2(adjustment?.deliveryFee ?? 0);
     const revenue = round2(summary.revenue - discount + deliveryFee);
-    return {
+    const row = {
       productId,
+      productIds: [productId],
       name: product?.name ?? "—",
       imageUrl: imageById.get(productId) ?? product?.image_url ?? null,
       categoryName: (product?.categories as { name: string } | null)?.name ?? null,
@@ -1928,6 +1940,48 @@ export async function getMarginReport(
       ...computeGrossMargin(revenue, totalCogs),
       suggestedCost: null as number | null,
       sellingPrice: product?.price ?? round2(summary.revenue / summary.unitsSold),
+    };
+    return { row, lines, currentCost, linked };
+  });
+
+  // ...then products with the same name (the weight / size is part of it: "Salmon Roe Ikura (250g)") of the same
+  // business are one row, their sales added up; a different weight or size stays a row of its own.
+  const sameName = new Map<string, typeof singleRows>();
+  for (const s of singleRows) {
+    const named = productById.get(s.row.productId)?.name;
+    const key = named
+      ? `${brandById.get(s.row.productId) ?? ""}|${named.toLowerCase().replace(/\s+/g, " ").trim()}`
+      : `id|${s.row.productId}`;
+    sameName.set(key, [...(sameName.get(key) ?? []), s]);
+  }
+  const rows = [...sameName.values()].map((group) => {
+    if (group.length === 1) return group[0].row;
+    const ranked = [...group].sort((a, b) => b.row.revenue - a.row.revenue);
+    const primary = ranked[0];
+    // Every line at the cost it was sold with (a Stock-linked product's at its current cost), added up as one.
+    const resolved = group.map((s) => resolveMarginLines(s.lines, s.currentCost, s.linked));
+    const allLines = resolved.flatMap((r) => r.lines);
+    const costs = group.map((s, i) => (s.linked ? resolved[i].unitCost : s.currentCost));
+    // One Unit Cost when every product has the same; otherwise the biggest product's -- the "sold at" list
+    // underneath then shows what the others were sold at.
+    const unitCostNow = costs.every((c) => c !== null && c === costs[0]) ? costs[0] : primary.row.unitCost;
+    const summary = summarizeMarginLines(allLines, unitCostNow, false);
+    const totalCogs = multiDay ? summarizeCogsByDay(allLines, unitCostNow, false) : summary.totalCogs;
+    const revenue = round2(group.reduce((sum, s) => sum + s.row.revenue, 0));
+    const prices = group.map((s) => s.row.sellingPrice);
+    return {
+      ...primary.row,
+      productIds: ranked.map((s) => s.row.productId),
+      imageUrl: ranked.map((s) => s.row.imageUrl).find(Boolean) ?? null,
+      categoryName: ranked.map((s) => s.row.categoryName).find(Boolean) ?? null,
+      ...summary,
+      totalCogs,
+      revenue,
+      revenueBeforeDiscount: round2(group.reduce((sum, s) => sum + s.row.revenueBeforeDiscount, 0)),
+      discount: round2(group.reduce((sum, s) => sum + s.row.discount, 0)),
+      deliveryFee: round2(group.reduce((sum, s) => sum + s.row.deliveryFee, 0)),
+      ...computeGrossMargin(revenue, totalCogs),
+      sellingPrice: prices.every((p) => p === prices[0]) ? prices[0] : primary.row.sellingPrice,
     };
   });
 
@@ -2056,6 +2110,65 @@ export async function getProductMarginDetail(
   return { name: product.name, summary, revenueBeforeDiscount: round2(baseSummary.revenue + deliveryFee), discount, deliveryFee, costBreakdown, sales };
 }
 
+// A Margin Report row that is several same-named products (see MarginReportRow.productIds) opened up: each
+// product's detail added together -- every sale, the cost breakdown and the totals.
+export async function getMergedProductMarginDetail(
+  productIds: string[],
+  brandId: string,
+  fromDate: string,
+  toDate: string
+): Promise<ProductMarginDetail | null> {
+  const parts = (await Promise.all(productIds.map((id) => getProductMarginDetail(id, brandId, fromDate, toDate)))).filter(
+    (p): p is ProductMarginDetail => p !== null
+  );
+  if (parts.length <= 1) return parts[0] ?? null;
+  const primary = [...parts].sort((a, b) => b.summary.revenue - a.summary.revenue)[0];
+
+  const byCost = new Map<number, { units: number; cogs: number }>();
+  for (const p of parts) {
+    for (const c of p.costBreakdown) {
+      const e = byCost.get(c.unitCost) ?? { units: 0, cogs: 0 };
+      e.units += c.units;
+      e.cogs += c.cogs;
+      byCost.set(c.unitCost, e);
+    }
+  }
+  const totalUnits = [...byCost.values()].reduce((s, e) => s + e.units, 0);
+  const costBreakdown = [...byCost]
+    .map(([unitCost, e]) => ({
+      unitCost,
+      units: round2(e.units),
+      cogs: round2(e.cogs),
+      share: totalUnits === 0 ? 0 : round2((e.units / totalUnits) * 100),
+    }))
+    .sort((a, b) => b.units - a.units);
+
+  const revenue = round2(parts.reduce((s, p) => s + p.summary.revenue, 0));
+  const totalCogs = parts.some((p) => p.summary.totalCogs === null)
+    ? null
+    : round2(parts.reduce((s, p) => s + (p.summary.totalCogs ?? 0), 0));
+  const costs = parts.map((p) => p.summary.unitCost);
+  const summary = {
+    ...primary.summary,
+    unitsSold: round2(parts.reduce((s, p) => s + p.summary.unitsSold, 0)),
+    revenue,
+    unitCost: costs.every((c) => c !== null && c === costs[0]) ? costs[0] : primary.summary.unitCost,
+    soldAt: [],
+    totalCogs,
+    ...computeGrossMargin(revenue, totalCogs),
+    hasUnknownCost: parts.some((p) => p.summary.hasUnknownCost),
+  };
+  return {
+    name: primary.name,
+    summary,
+    revenueBeforeDiscount: round2(parts.reduce((s, p) => s + p.revenueBeforeDiscount, 0)),
+    discount: round2(parts.reduce((s, p) => s + p.discount, 0)),
+    deliveryFee: round2(parts.reduce((s, p) => s + p.deliveryFee, 0)),
+    costBreakdown,
+    sales: parts.flatMap((p) => p.sales).sort((a, b) => (b.paidAt ?? "").localeCompare(a.paidAt ?? "")),
+  };
+}
+
 export async function getExpensesForDateRange(
   brandId: string,
   fromDate: string,
@@ -2081,7 +2194,9 @@ async function getOwnLedgerProducts(brandId: string, month: string) {
     supabaseAdmin.from("daily_ledger_products").select(columns).eq("brand_id", brandId).order("created_at");
   // category is migration 0092 and first_month 0093; without them the products still show, under
   // "Added in ledger" and in every month.
-  let res = await ownQuery("id, name, unit, unit_price, category, first_month");
+  // stock_product_id is migration 0100 (the link to a Stock product); without it nothing is linked.
+  let res = await ownQuery("id, name, unit, unit_price, category, first_month, stock_product_id");
+  if (res.error && /stock_product_id/.test(res.error.message)) res = await ownQuery("id, name, unit, unit_price, category, first_month");
   if (res.error && /first_month/.test(res.error.message)) res = await ownQuery("id, name, unit, unit_price, category");
   if (res.error && /category/.test(res.error.message)) res = await ownQuery("id, name, unit, unit_price");
   if (res.error && !/daily_ledger_products/.test(res.error.message)) throw res.error;
@@ -2092,7 +2207,15 @@ async function getOwnLedgerProducts(brandId: string, month: string) {
     unit_price: number;
     category?: string | null;
     first_month?: string | null;
+    stock_product_id?: string | null;
   }[]).filter((o) => !o.first_month || o.first_month <= month);
+  // The names of the Stock products they are linked to.
+  const linkIds = [...new Set(rows.map((o) => o.stock_product_id).filter((id): id is string => !!id))];
+  const linkNames = new Map<string, string>();
+  for (let i = 0; i < linkIds.length; i += 100) {
+    const { data } = await supabaseAdmin.from("products").select("id, name").in("id", linkIds.slice(i, i + 100));
+    for (const p of data ?? []) linkNames.set(p.id, p.name);
+  }
   // Joined to the products (not .in(ids)): hundreds of ids would overflow the request URL.
   const typedRes = rows.length
     ? await selectAll(
@@ -2114,6 +2237,9 @@ async function getOwnLedgerProducts(brandId: string, month: string) {
       name: o.name,
       size: "",
       deletion: { kind: "own" } as const,
+      ...(o.stock_product_id && linkNames.has(o.stock_product_id)
+        ? { stockLink: { id: o.stock_product_id, name: linkNames.get(o.stock_product_id)! } }
+        : {}),
       unit: o.unit,
       categoryName: o.category?.trim() || "Added in ledger",
       price: Number(o.unit_price),

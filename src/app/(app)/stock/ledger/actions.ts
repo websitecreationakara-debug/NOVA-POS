@@ -145,6 +145,195 @@ export async function importLedgerEntriesAction(input: {
   return { saved: own.length + linked.length };
 }
 
+// Links ledger products to the Stock products they are the same as (or unlinks them: stockProductId null).
+// The Stock product can be of any business: one business's ledger can list another business's products
+// (e.g. beer in the Premium Foods ledger that Stock has under SORA SAKE). Nothing is renamed or merged: the
+// link only tells a supplier invoice that a line for the ledger product also belongs to that Stock product.
+export async function linkLedgerProductsAction(input: {
+  links: { ledgerProductId: string; stockProductId: string | null }[];
+}): Promise<{ linked: number }> {
+  await requireStockAccess();
+  if (input.links.length === 0) return { linked: 0 };
+  if (input.links.length > 1000) throw new Error("Too many links in one go");
+  const ledgerIds = input.links.map((l) => {
+    if (!l.ledgerProductId.startsWith(LEDGER_OWN_PREFIX)) throw new Error("Only products added to the ledger can be linked");
+    return l.ledgerProductId.slice(LEDGER_OWN_PREFIX.length);
+  });
+  const stockIds = [...new Set(input.links.map((l) => l.stockProductId).filter((id): id is string => !!id))];
+
+  const brandOf = new Map<string, string>();
+  for (let i = 0; i < ledgerIds.length; i += 100) {
+    const { data, error } = await supabaseAdmin.from("daily_ledger_products").select("id, brand_id").in("id", ledgerIds.slice(i, i + 100));
+    if (error) throw new Error(error.message);
+    for (const r of data ?? []) brandOf.set(r.id, r.brand_id);
+  }
+  const stockExists = new Set<string>();
+  for (let i = 0; i < stockIds.length; i += 100) {
+    const { data, error } = await supabaseAdmin.from("products").select("id").in("id", stockIds.slice(i, i + 100));
+    if (error) throw new Error(error.message);
+    for (const r of data ?? []) stockExists.add(r.id);
+  }
+
+  let linked = 0;
+  for (let n = 0; n < input.links.length; n++) {
+    const ledgerId = ledgerIds[n];
+    const stockId = input.links[n].stockProductId;
+    if (!brandOf.has(ledgerId)) throw new Error("That ledger product no longer exists");
+    if (stockId && !stockExists.has(stockId)) throw new Error("That Stock product no longer exists");
+    const { error } = await supabaseAdmin.from("daily_ledger_products").update({ stock_product_id: stockId }).eq("id", ledgerId);
+    if (error) throw new Error(/stock_product_id/.test(error.message) ? "Run migration 0100 first, then try again." : error.message);
+    if (stockId) linked++;
+  }
+  revalidatePath("/stock/ledger");
+  revalidatePath("/stock/ledger/match");
+  revalidatePath("/stock/invoices");
+  return { linked };
+}
+
+// The link picker's search: Stock products whose name or SKU holds the text -- the business's own first, then
+// those of the other businesses (30 of each at most). `business` is set only on another business's product.
+export async function searchStockProductsAction(input: {
+  brandId: string;
+  q: string;
+}): Promise<{ id: string; name: string; sku: string | null; business: string | null }[]> {
+  await requireStockAccess();
+  const term = input.q.replace(/[,()%*\\]/g, " ").trim();
+  const find = async (own: boolean) => {
+    let query = supabaseAdmin
+      .from("products")
+      .select("id, name, sku, brands(name)")
+      .eq("is_active", true)
+      .neq("name", "")
+      .order("name")
+      .limit(30);
+    query = own ? query.eq("brand_id", input.brandId) : query.neq("brand_id", input.brandId);
+    if (term) query = query.or(`name.ilike.%${term}%,sku.ilike.%${term}%`);
+    const { data, error } = await query;
+    if (error) throw new Error(error.message);
+    return ((data ?? []) as unknown as { id: string; name: string; sku: string | null; brands: { name: string } | null }[]).map((p) => ({
+      id: p.id,
+      name: p.name,
+      sku: p.sku,
+      business: own ? null : (p.brands?.name ?? "Other business"),
+    }));
+  };
+  const [own, others] = await Promise.all([find(true), find(false)]);
+  return [...own, ...others];
+}
+
+// The ledger's "Import CSV": rows whose name + SKU are not in the ledger yet become new ledger products (migration
+// 0091), with their unit, price and category and every typed value from the file for the month. Products that
+// are already there are updated by importLedgerEntriesAction instead -- never duplicated.
+export async function importLedgerNewProductsAction(input: {
+  brandId: string;
+  month: string;
+  products: {
+    name: string;
+    unit: string;
+    price: number;
+    category: string | null;
+    entries: { field: string; value: string }[];
+  }[];
+}): Promise<{ created: number }> {
+  await requireStockAccess();
+  if (!MONTH_RE.test(input.month)) throw new Error("Pick a month");
+  if (input.products.length > 2000) throw new Error("Too many new products in one go");
+  const clean = input.products
+    .map((p) => ({ ...p, name: p.name.trim(), unit: p.unit.trim() || "pcs", category: p.category?.trim().slice(0, 60) || null }))
+    .filter((p) => p.name && Number.isFinite(p.price) && p.price >= 0);
+
+  // The screen only lists the products of the month being viewed, so a product first added in another month
+  // would look new. Check them all: one with the same name and SKU (or no SKU on either side) is the same
+  // product -- it is reused, and listed from this month on if it started later.
+  const existing: { id: string; name: string; first_month: string | null }[] = [];
+  for (let from = 0; ; from += 1000) {
+    const { data, error } = await supabaseAdmin
+      .from("daily_ledger_products")
+      .select("id, name, first_month")
+      .eq("brand_id", input.brandId)
+      .order("id")
+      .range(from, from + 999);
+    if (error) throw new Error(error.message);
+    existing.push(...(data ?? []));
+    if (!data || data.length < 1000) break;
+  }
+  const skusOf = new Map<string, Set<string>>();
+  for (let from = 0; ; from += 1000) {
+    const { data, error } = await supabaseAdmin
+      .from("daily_ledger_product_entries")
+      .select("product_id, value, daily_ledger_products!inner(brand_id)")
+      .eq("field", "sku")
+      .eq("daily_ledger_products.brand_id", input.brandId)
+      .order("product_id")
+      .order("month")
+      .range(from, from + 999);
+    if (error) throw new Error(error.message);
+    for (const e of (data ?? []) as unknown as { product_id: string; value: string }[]) {
+      skusOf.set(e.product_id, (skusOf.get(e.product_id) ?? new Set()).add(e.value.trim().toLowerCase()));
+    }
+    if (!data || data.length < 1000) break;
+  }
+  const taken = new Set<string>();
+  const ids: (string | undefined)[] = clean.map((p) => {
+    const fileSku = (p.entries.find((e) => e.field === "sku")?.value ?? "").trim().toLowerCase();
+    const same = existing.find((x) => {
+      if (taken.has(x.id) || x.name.trim().toLowerCase() !== p.name.toLowerCase()) return false;
+      const sk = skusOf.get(x.id);
+      return !fileSku || !sk || sk.size === 0 || sk.has(fileSku);
+    });
+    if (same) taken.add(same.id);
+    return same?.id;
+  });
+  const startLater = existing.filter((x) => taken.has(x.id) && x.first_month && x.first_month > input.month).map((x) => x.id);
+  if (startLater.length) {
+    const { error } = await supabaseAdmin.from("daily_ledger_products").update({ first_month: input.month }).in("id", startLater);
+    if (error) throw new Error(error.message);
+  }
+  const fresh = clean.map((p, i) => ({ p, i })).filter(({ i }) => !ids[i]);
+  for (let c = 0; c < fresh.length; c += 200) {
+    const chunk = fresh.slice(c, c + 200);
+    const { data, error } = await supabaseAdmin
+      .from("daily_ledger_products")
+      .insert(
+        chunk.map(({ p }) => ({
+          brand_id: input.brandId,
+          name: p.name,
+          unit: p.unit,
+          unit_price: p.price,
+          category: p.category,
+          first_month: input.month,
+        }))
+      )
+      .select("id");
+    if (error) throw new Error(error.message);
+    // insert().select() returns the rows in insert order
+    (data ?? []).forEach((d, n) => {
+      ids[chunk[n].i] = d.id;
+    });
+  }
+  const created = clean;
+  const now = new Date().toISOString();
+  const rows: { product_id: string; month: string; field: string; value: string; updated_at: string }[] = [];
+  created.forEach((p, i) => {
+    const productId = ids[i];
+    if (!productId) return;
+    for (const e of p.entries) {
+      const value = e.value.trim();
+      if (!isLedgerField(e.field) || value === "" || value.length > 40) continue;
+      if (!LEDGER_TEXT_FIELDS.includes(e.field) && !Number.isFinite(Number(value))) continue;
+      rows.push({ product_id: productId, month: input.month, field: e.field, value, updated_at: now });
+    }
+  });
+  for (let i = 0; i < rows.length; i += 1000) {
+    const { error } = await supabaseAdmin
+      .from("daily_ledger_product_entries")
+      .upsert(rows.slice(i, i + 1000), { onConflict: "product_id,month,field" });
+    if (error) throw new Error(error.message);
+  }
+  revalidatePath("/stock/ledger");
+  return { created: fresh.length };
+}
+
 // The ledger's "Add product" button: a product that exists in the Daily Ledger only (migration 0091) --
 // not in Stock, Sales or the website. Everything else about it is typed into the ledger.
 export async function createLedgerProductAction(input: {
