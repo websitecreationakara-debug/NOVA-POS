@@ -546,8 +546,8 @@ export type DashboardStats = {
     dailyRevenue: { date: string; total: number }[];
     dailyOrders: { date: string; total: number }[];
   }[];
-  // Best sellers in the selected range: branches ranked by revenue, top 10
-  // products ranked by units sold.
+  // Best sellers in the selected range: branches ranked by revenue, top 20
+  // products ranked by sales amount (dashboard_stats, migration 0101).
   topBranches: { name: string; revenue: number; orders: number }[];
   topProducts: { name: string; quantity: number; revenue: number }[];
   // Same [fromDate, toDate] scope as totalRevenue/orderCount -- see
