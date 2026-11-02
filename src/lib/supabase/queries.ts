@@ -528,8 +528,9 @@ export async function getStockUnits(
   };
 }
 
-// Dashboard "Top Products" only counts items sold at a unit price above this ($).
-export const TOP_PRODUCT_MIN_PRICE = 20;
+// Dashboard "Top Products" counts items sold at a unit price above this ($): 0 = every product that was sold for
+// money, ranked by sales amount (it used to leave out anything priced $20 or less).
+export const TOP_PRODUCT_MIN_PRICE = 0;
 
 export type DashboardStats = {
   totalRevenue: number;
