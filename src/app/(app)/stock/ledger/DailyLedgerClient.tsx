@@ -113,15 +113,22 @@ export default function DailyLedgerClient({
   month,
   today,
   rows,
+  categories,
+  paging,
 }: {
   brands: Brand[];
   currentBrandId: string;
   month: string;
   today: string;
+  // One page of the ledger's products (see getDailyLedgerPage), already narrowed by the search.
   rows: DailyLedgerRow[];
+  // Every category of the business, for the Add product popup.
+  categories: string[];
+  paging: { q: string; page: number; pageCount: number; limit: number; total: number; pageSizes: number[] };
 }) {
   const router = useRouter();
-  const [filter, setFilter] = useState("");
+  // The search text: the server narrows the list by it (it lives in the address, so Back keeps it).
+  const [filter, setFilter] = useState(paging.q);
   const [exporting, setExporting] = useState(false);
   const [importing, setImporting] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
@@ -205,11 +212,8 @@ export default function DailyLedgerClient({
   const days = useMemo(() => daysOfMonth(month), [month]);
   // The categories already in the ledger, for the Add product popup (not the catch-all groups).
   const categoryOptions = useMemo(
-    () =>
-      [...new Set(localRows.map((r) => r.categoryName))]
-        .filter((c) => c && c !== "Removed from Stock" && c !== "Added in ledger")
-        .sort((a, b) => a.localeCompare(b)),
-    [localRows]
+    () => categories.filter((c) => c && c !== "Removed from Stock" && c !== "Added in ledger"),
+    [categories]
   );
   const thisMonth = today.slice(0, 7);
 
@@ -249,8 +253,18 @@ export default function DailyLedgerClient({
     }
   }
 
+  // The address of this ledger with some of its parts changed. A different month or business starts at page 1.
+  function ledgerUrl(patch: { brand?: string; month?: string; q?: string; page?: number; limit?: number }) {
+    const params = new URLSearchParams({ brand: patch.brand ?? currentBrandId, month: patch.month ?? month });
+    const nextQ = patch.q ?? paging.q;
+    if (nextQ) params.set("q", nextQ);
+    params.set("page", String(patch.page ?? 1));
+    params.set("limit", String(patch.limit ?? paging.limit));
+    return `/stock/ledger?${params}`;
+  }
+
   function go(nextMonth: string, brandId = currentBrandId) {
-    router.push(`/stock/ledger?brand=${brandId}&month=${nextMonth}`);
+    router.push(ledgerUrl({ brand: brandId, month: nextMonth }));
   }
 
   // Puts today's column right next to the frozen columns on the left.
@@ -268,25 +282,22 @@ export default function DailyLedgerClient({
     if (month === thisMonth) scrollToToday(false);
   }, [month, thisMonth]);
 
-  // Remembers where you were -- the filter text and how far the table is scrolled -- for this business and
-  // month, so coming back from another page (a product's invoices, Match products, ...) puts you in the same
-  // place. Kept for the browser tab only (sessionStorage); the table scrolls inside its own box, which the
-  // browser's Back button does not restore.
-  const viewKey = `ledger-view:${currentBrandId}:${month}`;
+  // Remembers how far the table is scrolled for this business, month and page, so coming back from another page
+  // (a product's invoices, Match products, ...) puts you in the same place; the search and the page are in the
+  // address, so Back keeps them. Kept for the browser tab only (sessionStorage); the table scrolls inside its
+  // own box, which the browser's Back button does not restore.
+  const viewKey = `ledger-view:${currentBrandId}:${month}:${paging.q}:${paging.page}:${paging.limit}`;
   const viewReady = useRef(false);
-  const filterNow = useRef("");
-  filterNow.current = filter;
   useEffect(() => {
     viewReady.current = false;
-    let saved: { filter?: string; left?: number; top?: number } | null = null;
+    let saved: { left?: number; top?: number } | null = null;
     try {
       saved = JSON.parse(sessionStorage.getItem(viewKey) ?? "null");
     } catch {
       saved = null;
     }
-    if (saved?.filter) setFilter(saved.filter);
     const scroller = scrollerRef.current;
-    // Twice: the first frame draws the filtered rows, the second can scroll them.
+    // Twice: the first frame draws the rows, the second can scroll them.
     const frame = requestAnimationFrame(() =>
       requestAnimationFrame(() => {
         if (saved && scroller) scroller.scrollTo({ left: saved.left ?? 0, top: saved.top ?? 0 });
@@ -301,27 +312,30 @@ export default function DailyLedgerClient({
     try {
       sessionStorage.setItem(
         viewKey,
-        JSON.stringify({ filter: filterNow.current, left: scroller?.scrollLeft ?? 0, top: scroller?.scrollTop ?? 0 })
+        JSON.stringify({ left: scroller?.scrollLeft ?? 0, top: scroller?.scrollTop ?? 0 })
       );
     } catch {
       // storage blocked: the view just isn't remembered
     }
   }
+  // Typing in the search box waits for a pause, then asks the server for the matching products (page 1).
+  // (A search that arrives from the address -- Back, a link -- replaces what is in the box.)
+  const [prevQ, setPrevQ] = useState(paging.q);
+  if (paging.q !== prevQ) {
+    setPrevQ(paging.q);
+    setFilter(paging.q);
+  }
   useEffect(() => {
-    rememberView();
+    const next = filter.trim();
+    if (next === paging.q) return;
+    const t = setTimeout(() => router.replace(ledgerUrl({ q: next, page: 1 })), 350);
+    return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filter]);
+  }, [filter, paging.q]);
 
-  const q = filter.trim().toLowerCase();
   const groups = useMemo(() => {
-    const visible = localRows.filter(
-      (r) =>
-        !q ||
-        r.name.toLowerCase().includes(q) ||
-        r.size.toLowerCase().includes(q) ||
-        (r.sku ?? "").toLowerCase().includes(q) ||
-        r.categoryName.toLowerCase().includes(q)
-    );
+    // The server already narrowed the list by the search; these are the page's own rows.
+    const visible = localRows;
     // Business first (in the dropdown's order), then category.
     const brandIndex = (id: string | undefined) => brands.findIndex((b) => b.id === id);
     const byCategory = new Map<string, { brandId: string | undefined; name: string; items: DailyLedgerRow[] }>();
@@ -334,7 +348,7 @@ export default function DailyLedgerClient({
     return [...byCategory.values()]
       .sort((a, b) => brandIndex(a.brandId) - brandIndex(b.brandId) || a.name.localeCompare(b.name))
       .map((g) => ({ ...g, items: g.items.sort((a, b) => a.name.localeCompare(b.name) || a.size.localeCompare(b.size)) }));
-  }, [localRows, q, brands]);
+  }, [localRows, brands]);
   const showBrands = currentBrandId === "all";
   const brandName = (id: string | undefined) => brands.find((b) => b.id === id)?.name ?? "";
   const brandValue = (id: string | undefined) =>
@@ -627,12 +641,14 @@ export default function DailyLedgerClient({
       for (let i = 0; i < entries.length; i += 1000) {
         await importLedgerEntriesAction({ month, entries: entries.slice(i, i + 1000) });
       }
-      if (added.length > 0) await importLedgerNewProductsAction({ brandId: currentBrandId, month, products: added });
+      // Only one page of the ledger is on screen, so a row that isn't on it may still be a product the ledger has:
+      // the server checks every product by name and SKU, and says how many were really new.
+      const addedNow = added.length > 0 ? (await importLedgerNewProductsAction({ brandId: currentBrandId, month, products: added })).created : 0;
       setNotice(
         `Imported ${entries.length + added.reduce((n, p) => n + p.entries.length, 0)} value${
           entries.length + added.reduce((n, p) => n + p.entries.length, 0) === 1 ? "" : "s"
         } · ${matched} product${matched === 1 ? "" : "s"} updated` +
-          (added.length ? ` · ${added.length} new product${added.length === 1 ? "" : "s"} added` : "") +
+          (addedNow ? ` · ${addedNow} new product${addedNow === 1 ? "" : "s"} added` : "") +
           (invalid ? ` · ${invalid} bad value${invalid === 1 ? "" : "s"} skipped` : "")
       );
       router.refresh();
@@ -1116,7 +1132,7 @@ export default function DailyLedgerClient({
               <tfoot className="sticky bottom-0 z-20">
                 <tr>
                   <td colSpan={2} className={`${sticky} border-t-2 border-border bg-muted px-3 py-2.5 text-sm font-semibold`} style={{ left: 0 }}>
-                    Total ending value
+                    {paging.pageCount > 1 ? "Ending value (this page)" : "Total ending value"}
                   </td>
                   <td colSpan={LEFT_COLUMNS - 2 + days.length * 4} className="border-t-2 border-border bg-muted" />
                   <td colSpan={4} className={`${stickyLg} border-t-2 border-border bg-muted`} style={{ right: RIGHT.ending }} />
@@ -1130,6 +1146,53 @@ export default function DailyLedgerClient({
               </tfoot>
             )}
           </table>
+        </div>
+        <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border bg-card px-4 py-2 text-sm">
+          <span className="text-xs text-muted-foreground">
+            {paging.total === 0
+              ? "No products"
+              : `${(paging.page - 1) * paging.limit + 1}–${Math.min(paging.page * paging.limit, paging.total)} of ${paging.total} product${
+                  paging.total === 1 ? "" : "s"
+                }`}
+            {paging.q ? ` matching "${paging.q}"` : ""}
+          </span>
+          <div className="flex items-center gap-3">
+            <label className="flex items-center gap-2 text-xs text-muted-foreground">
+              Per page
+              <select
+                value={paging.limit}
+                onChange={(e) => router.push(ledgerUrl({ limit: Number(e.target.value), page: 1 }))}
+                className="h-8 rounded-lg border border-border bg-card px-2 text-xs text-foreground"
+              >
+                {paging.pageSizes.map((n) => (
+                  <option key={n} value={n}>
+                    {n}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <button
+              type="button"
+              onClick={() => router.push(ledgerUrl({ page: paging.page - 1 }))}
+              disabled={paging.page <= 1}
+              className="flex h-8 items-center gap-1 rounded-lg border border-border px-3 text-xs transition hover:bg-muted disabled:opacity-30"
+            >
+              <ChevronLeft className="size-3.5" />
+              Prev
+            </button>
+            <span className="text-xs tabular-nums text-muted-foreground">
+              Page {paging.page} of {paging.pageCount}
+            </span>
+            <button
+              type="button"
+              onClick={() => router.push(ledgerUrl({ page: paging.page + 1 }))}
+              disabled={paging.page >= paging.pageCount}
+              className="flex h-8 items-center gap-1 rounded-lg border border-border px-3 text-xs transition hover:bg-muted disabled:opacity-30"
+            >
+              Next
+              <ChevronRight className="size-3.5" />
+            </button>
+          </div>
         </div>
       </div>
       {adding && (

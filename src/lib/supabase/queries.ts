@@ -2187,48 +2187,31 @@ export async function getExpensesForDateRange(
   return data ?? [];
 }
 
-// Products added from the ledger itself (migrations 0091 / 0092) and what was typed into them, in the
-// shape buildDailyLedger takes. Before migration 0091 is applied there are none.
-async function getOwnLedgerProducts(brandId: string, month: string) {
-  const ownQuery = (columns: string) =>
-    supabaseAdmin.from("daily_ledger_products").select(columns).eq("brand_id", brandId).order("created_at");
-  // category is migration 0092 and first_month 0093; without them the products still show, under
-  // "Added in ledger" and in every month.
-  // stock_product_id is migration 0100 (the link to a Stock product); without it nothing is linked.
-  let res = await ownQuery("id, name, unit, unit_price, category, first_month, stock_product_id");
-  if (res.error && /stock_product_id/.test(res.error.message)) res = await ownQuery("id, name, unit, unit_price, category, first_month");
-  if (res.error && /first_month/.test(res.error.message)) res = await ownQuery("id, name, unit, unit_price, category");
-  if (res.error && /category/.test(res.error.message)) res = await ownQuery("id, name, unit, unit_price");
-  if (res.error && !/daily_ledger_products/.test(res.error.message)) throw res.error;
-  const rows = ((res.error ? [] : (res.data ?? [])) as unknown as {
-    id: string;
-    name: string;
-    unit: string;
-    unit_price: number;
-    category?: string | null;
-    first_month?: string | null;
-    stock_product_id?: string | null;
-  }[]).filter((o) => !o.first_month || o.first_month <= month);
-  // The names of the Stock products they are linked to.
+type OwnLedgerRow = {
+  id: string;
+  name: string;
+  unit: string;
+  unit_price: number;
+  category?: string | null;
+  first_month?: string | null;
+  stock_product_id?: string | null;
+};
+
+// The names of the Stock products some ledger products are linked to.
+async function stockLinkNames(rows: OwnLedgerRow[]): Promise<Map<string, string>> {
   const linkIds = [...new Set(rows.map((o) => o.stock_product_id).filter((id): id is string => !!id))];
   const linkNames = new Map<string, string>();
-  for (let i = 0; i < linkIds.length; i += 100) {
-    const { data } = await supabaseAdmin.from("products").select("id, name").in("id", linkIds.slice(i, i + 100));
-    for (const p of data ?? []) linkNames.set(p.id, p.name);
-  }
-  // Joined to the products (not .in(ids)): hundreds of ids would overflow the request URL.
-  const typedRes = rows.length
-    ? await selectAll(
-        supabaseAdmin
-          .from("daily_ledger_product_entries")
-          .select("product_id, field, value, daily_ledger_products!inner(brand_id)")
-          .eq("daily_ledger_products.brand_id", brandId)
-          .eq("month", month)
-          .order("product_id")
-          .order("field")
-      )
-    : null;
-  if (typedRes?.error) throw typedRes.error;
+  const pages = await Promise.all(
+    Array.from({ length: Math.ceil(linkIds.length / 100) }, (_, i) =>
+      supabaseAdmin.from("products").select("id, name").in("id", linkIds.slice(i * 100, (i + 1) * 100))
+    )
+  );
+  for (const { data } of pages) for (const p of data ?? []) linkNames.set(p.id, p.name);
+  return linkNames;
+}
+
+// The ledger products and typed values in the shape buildDailyLedger takes.
+function shapeOwnLedger(rows: OwnLedgerRow[], linkNames: Map<string, string>, typed: { product_id: string; field: string; value: string }[]) {
   return {
     products: rows.map((o) => ({
       id: `${LEDGER_OWN_PREFIX}${o.id}`,
@@ -2248,11 +2231,162 @@ async function getOwnLedgerProducts(brandId: string, month: string) {
       quantityNow: 0,
       cost: null,
     })),
-    entries: (typedRes?.data ?? []).map((e) => ({
+    entries: typed.map((e) => ({
       productId: `${LEDGER_OWN_PREFIX}${e.product_id}`,
-      field: e.field as string,
-      value: e.value as string,
+      field: e.field,
+      value: e.value,
     })),
+  };
+}
+
+// Products added from the ledger itself (migrations 0091 / 0092) and what was typed into them, in the
+// shape buildDailyLedger takes. Before migration 0091 is applied there are none.
+async function getOwnLedgerProducts(brandId: string, month: string) {
+  const ownQuery = (columns: string) =>
+    supabaseAdmin.from("daily_ledger_products").select(columns).eq("brand_id", brandId).order("created_at");
+  // category is migration 0092 and first_month 0093; without them the products still show, under
+  // "Added in ledger" and in every month.
+  // stock_product_id is migration 0100 (the link to a Stock product); without it nothing is linked.
+  let res = await ownQuery("id, name, unit, unit_price, category, first_month, stock_product_id");
+  if (res.error && /stock_product_id/.test(res.error.message)) res = await ownQuery("id, name, unit, unit_price, category, first_month");
+  if (res.error && /first_month/.test(res.error.message)) res = await ownQuery("id, name, unit, unit_price, category");
+  if (res.error && /category/.test(res.error.message)) res = await ownQuery("id, name, unit, unit_price");
+  if (res.error && !/daily_ledger_products/.test(res.error.message)) throw res.error;
+  const rows = ((res.error ? [] : (res.data ?? [])) as unknown as OwnLedgerRow[]).filter(
+    (o) => !o.first_month || o.first_month <= month
+  );
+  const linkNames = await stockLinkNames(rows);
+  // Joined to the products (not .in(ids)): hundreds of ids would overflow the request URL.
+  const typedRes = rows.length
+    ? await selectAll(
+        supabaseAdmin
+          .from("daily_ledger_product_entries")
+          .select("product_id, field, value, daily_ledger_products!inner(brand_id)")
+          .eq("daily_ledger_products.brand_id", brandId)
+          .eq("month", month)
+          .order("product_id")
+          .order("field")
+      )
+    : null;
+  if (typedRes?.error) throw typedRes.error;
+  return shapeOwnLedger(rows, linkNames, (typedRes?.data ?? []) as unknown as { product_id: string; field: string; value: string }[]);
+}
+
+export const LEDGER_PAGE_SIZES = [25, 50, 100, 200];
+
+export type DailyLedgerPage = {
+  rows: DailyLedgerRow[];
+  // How many products match the search (all pages), and which page this is.
+  total: number;
+  page: number;
+  pageCount: number;
+  // Every category of the business, for the Add product popup (the rows are only one page of it).
+  categories: string[];
+};
+
+// One page of the Daily Ledger: only `limit` products (by category, then name) -- the ones matching `q` in
+// their name, category or SKU -- and only their typed values for the month. The ledger holds hundreds of
+// products with thousands of values per month, so reading and drawing them all made the page slow.
+// Falls back to the whole ledger when the columns it pages on (migrations 0092 / 0093) are missing.
+export async function getDailyLedgerPage(
+  brandId: string,
+  month: string,
+  opts: { q: string; page: number; limit: number }
+): Promise<DailyLedgerPage> {
+  const term = opts.q.replace(/[,()%*\\]/g, " ").trim();
+  const limit = LEDGER_PAGE_SIZES.includes(opts.limit) ? opts.limit : 50;
+
+  // The SKU is a typed value of the month, so a search for it goes through those.
+  let skuIds: string[] = [];
+  if (term) {
+    const { data } = await supabaseAdmin
+      .from("daily_ledger_product_entries")
+      .select("product_id, daily_ledger_products!inner(brand_id)")
+      .eq("daily_ledger_products.brand_id", brandId)
+      .eq("month", month)
+      .eq("field", "sku")
+      .ilike("value", `%${term}%`)
+      .limit(1000);
+    skuIds = [...new Set((data ?? []).map((e) => e.product_id as string))];
+  }
+
+  const productPage = (columns: string, page: number) => {
+    let query = supabaseAdmin
+      .from("daily_ledger_products")
+      .select(columns, { count: "exact" })
+      .eq("brand_id", brandId)
+      .or(`first_month.is.null,first_month.lte.${month}`);
+    if (term) {
+      query = query.or(
+        [`name.ilike.%${term}%`, `category.ilike.%${term}%`, ...(skuIds.length ? [`id.in.(${skuIds.join(",")})`] : [])].join(",")
+      );
+    }
+    return query
+      .order("category", { ascending: true, nullsFirst: false })
+      .order("name")
+      .order("id")
+      .range((page - 1) * limit, page * limit - 1);
+  };
+  const withLink = "id, name, unit, unit_price, category, first_month, stock_product_id";
+  const withoutLink = "id, name, unit, unit_price, category, first_month";
+  const fetchPage = async (page: number) => {
+    const first = await productPage(withLink, page);
+    return first.error && /stock_product_id/.test(first.error.message) ? productPage(withoutLink, page) : first;
+  };
+  const categoriesPromise = Promise.resolve(
+    supabaseAdmin.from("daily_ledger_products").select("category").eq("brand_id", brandId).limit(5000)
+  ).then(({ data }) =>
+    [...new Set((data ?? []).map((r) => (r.category ?? "").trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b))
+  );
+
+  let page = Math.max(1, Math.floor(opts.page) || 1);
+  let res = await fetchPage(page);
+  if (res.error) {
+    // An older database (no category / first_month to page on): the whole ledger, as before.
+    const all = await getDailyLedger(brandId, month);
+    return { rows: all, total: all.length, page: 1, pageCount: 1, categories: await categoriesPromise.catch(() => [] as string[]) };
+  }
+  const total = res.count ?? 0;
+  const pageCount = Math.max(1, Math.ceil(total / limit));
+  if (page > pageCount) {
+    // A page past the end (a search narrowed the list): the last one instead of nothing.
+    page = pageCount;
+    res = await fetchPage(page);
+    if (res.error) throw res.error;
+  }
+  const rows = (res.data ?? []) as unknown as OwnLedgerRow[];
+
+  const ids = rows.map((r) => r.id);
+  const [linkNames, typed, categories] = await Promise.all([
+    stockLinkNames(rows),
+    ids.length
+      ? supabaseAdmin
+          .from("daily_ledger_product_entries")
+          .select("product_id, field, value")
+          .in("product_id", ids)
+          .eq("month", month)
+          .limit(ids.length * 200)
+      : Promise.resolve({ data: [], error: null }),
+    categoriesPromise.catch(() => [] as string[]),
+  ]);
+  if (typed.error) throw typed.error;
+  const own = shapeOwnLedger(rows, linkNames, (typed.data ?? []) as { product_id: string; field: string; value: string }[]);
+  return {
+    rows: buildDailyLedger({
+      month,
+      today: ppToday(),
+      products: own.products,
+      movements: [],
+      movementsAfter: [],
+      purchases: [],
+      sold: [],
+      other: [],
+      entries: own.entries,
+    }),
+    total,
+    page,
+    pageCount,
+    categories,
   };
 }
 

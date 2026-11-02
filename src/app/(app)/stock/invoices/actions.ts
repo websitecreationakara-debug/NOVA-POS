@@ -3,7 +3,9 @@
 import { revalidatePath } from "next/cache";
 import { supabaseAdmin } from "@/lib/supabase/server";
 import { requireStockAccess } from "@/lib/stockAccess";
+import { websiteStock } from "@/lib/supabase/queries";
 import { adjustStockAction, setProductCostAction } from "../actions";
+import type { InvoiceFormData, LedgerOption, ProductOption } from "./types";
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const round2 = (n: number) => Math.round(n * 100) / 100;
@@ -444,6 +446,105 @@ export async function updateSupplierInvoiceAction(input: InvoiceInput & { invoic
 
   revalidatePath("/stock/invoices");
   revalidatePath("/stock/ledger");
+}
+
+// What the invoice form lists: the business's Stock products (only those Stock shows -- POS-only ones and ones
+// still on its website) and its Daily Ledger products with their SKU and Stock link. Loaded when the form is
+// opened rather than with every visit to the page, and all the reads run together.
+export async function loadInvoiceFormDataAction(input: { brandId: string }): Promise<InvoiceFormData> {
+  await requireStockAccess();
+  const { data: brand, error: brandError } = await supabaseAdmin.from("brands").select("slug").eq("id", input.brandId).single();
+  if (brandError || !brand) throw new Error(brandError?.message ?? "Business not found");
+
+  // Every page of a table, 1000 rows at a time.
+  async function readAll<T>(page: (from: number, to: number) => PromiseLike<{ data: unknown; error: { message: string } | null }>): Promise<T[]> {
+    const out: T[] = [];
+    for (let from = 0; ; from += 1000) {
+      const { data, error } = await page(from, from + 999);
+      if (error) throw new Error(error.message);
+      const part = (data ?? []) as T[];
+      out.push(...part);
+      if (part.length < 1000) return out;
+    }
+  }
+
+  const [site, stock, skuEntries, ledger] = await Promise.all([
+    websiteStock(brand.slug),
+    readAll<{
+      id: string;
+      name: string;
+      sku: string | null;
+      unit: string;
+      cost_price: number | null;
+      pos_only: boolean;
+      product_site_links: { site_product_id: string; variation_id: string }[];
+    }>((from, to) =>
+      supabaseAdmin
+        .from("products")
+        .select("id, name, sku, unit, cost_price, pos_only, product_site_links(site_product_id, variation_id)")
+        .eq("brand_id", input.brandId)
+        .eq("is_active", true)
+        .neq("name", "")
+        .order("name")
+        .range(from, to)
+    ),
+    // The ledger keeps SKUs per month: the newest month's is used.
+    readAll<{ value: string; daily_ledger_products: { name: string } }>((from, to) =>
+      supabaseAdmin
+        .from("daily_ledger_product_entries")
+        .select("value, month, daily_ledger_products!inner(name, brand_id)")
+        .eq("field", "sku")
+        .eq("daily_ledger_products.brand_id", input.brandId)
+        .order("month", { ascending: false })
+        .order("product_id")
+        .range(from, to)
+    ).catch(() => []),
+    // stock_product_id is migration 0100 (the link to a Stock product); without it nothing is linked. Before the
+    // ledger's own migration there are no ledger products at all.
+    readAll<{ name: string; unit: string; stock_product_id?: string | null }>((from, to) =>
+      supabaseAdmin
+        .from("daily_ledger_products")
+        .select("name, unit, stock_product_id")
+        .eq("brand_id", input.brandId)
+        .order("name")
+        .range(from, to)
+    ).catch(() =>
+      readAll<{ name: string; unit: string }>((from, to) =>
+        supabaseAdmin.from("daily_ledger_products").select("name, unit").eq("brand_id", input.brandId).order("name").range(from, to)
+      ).catch(() => [])
+    ),
+  ]);
+
+  // A POS row whose website product was deleted stays active but is not in Stock, so it is left out too.
+  const products: ProductOption[] = stock
+    .filter((p) => !site || p.pos_only || p.product_site_links.some((l) => site.keys.has(`${l.site_product_id}::${l.variation_id || ""}`)))
+    .map((p) => ({ id: p.id, name: p.name, sku: p.sku, unit: p.unit, costPrice: p.cost_price }));
+
+  const ledgerSkus = new Map<string, string>();
+  for (const e of skuEntries) {
+    const key = e.daily_ledger_products.name.trim().toLowerCase();
+    if (e.value.trim() && !ledgerSkus.has(key)) ledgerSkus.set(key, e.value.trim());
+  }
+
+  // The linked Stock product's SKU, unit and cost (it can belong to another business, so it isn't in `products`).
+  const ledgerRows = ledger as { name: string; unit: string; stock_product_id?: string | null }[];
+  const linkedIds = [...new Set(ledgerRows.map((p) => p.stock_product_id).filter((id): id is string => !!id))];
+  const linkedStock = new Map<string, { sku: string | null; unit: string; costPrice: number | null }>();
+  const linkedPages = await Promise.all(
+    Array.from({ length: Math.ceil(linkedIds.length / 100) }, (_, i) =>
+      supabaseAdmin.from("products").select("id, sku, unit, cost_price").in("id", linkedIds.slice(i * 100, (i + 1) * 100))
+    )
+  );
+  for (const { data } of linkedPages) for (const p of data ?? []) linkedStock.set(p.id, { sku: p.sku, unit: p.unit, costPrice: p.cost_price });
+
+  const ledgerProducts: LedgerOption[] = ledgerRows.map((p) => ({
+    name: p.name,
+    unit: p.unit,
+    sku: ledgerSkus.get(p.name.trim().toLowerCase()) ?? "",
+    stockProductId: p.stock_product_id ?? null,
+    stock: (p.stock_product_id ? linkedStock.get(p.stock_product_id) : null) ?? null,
+  }));
+  return { brandId: input.brandId, products, ledgerProducts };
 }
 
 // Marks an invoice paid or unpaid. Nothing else changes: Stock, costs and the ledger don't depend on it.
