@@ -10,20 +10,28 @@ import type { Brand } from "@/types/database";
 import {
   createSupplierInvoiceAction,
   deleteSupplierInvoiceAction,
+  loadInvoiceFormDataAction,
   setSupplierInvoicePaidAction,
   updateSupplierInvoiceAction,
 } from "./actions";
+import type { InvoiceFormData } from "./types";
 
-export type ProductOption = { id: string; name: string; sku: string | null; unit: string; costPrice: number | null };
-// A product of the Daily Ledger: what the Description dropdown lists.
-export type LedgerOption = {
-  name: string;
-  unit: string;
-  sku: string;
-  // The Stock product it is linked to (any business), with what the line fills in from it.
-  stockProductId: string | null;
-  stock: { sku: string | null; unit: string; costPrice: number | null } | null;
-};
+// The lookups the form uses on its product data (see loadInvoiceFormDataAction).
+function buildLookups(data: InvoiceFormData | null) {
+  const products = data?.products ?? [];
+  const ledgerProducts = data?.ledgerProducts ?? [];
+  const byName = new Map(products.map((p) => [p.name.trim().toLowerCase(), p]));
+  const ledgerByName = new Map(ledgerProducts.map((p) => [p.name.trim().toLowerCase(), p]));
+  return {
+    byName,
+    ledgerByName,
+    // The dropdown lists each name once: the ledger can hold the same name twice (e.g. added in two months).
+    ledgerNames: [...ledgerByName.values()],
+    ledgerBySku: new Map(ledgerProducts.filter((p) => p.sku).map((p) => [p.sku.trim().toLowerCase(), p])),
+    bySku: new Map(products.filter((p) => p.sku?.trim()).map((p) => [p.sku!.trim().toLowerCase(), p])),
+  };
+}
+
 export type InvoiceRow = {
   id: string;
   supplierName: string;
@@ -86,32 +94,42 @@ export default function SupplierInvoicesClient({
   brands,
   currentBrandId,
   today,
-  products,
-  ledgerProducts,
   invoices,
   list,
 }: {
   brands: Brand[];
   currentBrandId: string;
   today: string;
-  products: ProductOption[];
-  ledgerProducts: LedgerOption[];
   invoices: InvoiceRow[];
   list: InvoiceList;
 }) {
   const router = useRouter();
   const listId = useId();
-  const byName = useMemo(() => new Map(products.map((p) => [p.name.trim().toLowerCase(), p])), [products]);
-  const ledgerByName = useMemo(() => new Map(ledgerProducts.map((p) => [p.name.trim().toLowerCase(), p])), [ledgerProducts]);
-  // The dropdown lists each name once: the ledger can hold the same name twice (e.g. added in two months).
-  const ledgerNames = useMemo(() => [...ledgerByName.values()], [ledgerByName]);
-  const ledgerBySku = useMemo(
-    () => new Map(ledgerProducts.filter((p) => p.sku).map((p) => [p.sku.trim().toLowerCase(), p])),
-    [ledgerProducts]
-  );
-  const bySku = useMemo(
-    () => new Map(products.filter((p) => p.sku?.trim()).map((p) => [p.sku!.trim().toLowerCase(), p])),
-    [products]
+  // The products the form looks lines up in are loaded when the form is opened, not with every visit to the
+  // page (or every keystroke in the search, which reloads it): the list of invoices is all the page needs.
+  const [formData, setFormData] = useState<InvoiceFormData | null>(null);
+  const [formDataLoading, setFormDataLoading] = useState(false);
+  const formDataRequest = useRef<{ brandId: string; promise: Promise<InvoiceFormData> } | null>(null);
+  function ensureFormData(): Promise<InvoiceFormData> {
+    if (formData?.brandId === currentBrandId) return Promise.resolve(formData);
+    if (formDataRequest.current?.brandId === currentBrandId) return formDataRequest.current.promise;
+    setFormDataLoading(true);
+    const brandId = currentBrandId;
+    const promise = loadInvoiceFormDataAction({ brandId })
+      .then((data) => {
+        setFormData(data);
+        return data;
+      })
+      .finally(() => {
+        setFormDataLoading(false);
+        if (formDataRequest.current?.promise === promise) formDataRequest.current = null;
+      });
+    formDataRequest.current = { brandId, promise };
+    return promise;
+  }
+  const { byName, ledgerByName, ledgerNames, ledgerBySku, bySku } = useMemo(
+    () => buildLookups(formData?.brandId === currentBrandId ? formData : null),
+    [formData, currentBrandId]
   );
 
   const [adding, setAdding] = useState(false);
@@ -219,11 +237,19 @@ export default function SupplierInvoicesClient({
     setNextKey(nextKey + inv.items.length + 1);
     setError(null);
     setAdding(true);
+    void ensureFormData().catch(() => {});
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
   async function save() {
     setError(null);
+    // Lines are matched to products by name or SKU: wait for the product data if it hasn't arrived yet.
+    let lookups: ReturnType<typeof buildLookups>;
+    try {
+      lookups = buildLookups(await ensureFormData());
+    } catch (e) {
+      return setError(e instanceof Error ? e.message : "Could not load the products");
+    }
     const resolved: {
       productId: string | null;
       description: string;
@@ -237,8 +263,8 @@ export default function SupplierInvoicesClient({
       if (!l.sku.trim() && !l.name.trim() && !l.quantity && !l.unitCost) continue;
       // A name or SKU that is a product of the business adds to its Stock; anything else is kept as typed.
       // A ledger product linked to a Stock product counts as that Stock product, whatever its name.
-      const ledgerLink = ledgerByName.get(l.name.trim().toLowerCase())?.stockProductId ?? null;
-      const product = byName.get(l.name.trim().toLowerCase()) ?? bySku.get(l.sku.trim().toLowerCase());
+      const ledgerLink = lookups.ledgerByName.get(l.name.trim().toLowerCase())?.stockProductId ?? null;
+      const product = lookups.byName.get(l.name.trim().toLowerCase()) ?? lookups.bySku.get(l.sku.trim().toLowerCase());
       const keptLink = l.linkedId && l.name.trim() === l.linkedName ? l.linkedId : null;
       if (!product && !keptLink && !ledgerLink && !l.name.trim()) return setError("Type a description on every line.");
       resolved.push({
@@ -383,7 +409,10 @@ export default function SupplierInvoicesClient({
           {!adding && (
             <button
               type="button"
-              onClick={() => setAdding(true)}
+              onClick={() => {
+                setAdding(true);
+                void ensureFormData().catch(() => {});
+              }}
               className="inline-flex h-10 shrink-0 items-center gap-2 rounded-lg bg-brand px-4 text-sm font-medium text-white shadow-sm transition hover:brightness-95 active:scale-[0.98]"
             >
               <Plus className="size-4" /> Add invoice
@@ -395,7 +424,14 @@ export default function SupplierInvoicesClient({
 
         {adding && (
           <section className="rounded-2xl border border-border bg-card p-5 shadow-sm sm:p-6">
-            <h3 className="mb-4 text-sm font-semibold text-foreground">{editingId ? "Edit invoice" : "New invoice"}</h3>
+            <h3 className="mb-4 flex items-center gap-2 text-sm font-semibold text-foreground">
+              {editingId ? "Edit invoice" : "New invoice"}
+              {formDataLoading && (
+                <span className="inline-flex items-center gap-1.5 text-xs font-normal text-muted-foreground">
+                  <Loader2 className="size-3 animate-spin" /> Loading products…
+                </span>
+              )}
+            </h3>
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
               <div>
                 <label className={label}>Supplier</label>

@@ -1,18 +1,20 @@
-import { getBrands, getDailyLedger } from "@/lib/supabase/queries";
+import { getBrands, getDailyLedgerPage, LEDGER_PAGE_SIZES } from "@/lib/supabase/queries";
 import { ppToday } from "@/lib/phnomPenhTime";
 import DailyLedgerClient from "./DailyLedgerClient";
 
 const MONTH_RE = /^\d{4}-(0[1-9]|1[0-2])$/;
 
 // Stock > Daily Ledger: one month, every product's day-by-day stock (see lib/dailyLedger.ts), for
-// the business picked with ?brand=. Read-only; the figures come from the stock history, the manual stock
-// adjustments and the sold lines.
+// the business picked with ?brand=. One page of products at a time (?page=&limit=), narrowed by ?q= -- the ledger
+// holds hundreds of products, and loading and drawing them all made it slow.
 export default async function StockLedgerPage({
   searchParams,
 }: {
-  searchParams: Promise<{ brand?: string; month?: string }>;
+  searchParams: Promise<{ brand?: string; month?: string; q?: string; page?: string; limit?: string }>;
 }) {
-  const { brand: brandParam, month: monthParam } = await searchParams;
+  const { brand: brandParam, month: monthParam, q: qParam, page: pageParam, limit: limitParam } = await searchParams;
+  const q = (qParam ?? "").trim().slice(0, 80);
+  const limit = LEDGER_PAGE_SIZES.includes(Number(limitParam)) ? Number(limitParam) : 50;
   const today = ppToday();
   const month = monthParam && MONTH_RE.test(monthParam) ? monthParam : today.slice(0, 7);
 
@@ -27,7 +29,18 @@ export default async function StockLedgerPage({
   }
   // No "All businesses" view: no/unknown ?brand= falls back to the first business.
   const currentBrand = brands.find((b) => b.id === brandParam) ?? brands[0];
-  const rows = (await getDailyLedger(currentBrand.id, month)).map((r) => ({ ...r, brandId: currentBrand.id }));
+  const result = await getDailyLedgerPage(currentBrand.id, month, { q, page: Math.floor(Number(pageParam)) || 1, limit });
+  const rows = result.rows.map((r) => ({ ...r, brandId: currentBrand.id }));
 
-  return <DailyLedgerClient brands={brands} currentBrandId={currentBrand.id} month={month} today={today} rows={rows} />;
+  return (
+    <DailyLedgerClient
+      brands={brands}
+      currentBrandId={currentBrand.id}
+      month={month}
+      today={today}
+      rows={rows}
+      categories={result.categories}
+      paging={{ q, page: result.page, pageCount: result.pageCount, limit, total: result.total, pageSizes: LEDGER_PAGE_SIZES }}
+    />
+  );
 }

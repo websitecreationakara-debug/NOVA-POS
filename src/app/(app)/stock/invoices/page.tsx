@@ -1,7 +1,7 @@
 import { supabaseAdmin } from "@/lib/supabase/server";
-import { getBrands, websiteStock } from "@/lib/supabase/queries";
+import { getBrands } from "@/lib/supabase/queries";
 import { ppToday } from "@/lib/phnomPenhTime";
-import SupplierInvoicesClient, { type InvoiceRow, type LedgerOption, type ProductOption } from "./SupplierInvoicesClient";
+import SupplierInvoicesClient, { type InvoiceRow } from "./SupplierInvoicesClient";
 
 // Stock > Supplier Invoices: bills from suppliers for products bought in, for the business picked with
 // ?brand=. Saving one adds its quantities to Stock and sets the products' costs (see ./actions.ts).
@@ -32,86 +32,6 @@ export default async function SupplierInvoicesPage({
     );
   }
   const currentBrand = brands.find((b) => b.id === brandParam) ?? brands[0];
-
-  // Only what Stock lists: POS-only products, and products still on the business's website. A POS row
-  // whose website product was deleted stays is_active but is not in Stock, so it is left out here too.
-  const site = await websiteStock(currentBrand.slug);
-  const products: ProductOption[] = [];
-  for (let from = 0; ; from += 1000) {
-    const { data, error } = await supabaseAdmin
-      .from("products")
-      .select("id, name, sku, unit, cost_price, pos_only, product_site_links(site_product_id, variation_id)")
-      .eq("brand_id", currentBrand.id)
-      .eq("is_active", true)
-      .neq("name", "")
-      .order("name")
-      .range(from, from + 999);
-    if (error) throw new Error(error.message);
-    products.push(
-      ...(data ?? [])
-        .filter((p) => !site || p.pos_only || p.product_site_links.some((l) => site.keys.has(`${l.site_product_id}::${l.variation_id || ""}`)))
-        .map((p) => ({ id: p.id, name: p.name, sku: p.sku, unit: p.unit, costPrice: p.cost_price }))
-    );
-    if (!data || data.length < 1000) break;
-  }
-
-  // The Description dropdown lists the Daily Ledger's products for this business (what the invoice's
-  // lines go into); a name that is also a Stock product still adds to its Stock.
-  // Each carries its SKU: the ledger keeps SKUs per month, so the newest month's is used.
-  const ledgerSkus = new Map<string, string>();
-  for (let from = 0; ; from += 1000) {
-    const { data, error } = await supabaseAdmin
-      .from("daily_ledger_product_entries")
-      .select("value, month, daily_ledger_products!inner(name, brand_id)")
-      .eq("field", "sku")
-      .eq("daily_ledger_products.brand_id", currentBrand.id)
-      .order("month", { ascending: false })
-      .order("product_id")
-      .range(from, from + 999);
-    if (error) break;
-    for (const e of (data ?? []) as unknown as { value: string; daily_ledger_products: { name: string } }[]) {
-      const key = e.daily_ledger_products.name.trim().toLowerCase();
-      if (e.value.trim() && !ledgerSkus.has(key)) ledgerSkus.set(key, e.value.trim());
-    }
-    if (!data || data.length < 1000) break;
-  }
-  // stockProductId is the Stock product it is linked to (migration 0100): a line for it adds to that product.
-  const ledgerProducts: LedgerOption[] = [];
-  let linkColumn = true;
-  for (let from = 0; ; from += 1000) {
-    const { data, error } = await supabaseAdmin
-      .from("daily_ledger_products")
-      .select(linkColumn ? "name, unit, stock_product_id" : "name, unit")
-      .eq("brand_id", currentBrand.id)
-      .order("name")
-      .range(from, from + 999);
-    if (error && linkColumn && /stock_product_id/.test(error.message)) {
-      linkColumn = false;
-      from -= 1000;
-      continue;
-    }
-    // Before the ledger's migration there are none.
-    if (error) break;
-    const part = (data ?? []) as unknown as { name: string; unit: string; stock_product_id?: string | null }[];
-    ledgerProducts.push(
-      ...part.map((p) => ({
-        name: p.name,
-        unit: p.unit,
-        sku: ledgerSkus.get(p.name.trim().toLowerCase()) ?? "",
-        stockProductId: p.stock_product_id ?? null,
-        stock: null,
-      }))
-    );
-    if (part.length < 1000) break;
-  }
-  // The linked Stock product's SKU, unit and cost (it can belong to another business, so it isn't in `products`).
-  const linkedIds = [...new Set(ledgerProducts.map((p) => p.stockProductId).filter((id): id is string => !!id))];
-  const linkedStock = new Map<string, { sku: string | null; unit: string; costPrice: number | null }>();
-  for (let i = 0; i < linkedIds.length; i += 100) {
-    const { data } = await supabaseAdmin.from("products").select("id, sku, unit, cost_price").in("id", linkedIds.slice(i, i + 100));
-    for (const p of data ?? []) linkedStock.set(p.id, { sku: p.sku, unit: p.unit, costPrice: p.cost_price });
-  }
-  for (const p of ledgerProducts) p.stock = p.stockProductId ? (linkedStock.get(p.stockProductId) ?? null) : null;
 
   // The search matches the supplier, the invoice number, and the SKU or name of a product on the invoice.
   // `,()%*` are stripped: they'd break the filter text below.
@@ -185,8 +105,6 @@ export default async function SupplierInvoicesPage({
       brands={brands}
       currentBrandId={currentBrand.id}
       today={ppToday()}
-      products={products}
-      ledgerProducts={ledgerProducts}
       invoices={invoices}
       list={{ q, status, from: fromDay, to: toDay, page, pageCount, limit, matching, pageSizes: PAGE_SIZES }}
     />
