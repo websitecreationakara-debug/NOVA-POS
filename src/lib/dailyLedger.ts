@@ -50,6 +50,8 @@ export type DailyLedgerRow = {
   brandId?: string;
   // What the row's Delete button does.
   deletion: LedgerDeletion;
+  // The Stock product this ledger product is linked to (migration 0100); only on products added to the ledger.
+  stockLink?: { id: string; name: string };
   // Set on a website product that has no POS product yet: productId is then a placeholder, and the POS
   // product (what ensurePosProductForSiteProduct makes) is created the first time something is typed in.
   site?: LedgerSiteItem;
@@ -115,6 +117,7 @@ export function buildDailyLedger(input: {
     quantityNow: number;
     cost: number | null;
     site?: LedgerSiteItem;
+    stockLink?: { id: string; name: string };
   }[];
   // Stock changes inside the month, and those after it (up to now).
   movements: Dated[];
@@ -180,6 +183,7 @@ export function buildDailyLedger(input: {
       unit: p.unit,
       categoryName: p.categoryName,
       ...(p.site ? { site: p.site } : {}),
+      ...(p.stockLink ? { stockLink: p.stockLink } : {}),
       deletion: p.deletion ?? { kind: "pos" },
       exDate: "",
       edited: [],

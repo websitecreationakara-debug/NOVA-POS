@@ -3,7 +3,7 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ChevronLeft, ChevronRight, FileSpreadsheet, Loader2, Plus, Search, Trash2, TriangleAlert, Upload } from "lucide-react";
+import { ChevronLeft, ChevronRight, FileSpreadsheet, Link2, Loader2, Plus, Search, Trash2, TriangleAlert, Upload, X } from "lucide-react";
 import TopBarSlot from "@/components/TopBarSlot";
 import { decodeCsvBytes, normalizeDate, parseCsv } from "@/lib/customerCsv";
 import { applyLedgerEntry, daysOfMonth, LEDGER_TEXT_FIELDS, recalcRow, type DailyLedgerRow } from "@/lib/dailyLedger";
@@ -23,12 +23,18 @@ import {
   exportDailyLedgerAction,
   hideRemovedLedgerProductAction,
   importLedgerEntriesAction,
+  importLedgerNewProductsAction,
+  linkLedgerProductsAction,
+  searchStockProductsAction,
   setLedgerEntryAction,
 } from "./actions";
 
-// The export's column headers -> the ledger cell each one fills. Name, Weight, Unit, Category and the
-// worked-out columns (R, totals) are not imported.
+// The export's column headers -> the ledger cell each one fills. SKU and Name say which product a row is,
+// and Category groups a new one; the worked-out columns (R, totals) are not imported.
 const CSV_FIELDS: Record<string, string> = {
+  weight: "weight",
+  "weight/size": "weight",
+  unit: "unit",
   "unit price": "unit_price",
   "ex-date": "ex_date",
   "s-price loka": "s_price_loka",
@@ -123,6 +129,51 @@ export default function DailyLedgerClient({
   // The removed product whose Delete popup is open, and whether it is being deleted.
   const [deleting, setDeleting] = useState<DailyLedgerRow | null>(null);
   const [deletePending, setDeletePending] = useState(false);
+  // The link picker: the ledger product being linked to a Stock product, what was searched, and what was found.
+  const [linking, setLinking] = useState<DailyLedgerRow | null>(null);
+  const [linkQuery, setLinkQuery] = useState("");
+  const [linkResults, setLinkResults] = useState<{ id: string; name: string; sku: string | null; business: string | null }[]>([]);
+  const [linkBusy, setLinkBusy] = useState(false);
+  const [linkError, setLinkError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!linking) return;
+    let stale = false;
+    const t = setTimeout(async () => {
+      try {
+        const found = await searchStockProductsAction({ brandId: linking.brandId ?? currentBrandId, q: linkQuery });
+        if (!stale) setLinkResults(found);
+      } catch (e) {
+        if (!stale) setLinkError(e instanceof Error ? e.message : "Could not search Stock");
+      }
+    }, 250);
+    return () => {
+      stale = true;
+      clearTimeout(t);
+    };
+  }, [linking, linkQuery, currentBrandId]);
+
+  function openLink(row: DailyLedgerRow) {
+    setLinking(row);
+    setLinkQuery(row.stockLink ? "" : row.name);
+    setLinkResults([]);
+    setLinkError(null);
+  }
+
+  async function saveLink(stockProductId: string | null) {
+    if (!linking) return;
+    setLinkBusy(true);
+    setLinkError(null);
+    try {
+      await linkLedgerProductsAction({ links: [{ ledgerProductId: linking.productId, stockProductId }] });
+      setLinking(null);
+      router.refresh();
+    } catch (e) {
+      setLinkError(e instanceof Error ? e.message : "Could not save the link");
+    } finally {
+      setLinkBusy(false);
+    }
+  }
   const [error, setError] = useState<string | null>(null);
   // The "Add product" popup: a new product for this business (a POS-only product, like Stock's).
   const [adding, setAdding] = useState(false);
@@ -216,6 +267,50 @@ export default function DailyLedgerClient({
   useEffect(() => {
     if (month === thisMonth) scrollToToday(false);
   }, [month, thisMonth]);
+
+  // Remembers where you were -- the filter text and how far the table is scrolled -- for this business and
+  // month, so coming back from another page (a product's invoices, Match products, ...) puts you in the same
+  // place. Kept for the browser tab only (sessionStorage); the table scrolls inside its own box, which the
+  // browser's Back button does not restore.
+  const viewKey = `ledger-view:${currentBrandId}:${month}`;
+  const viewReady = useRef(false);
+  const filterNow = useRef("");
+  filterNow.current = filter;
+  useEffect(() => {
+    viewReady.current = false;
+    let saved: { filter?: string; left?: number; top?: number } | null = null;
+    try {
+      saved = JSON.parse(sessionStorage.getItem(viewKey) ?? "null");
+    } catch {
+      saved = null;
+    }
+    if (saved?.filter) setFilter(saved.filter);
+    const scroller = scrollerRef.current;
+    // Twice: the first frame draws the filtered rows, the second can scroll them.
+    const frame = requestAnimationFrame(() =>
+      requestAnimationFrame(() => {
+        if (saved && scroller) scroller.scrollTo({ left: saved.left ?? 0, top: saved.top ?? 0 });
+        viewReady.current = true;
+      })
+    );
+    return () => cancelAnimationFrame(frame);
+  }, [viewKey]);
+  function rememberView() {
+    if (!viewReady.current) return;
+    const scroller = scrollerRef.current;
+    try {
+      sessionStorage.setItem(
+        viewKey,
+        JSON.stringify({ filter: filterNow.current, left: scroller?.scrollLeft ?? 0, top: scroller?.scrollTop ?? 0 })
+      );
+    } catch {
+      // storage blocked: the view just isn't remembered
+    }
+  }
+  useEffect(() => {
+    rememberView();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filter]);
 
   const q = filter.trim().toLowerCase();
   const groups = useMemo(() => {
@@ -381,8 +476,10 @@ export default function DailyLedgerClient({
     }
   }
 
-  // Reads a CSV laid out like the export, matches its rows to the products shown (by SKU, else name +
-  // weight) and saves every filled cell that differs. Blank cells are skipped, so nothing is erased.
+  // Reads a CSV laid out like the export. A row is the product with the same SKU and name (never a
+  // duplicate): every filled cell that differs is saved -- Weight, Unit, prices, Ex-Date, Begining stock and
+  // the P / S / O of each day. A row that matches nothing is added as a new product. Blank cells are
+  // skipped, so nothing is erased.
   async function importCsv(file: File) {
     setImporting(true);
     setError(null);
@@ -424,25 +521,40 @@ export default function DailyLedgerClient({
       const skuCol = col("sku");
       const nameCol = col("name");
       if (cols.length === 0) throw new Error("No ledger columns found in this CSV.");
-      const bySku = new Map(localRows.filter((r) => r.sku).map((r) => [r.sku!.toLowerCase(), r]));
+      // A product is the same when its SKU and name are the same: its values are filled in, never a second
+      // copy made. The ledger can already hold the same SKU + name more than once (different weights): a row
+      // of the file takes the one with its weight, else the next one not yet used by this file.
+      const keyOf = (sku: string, name: string) => `${sku.trim()}|${name.trim()}`.toLowerCase();
+      const byKey = new Map<string, DailyLedgerRow[]>();
+      for (const r of localRows) byKey.set(keyOf(r.sku ?? "", r.name), [...(byKey.get(keyOf(r.sku ?? "", r.name)) ?? []), r]);
+      const bySku = new Map<string, DailyLedgerRow[]>();
+      for (const r of localRows) if (r.sku) bySku.set(r.sku.trim().toLowerCase(), [...(bySku.get(r.sku.trim().toLowerCase()) ?? []), r]);
       const byName = new Map(localRows.map((r) => [`${r.name}|${r.size}`.toLowerCase(), r]));
+      const claimed = new Set<string>();
+      // Rows of this file already turned into a product (existing or new), by SKU + name: the same one again
+      // with the same weight is the same product; with another weight it is another product.
+      type Target = { weight: string; row?: DailyLedgerRow; add?: number };
+      const targets = new Map<string, Target[]>();
       const entries: { productId: string; field: string; value: string; site?: DailyLedgerRow["site"] }[] = [];
+      const added: { name: string; unit: string; price: number; category: string | null; entries: { field: string; value: string }[] }[] = [];
       let matched = 0;
-      let unmatched = 0;
       let invalid = 0;
+      let category: string | null = null;
       const sizeCol = col("weight", "weight/size");
+      const categoryCol = col("category");
       for (const line of table.slice(headerAt + 1)) {
-        const sku = skuCol >= 0 ? (line[skuCol] ?? "").trim().toLowerCase() : "";
+        const skuRaw = skuCol >= 0 ? (line[skuCol] ?? "").trim() : "";
         const name = nameCol >= 0 ? (line[nameCol] ?? "").trim() : "";
-        // Category rows ("FROZEN FOOD") have no name; they are headings, not products.
-        if (!name) continue;
-        const size = sizeCol >= 0 ? (line[sizeCol] ?? "").trim() : "";
-        const row = (sku && bySku.get(sku)) || byName.get(`${name}|${size}`.toLowerCase());
-        if (!row) {
-          unmatched++;
+        // Group rows ("FROZEN FOOD") have no name; they are headings, not products.
+        if (!name) {
+          if (skuRaw) category = skuRaw;
           continue;
         }
-        let used = false;
+        const size = sizeCol >= 0 ? (line[sizeCol] ?? "").trim() : "";
+        const key = keyOf(skuRaw, name);
+
+        // The file's cells for this row, checked.
+        const cells: { field: string; value: string }[] = [];
         for (const { i, field } of cols) {
           let value = (line[i] ?? "").trim();
           if (value === "" || value === "-") continue;
@@ -455,13 +567,56 @@ export default function DailyLedgerClient({
               continue;
             }
             value = date;
-          } else {
+          } else if (!LEDGER_TEXT_FIELDS.includes(field)) {
             value = value.replace(/[$,\s]/g, "");
             if (!Number.isFinite(Number(value))) {
               invalid++;
               continue;
             }
           }
+          cells.push({ field, value });
+        }
+
+        // Which product this row is: one this file already made, else one in the ledger, else a new one.
+        const seen = targets.get(key) ?? [];
+        let target = seen.find((t) => t.weight.toLowerCase() === size.toLowerCase());
+        if (!target) {
+          const free = (byKey.get(key) ?? []).filter((r) => !claimed.has(r.productId));
+          const row =
+            free.find((r) => (r.size ?? "").toLowerCase() === size.toLowerCase()) ??
+            free[0] ??
+            (skuRaw ? (bySku.get(skuRaw.toLowerCase()) ?? []).find((r) => !claimed.has(r.productId)) : undefined) ??
+            (() => {
+              const r = byName.get(`${name}|${size}`.toLowerCase());
+              return r && !claimed.has(r.productId) ? r : undefined;
+            })();
+          if (row) {
+            claimed.add(row.productId);
+            target = { weight: size, row };
+          } else if (currentBrandId !== "all") {
+            const rowCategory = (categoryCol >= 0 ? (line[categoryCol] ?? "").trim() : "") || category;
+            added.push({ name, unit: "pcs", price: 0, category: rowCategory || null, entries: skuRaw ? [{ field: "sku", value: skuRaw }] : [] });
+            target = { weight: size, add: added.length - 1 };
+          } else {
+            continue;
+          }
+          seen.push(target);
+          targets.set(key, seen);
+        }
+
+        if (target.add !== undefined) {
+          // A new product: its unit and price are the product's own, everything else is typed values.
+          const product = added[target.add];
+          for (const c of cells) {
+            if (c.field === "unit") product.unit = c.value.slice(0, 20);
+            else if (c.field === "unit_price") product.price = Number(c.value);
+            else product.entries = [...product.entries.filter((e) => e.field !== c.field), c];
+          }
+          continue;
+        }
+        const row = target.row!;
+        let used = false;
+        for (const { field, value } of cells) {
           const current = rawValue(row, field);
           if (current === value || (current !== "" && !LEDGER_TEXT_FIELDS.includes(field) && Number(current) === Number(value))) continue;
           entries.push({ productId: row.productId, field, value, site: row.site });
@@ -472,9 +627,12 @@ export default function DailyLedgerClient({
       for (let i = 0; i < entries.length; i += 1000) {
         await importLedgerEntriesAction({ month, entries: entries.slice(i, i + 1000) });
       }
+      if (added.length > 0) await importLedgerNewProductsAction({ brandId: currentBrandId, month, products: added });
       setNotice(
-        `Imported ${entries.length} value${entries.length === 1 ? "" : "s"} for ${matched} product${matched === 1 ? "" : "s"}` +
-          (unmatched ? ` · ${unmatched} row${unmatched === 1 ? "" : "s"} not found` : "") +
+        `Imported ${entries.length + added.reduce((n, p) => n + p.entries.length, 0)} value${
+          entries.length + added.reduce((n, p) => n + p.entries.length, 0) === 1 ? "" : "s"
+        } · ${matched} product${matched === 1 ? "" : "s"} updated` +
+          (added.length ? ` · ${added.length} new product${added.length === 1 ? "" : "s"} added` : "") +
           (invalid ? ` · ${invalid} bad value${invalid === 1 ? "" : "s"} skipped` : "")
       );
       router.refresh();
@@ -591,6 +749,13 @@ export default function DailyLedgerClient({
               if (f) void importCsv(f);
             }}
           />
+          <Link
+            href={`/stock/ledger/match?brand=${currentBrandId}`}
+            className="inline-flex flex-1 items-center justify-center gap-2 rounded-lg border border-border bg-card px-4 py-2 text-sm font-medium shadow-sm hover:bg-muted sm:flex-none"
+          >
+            <Link2 className="size-4" />
+            Match products
+          </Link>
           <button
             type="button"
             onClick={() => importRef.current?.click()}
@@ -650,7 +815,7 @@ export default function DailyLedgerClient({
       </div>
 
       <div className="mx-4 mb-4 flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-border bg-card shadow-sm sm:mx-6">
-        <div ref={scrollerRef} className="relative min-h-0 flex-1 overflow-auto">
+        <div ref={scrollerRef} onScroll={rememberView} className="relative min-h-0 flex-1 overflow-auto">
           <table
             className="border-separate border-spacing-0 text-[13px]"
             onClick={(e) => {
@@ -797,7 +962,25 @@ export default function DailyLedgerClient({
                         title={r.name}
                       >
                         <div className="flex items-center justify-between gap-2">
-                          <span className="truncate">{r.name}</span>
+                          {/* Opens the supplier invoices that have this product (the invoices page, searched by its name). */}
+                          <Link
+                            href={`/stock/invoices?${new URLSearchParams({ brand: r.brandId ?? currentBrandId, q: r.name, page: "1", limit: "25" })}`}
+                            title={`Invoices with ${r.name}`}
+                            className="truncate hover:text-brand hover:underline"
+                          >
+                            {r.name}
+                          </Link>
+                          {r.deletion.kind === "own" && (
+                            <button
+                              type="button"
+                              aria-label={r.stockLink ? `Linked to ${r.stockLink.name} -- change` : `Link ${r.name} to a Stock product`}
+                              title={r.stockLink ? `Linked to Stock: ${r.stockLink.name}` : "Link to a Stock product"}
+                              onClick={() => openLink(r)}
+                              className={`shrink-0 rounded p-1 hover:bg-muted ${r.stockLink ? "text-brand" : "text-muted-foreground/50 hover:text-foreground"}`}
+                            >
+                              <Link2 className="size-4" />
+                            </button>
+                          )}
                           <button
                             type="button"
                             aria-label={`Delete ${r.name}`}
@@ -1047,6 +1230,84 @@ export default function DailyLedgerClient({
               </button>
             </div>
           </form>
+        </div>
+      )}
+      {linking && (
+        <div
+          className="fixed inset-0 z-[70] flex items-center justify-center bg-black/60 p-4"
+          onClick={() => {
+            if (!linkBusy) setLinking(null);
+          }}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label="Link to a Stock product"
+            className="flex max-h-[80vh] w-full max-w-md flex-col rounded-2xl border border-border bg-card p-5 shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <h2 className="text-base font-semibold text-foreground">Link to a Stock product</h2>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  <span className="font-medium text-foreground">{linking.name}</span> is the same product as the Stock product you pick. A
+                  supplier invoice for it then adds to that Stock product too.
+                </p>
+              </div>
+              <button
+                type="button"
+                aria-label="Close"
+                onClick={() => setLinking(null)}
+                className="grid size-8 shrink-0 place-items-center rounded-lg text-muted-foreground hover:bg-muted"
+              >
+                <X className="size-4" />
+              </button>
+            </div>
+            {linking.stockLink && (
+              <div className="mt-3 flex items-center justify-between gap-2 rounded-lg bg-brand/10 px-3 py-2 text-sm">
+                <span className="min-w-0 truncate">
+                  Linked to <span className="font-medium">{linking.stockLink.name}</span>
+                </span>
+                <button
+                  type="button"
+                  disabled={linkBusy}
+                  onClick={() => void saveLink(null)}
+                  className="shrink-0 text-xs font-medium text-red-600 hover:underline disabled:opacity-50"
+                >
+                  Remove link
+                </button>
+              </div>
+            )}
+            <input
+              autoFocus
+              value={linkQuery}
+              onChange={(e) => setLinkQuery(e.target.value)}
+              placeholder="Search Stock (any business) by name or SKU"
+              className="mt-3 h-10 w-full rounded-lg border border-border bg-background px-3 text-sm outline-none focus:border-brand focus:ring-2 focus:ring-brand/20"
+            />
+            {linkError && <p className="mt-2 text-xs text-red-500">{linkError}</p>}
+            <ul className="mt-3 min-h-0 flex-1 space-y-1 overflow-y-auto">
+              {linkResults.map((p) => (
+                <li key={p.id}>
+                  <button
+                    type="button"
+                    disabled={linkBusy}
+                    onClick={() => void saveLink(p.id)}
+                    className="flex w-full items-center justify-between gap-3 rounded-lg px-3 py-2 text-left text-sm hover:bg-muted disabled:opacity-50"
+                  >
+                    <span className="min-w-0 truncate">{p.name}</span>
+                    <span className="flex shrink-0 items-center gap-2">
+                      {p.sku && <span className="font-mono text-[11px] text-muted-foreground">{p.sku}</span>}
+                      {p.business && (
+                        <span className="rounded-md bg-muted px-1.5 py-0.5 text-[11px] font-medium text-muted-foreground">{p.business}</span>
+                      )}
+                    </span>
+                  </button>
+                </li>
+              ))}
+              {linkResults.length === 0 && !linkError && <li className="px-3 py-6 text-center text-sm text-muted-foreground">No Stock products found.</li>}
+            </ul>
+          </div>
         </div>
       )}
       {deleting && (

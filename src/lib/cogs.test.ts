@@ -6,6 +6,7 @@ import {
   computeGrossMargin,
   computeLineCogs,
   computeRecipeUnitCost,
+  resolveMarginLines,
   splitByWeight,
   summarizeCogsByDay,
   summarizeMarginLines,
@@ -157,5 +158,42 @@ describe("summarizeCogsByDay", () => {
 
   it("is null when a day has a sale with no cost", () => {
     expect(summarizeCogsByDay([{ ...lines[0], unitCost: null }], null, false)).toBeNull();
+  });
+});
+
+describe("resolveMarginLines (same-named products as one Margin Report row)", () => {
+  const sold = (quantity: number, lineTotal: number, unitCost: number | null) => ({
+    quantity,
+    lineTotal,
+    cogs: unitCost === null ? null : quantity * unitCost,
+    unitCost,
+    paidAt: "2026-11-02T03:00:00Z",
+  });
+
+  it("costs a Stock-linked product's lines at its current cost, like summarizeMarginLines does", () => {
+    const lines = [sold(2, 20, 4), sold(1, 10, 6)];
+    const { lines: resolved, unitCost } = resolveMarginLines(lines, 5, true);
+    expect(unitCost).toBe(5);
+    expect(summarizeMarginLines(resolved, unitCost, false).totalCogs).toBe(summarizeMarginLines(lines, 5, true).totalCogs);
+  });
+
+  it("leaves an unlinked product's lines as sold", () => {
+    const lines = [sold(2, 20, 4)];
+    expect(resolveMarginLines(lines, 5, false)).toEqual({ lines, unitCost: 5 });
+  });
+
+  it("adds two products' sales up: units, revenue and COGS are the sums", () => {
+    const a = [sold(2, 20, 4)];
+    const b = [sold(3, 36, 5)];
+    const merged = summarizeMarginLines([...a, ...b], 4, false);
+    expect(merged.unitsSold).toBe(5);
+    expect(merged.revenue).toBe(56);
+    expect(merged.totalCogs).toBe(23);
+    // b was sold at a cost other than the Unit Cost shown, so the row lists it
+    expect(merged.soldAt.map((s) => s.unitCost).sort()).toEqual([4, 5]);
+  });
+
+  it("is unknown the moment one product has a sale with no cost", () => {
+    expect(summarizeMarginLines([sold(1, 10, 4), sold(1, 10, null)], null, false).totalCogs).toBeNull();
   });
 });

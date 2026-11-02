@@ -290,6 +290,8 @@ export type DailyLedgerProduct = {
   category: string | null;
   // Migration 0093: not listed in months before this one; null = every month.
   first_month: string | null;
+  // Migration 0100: the Stock product this is the same as (named differently); null = not linked.
+  stock_product_id: string | null;
   created_at: string;
 };
 
@@ -405,6 +407,39 @@ export type CashReconciliation = {
   created_at: string;
 };
 
+// Stock > Supplier Invoices (migration 0096).
+export type SupplierInvoice = {
+  id: string;
+  brand_id: string;
+  supplier_name: string;
+  invoice_number: string | null;
+  invoice_date: string;
+  total: number;
+  paid: boolean;
+  note: string | null;
+  // Riel per $1 as printed on the invoice (migration 0097).
+  exchange_rate: number | null;
+  created_by: string | null;
+  created_at: string;
+};
+
+export type SupplierInvoiceItem = {
+  id: string;
+  invoice_id: string;
+  // null for a line that is not a product of the business: only `description` is kept (migration 0098).
+  product_id: string | null;
+  quantity: number;
+  unit_cost: number;
+  // As printed on the invoice line (migration 0097).
+  sku: string | null;
+  packing: string | null;
+  unit: string | null;
+  description: string | null;
+  // The product's cost before the invoice set it; only meaningful when cost_recorded (migration 0099).
+  previous_cost: number | null;
+  cost_recorded: boolean;
+};
+
 type Table<Row, Insert, Relationships extends readonly unknown[] = []> = {
   Row: Row;
   Insert: Insert;
@@ -499,14 +534,21 @@ export type Database = {
       >;
       daily_ledger_products: Table<
         DailyLedgerProduct,
-        Omit<DailyLedgerProduct, "id" | "created_at" | "unit" | "unit_price" | "category" | "first_month"> &
-          Partial<Pick<DailyLedgerProduct, "id" | "created_at" | "unit" | "unit_price" | "category" | "first_month">>,
+        Omit<DailyLedgerProduct, "id" | "created_at" | "unit" | "unit_price" | "category" | "first_month" | "stock_product_id"> &
+          Partial<Pick<DailyLedgerProduct, "id" | "created_at" | "unit" | "unit_price" | "category" | "first_month" | "stock_product_id">>,
         [
           {
             foreignKeyName: "daily_ledger_products_brand_id_fkey";
             columns: ["brand_id"];
             isOneToOne: false;
             referencedRelation: "brands";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "daily_ledger_products_stock_product_id_fkey";
+            columns: ["stock_product_id"];
+            isOneToOne: false;
+            referencedRelation: "products";
             referencedColumns: ["id"];
           },
         ]
@@ -532,6 +574,49 @@ export type Database = {
             foreignKeyName: "daily_ledger_hidden_product_id_fkey";
             columns: ["product_id"];
             isOneToOne: true;
+            referencedRelation: "products";
+            referencedColumns: ["id"];
+          },
+        ]
+      >;
+      supplier_invoices: Table<
+        SupplierInvoice,
+        Omit<
+          SupplierInvoice,
+          "id" | "created_at" | "invoice_date" | "total" | "paid" | "note" | "invoice_number" | "created_by" | "exchange_rate"
+        > &
+          Partial<
+            Pick<
+              SupplierInvoice,
+              "id" | "created_at" | "invoice_date" | "total" | "paid" | "note" | "invoice_number" | "created_by" | "exchange_rate"
+            >
+          >,
+        [
+          {
+            foreignKeyName: "supplier_invoices_brand_id_fkey";
+            columns: ["brand_id"];
+            isOneToOne: false;
+            referencedRelation: "brands";
+            referencedColumns: ["id"];
+          },
+        ]
+      >;
+      supplier_invoice_items: Table<
+        SupplierInvoiceItem,
+        Omit<SupplierInvoiceItem, "id" | "sku" | "packing" | "unit" | "description" | "previous_cost" | "cost_recorded"> &
+          Partial<Pick<SupplierInvoiceItem, "id" | "sku" | "packing" | "unit" | "description" | "previous_cost" | "cost_recorded">>,
+        [
+          {
+            foreignKeyName: "supplier_invoice_items_invoice_id_fkey";
+            columns: ["invoice_id"];
+            isOneToOne: false;
+            referencedRelation: "supplier_invoices";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "supplier_invoice_items_product_id_fkey";
+            columns: ["product_id"];
+            isOneToOne: false;
             referencedRelation: "products";
             referencedColumns: ["id"];
           },
