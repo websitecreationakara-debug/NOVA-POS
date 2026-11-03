@@ -69,7 +69,7 @@ export default async function ProductMarginPage({
         .filter(Boolean)
         .join(" · "),
     },
-    { label: "Unit cost (current)", value: summary.unitCost === null ? "—" : formatMoney(summary.unitCost) },
+    { label: "Unit cost", value: summary.unitCost === null ? "—" : formatMoney(summary.unitCost) },
     { label: "Total COGS", value: summary.totalCogs === null ? "No cost price" : formatMoney(summary.totalCogs) },
     { label: "Gross profit", value: summary.grossProfit === null ? "—" : formatMoney(summary.grossProfit) },
     { label: "Gross margin", value: summary.grossMarginPct === null ? "—" : `${summary.grossMarginPct.toFixed(1)}%` },

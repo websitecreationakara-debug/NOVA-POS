@@ -4,6 +4,8 @@ import {
   getCogsSummary,
   getDailySales,
   getExpensesForDateRange,
+  getProductAdsExpenses,
+  getMarginOrderDiscountTotal,
   getMarginReport,
   getReconciliation,
   getStockUnits,
@@ -232,6 +234,14 @@ export default async function AccountancePage({
   // The stock-unit boxes only exist on the COGS tab.
   const stockUnitsPromise =
     tab === "cogs" ? getStockUnits(currentBrand.id, fromDate, toDate) : Promise.resolve(null);
+  // Expense Ads typed per product exist only in the COGS tab's Month view.
+  const productAdsPromise: Promise<Record<string, number>> =
+    tab === "cogs" && mode === "month" ? getProductAdsExpenses(month) : Promise.resolve({});
+  // The Margin Report's Grand Total takes the order-level discounts off the product rows' revenue.
+  const orderDiscountPromise =
+    tab === "cogs"
+      ? getMarginOrderDiscountTotal(currentBrand.id, fromDate, toDate).catch(() => 0)
+      : Promise.resolve(0);
   const previousPeriodPromise = Promise.all([
     getDailySales(currentBrand.id, prevFromDate, prevToDate),
     getExpensesForDateRange(currentBrand.id, prevFromDate, prevToDate),
@@ -244,7 +254,16 @@ export default async function AccountancePage({
     wasteLog,
     [{ summary: prevSummary, orders: prevOrders }, prevExpenses, prevCogsSummary],
     stockUnits,
-  ] = await Promise.all([currentDataPromise, wasteLogPromise, previousPeriodPromise, stockUnitsPromise]);
+    productAds,
+    orderDiscountTotal,
+  ] = await Promise.all([
+    currentDataPromise,
+    wasteLogPromise,
+    previousPeriodPromise,
+    stockUnitsPromise,
+    productAdsPromise,
+    orderDiscountPromise,
+  ]);
 
   // Total COGS is the Margin Report's: the sum of the products that have a Total COGS there (a
   // product with no cost price adds nothing) -- what the Dashboard shows, so the two screens match.
@@ -295,6 +314,8 @@ export default async function AccountancePage({
       marginReport={marginReport}
       wasteLog={wasteLog}
       stockUnits={stockUnits}
+      productAds={productAds}
+      orderDiscountTotal={orderDiscountTotal}
       previousPeriod={previousPeriod}
     />
   );

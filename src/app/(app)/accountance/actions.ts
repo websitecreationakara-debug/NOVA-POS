@@ -64,6 +64,38 @@ export async function saveReconciliationAction(input: {
   revalidatePath("/accountance");
 }
 
+// Saves the Expense Ads typed on a Margin Report row for a month. A row that is several same-named
+// products keeps the value on the first id; the others are cleared so it isn't counted twice.
+export async function setProductAdsExpenseAction(input: {
+  productIds: string[];
+  month: string;
+  amount: number;
+}): Promise<void> {
+  await requireStockAccess();
+  const { productIds, month, amount } = input;
+  if (productIds.length === 0) throw new Error("No product");
+  if (!/^\d{4}-\d{2}$/.test(month)) throw new Error("Invalid month");
+  if (Number.isNaN(amount) || amount < 0) throw new Error("Expense Ads cannot be negative");
+
+  const [primary, ...others] = productIds;
+  if (others.length > 0) {
+    const { error } = await supabaseAdmin
+      .from("product_ads_expenses")
+      .delete()
+      .in("product_id", others)
+      .eq("month", month);
+    if (error) throw error;
+  }
+  const { error } = await supabaseAdmin
+    .from("product_ads_expenses")
+    .upsert(
+      { product_id: primary, month, amount, updated_at: new Date().toISOString() },
+      { onConflict: "product_id,month" }
+    );
+  if (error) throw error;
+  revalidatePath("/accountance");
+}
+
 export async function addExpenseAction(input: {
   brandId: string;
   description: string;

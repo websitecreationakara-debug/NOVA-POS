@@ -142,6 +142,15 @@ export async function getEffectiveProductCost(productId: string): Promise<number
   return total ?? product.cost_price;
 }
 
+// The cost a sale is recorded at (order_items.unit_cost): a product linked to a Stock listing sells at that
+// listing's Total Cost 10% -- the same Unit Cost the Margin Report shows -- else its effective cost. The
+// database's effective_product_cost() does the same for new orders (migration 0103).
+export async function getSaleUnitCost(productId: string): Promise<number | null> {
+  const cost10 = (await getLinkedStockCost10pcts([productId]).catch(() => new Map<string, number | null>())).get(productId);
+  if (cost10 !== undefined && cost10 !== null) return cost10;
+  return getEffectiveProductCost(productId);
+}
+
 // getEffectiveProductCost for many products at once -- the same rules, but a
 // handful of queries in total instead of up to four PER product (a year of sales
 // touches hundreds of products). Keep the two in step: a Set listing's own Total

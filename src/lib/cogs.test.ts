@@ -170,11 +170,47 @@ describe("resolveMarginLines (same-named products as one Margin Report row)", ()
     paidAt: "2026-11-02T03:00:00Z",
   });
 
-  it("costs a Stock-linked product's lines at its current cost, like summarizeMarginLines does", () => {
-    const lines = [sold(2, 20, 4), sold(1, 10, 6)];
+  it("resolves a Stock-linked product's lines the same way summarizeMarginLines does", () => {
+    const lines = [sold(2, 20, 4), { ...sold(1, 10, 6), paidAt: "2026-11-02T04:00:00Z" }];
     const { lines: resolved, unitCost } = resolveMarginLines(lines, 5, true);
     expect(unitCost).toBe(5);
     expect(summarizeMarginLines(resolved, unitCost, false).totalCogs).toBe(summarizeMarginLines(lines, 5, true).totalCogs);
+  });
+
+  it("keeps each sale's own cost for a Stock-linked product, not Stock's current cost", () => {
+    const first = { ...sold(2, 12, 4), paidAt: "2026-11-03T02:16:24Z" };
+    const second = { ...sold(2, 12, 3), paidAt: "2026-11-03T02:17:05Z" };
+    const r = summarizeMarginLines([first, second], 2, true);
+    expect(r.totalCogs).toBe(14); // 2 x 4 + 2 x 3, not 4 x 2
+    expect(r.unitCost).toBe(2);
+    expect(r.soldAt).toEqual([
+      { unitCost: 3, units: 2 },
+      { unitCost: 4, units: 2 },
+    ]);
+  });
+
+  it("an unlinked product's Unit Cost is its latest sale's cost, not its current cost", () => {
+    const old = { ...sold(2, 12, 4), paidAt: "2026-11-03T02:16:24Z" };
+    const latest = { ...sold(2, 12, 3), paidAt: "2026-11-03T02:17:05Z" };
+    const r = summarizeMarginLines([old, latest], 9, false);
+    expect(r.unitCost).toBe(3);
+    expect(r.totalCogs).toBe(14);
+    expect(summarizeMarginLines([], 9, false).unitCost).toBe(9);
+  });
+
+  it("before 2026-11-01 the old process stands: a linked product's sales are costed at Stock's current cost", () => {
+    const oct = { ...sold(2, 12, 4), paidAt: "2026-10-31T10:00:00Z" }; // 17:00 Phnom Penh, still October
+    const nov = { ...sold(2, 12, 3), paidAt: "2026-10-31T17:30:00Z" }; // 00:30 on Nov 1 in Phnom Penh
+    const r = summarizeMarginLines([oct, nov], 2, true);
+    expect(r.totalCogs).toBe(10); // 2 x 2 (current cost, old process) + 2 x 3 (its own cost)
+    // an unlinked product's Unit Cost stays its current cost until a sale on/after the cutoff
+    expect(summarizeMarginLines([oct], 9, false).unitCost).toBe(9);
+    expect(summarizeMarginLines([oct, nov], 9, false).unitCost).toBe(3);
+  });
+
+  it("falls back to Stock's cost for a linked sale with no recorded cost, and has no COGS without any cost", () => {
+    expect(summarizeMarginLines([sold(2, 12, null)], 2, true).totalCogs).toBe(4);
+    expect(summarizeMarginLines([sold(2, 12, 3)], null, true).totalCogs).toBeNull();
   });
 
   it("leaves an unlinked product's lines as sold", () => {

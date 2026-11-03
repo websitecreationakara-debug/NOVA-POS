@@ -5,7 +5,7 @@ import { supabaseAdmin } from "@/lib/supabase/server";
 import { pushOrderDeleteToSite, pushOrderStatusToSite, pushStockToSites } from "@/lib/site-sync";
 import { getCategoriesFingerprintAction } from "@/app/(app)/stock/actions";
 import { computeLineCogs, computeRecipeUnitCost } from "@/lib/cogs";
-import { getEffectiveProductCost } from "@/lib/websiteProducts/purchaseCosts";
+import { getSaleUnitCost } from "@/lib/websiteProducts/purchaseCosts";
 import { getSessionUser } from "@/lib/supabase/auth-server";
 import { buildOrdersCsv, buildOrdersSheet, inRange, type OrdersRange } from "@/lib/ordersCsv";
 import { fetchOrdersBackupData } from "@/lib/ordersBackupData";
@@ -245,7 +245,7 @@ export async function updateOrderAction(
 
   // Price each new line the same way charge_order() does: from the
   // product's Stock Total at this moment ("direct" -- see
-  // getEffectiveProductCost), or, if it has a recipe, from summing the
+  // getSaleUnitCost), or, if it has a recipe, from summing the
   // recipe's ingredient costs ("recipe") -- and work out what that recipe now
   // needs to consume. A product that was ALREADY on this order keeps the cost
   // recorded when it was sold: editing an order (a quantity, the customer, a
@@ -288,7 +288,7 @@ export async function updateOrderAction(
     directCostProductIds.map(async (id) => {
       directCostByProduct.set(
         id,
-        recordedCostByProduct.get(id) ?? (await getEffectiveProductCost(id).catch(() => null))
+        recordedCostByProduct.get(id) ?? (await getSaleUnitCost(id).catch(() => null))
       );
     })
   );

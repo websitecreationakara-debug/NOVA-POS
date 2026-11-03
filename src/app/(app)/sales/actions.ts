@@ -4,6 +4,7 @@ import { after } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase/server";
 import { getSessionUser } from "@/lib/supabase/auth-server";
 import { pushStockToSites } from "@/lib/site-sync";
+import { getLinkedStockCost10pcts } from "@/lib/websiteProducts/purchaseCosts";
 import { sendPurchaseEvent } from "@/lib/metaConversions";
 import type { OrderSource, PaymentMethod } from "@/types/database";
 import { ppToday } from "@/lib/phnomPenhTime";
@@ -350,6 +351,36 @@ export async function chargeOrder(input: {
       })()
     );
   }
+
+  // charge_order() records a linked product's Purchase Cost; the order is costed at the product's Stock
+  // Total Cost 10% instead -- the Unit Cost the Margin Report shows -- and keeps it from then on.
+  stampWarnings.push(
+    (async () => {
+      try {
+        const cost10 = await getLinkedStockCost10pcts(lines.map((l) => l.productId));
+        const { data: items, error: itemsError } = await supabaseAdmin
+          .from("order_items")
+          .select("id, product_id, quantity, cost_source")
+          .eq("order_id", orderId);
+        if (itemsError) throw itemsError;
+        await Promise.all(
+          (items ?? [])
+            .filter((i) => i.cost_source === "direct" && cost10.get(i.product_id) != null)
+            .map(async (i) => {
+              const unitCost = cost10.get(i.product_id) as number;
+              const { error } = await supabaseAdmin
+                .from("order_items")
+                .update({ unit_cost: unitCost, cogs: Math.round(unitCost * Number(i.quantity) * 100) / 100 })
+                .eq("id", i.id);
+              if (error) throw error;
+            })
+        );
+        return null;
+      } catch {
+        return "Order saved, but its cost couldn't be set to Total Cost 10% -- set it in the Margin Report.";
+      }
+    })()
+  );
 
   // charge_order() doesn't take a delivery time -- stamp it on afterwards so
   // the RPC signature stays put. Parse it here so a malformed value can't

@@ -37,7 +37,7 @@ import {
 } from "@/lib/supabase/queries";
 import { PAYMENT_METHOD_LABELS, type PaymentMethod } from "@/lib/paymentMethods";
 import { computeGrossMargin } from "@/lib/cogs";
-import { addExpenseAction, getWasteItemsAction, updateExpenseAction } from "./actions";
+import { addExpenseAction, getWasteItemsAction, setProductAdsExpenseAction, updateExpenseAction } from "./actions";
 import { setMarginSoldAtCostAction, setMarginUnitCostAction, setProductPriceAction } from "../stock/actions";
 import { ppDay, ppHour, ppToday } from "@/lib/phnomPenhTime";
 import { exportAccountancePdf } from "@/lib/exportAccountancePdf";
@@ -561,6 +561,8 @@ export default function AccountanceClient({
   wasteLog,
   previousPeriod,
   stockUnits,
+  productAds,
+  orderDiscountTotal,
 }: {
   brands: Brand[];
   currentBrand: Brand;
@@ -597,6 +599,10 @@ export default function AccountanceClient({
     netProfit: number;
   };
   stockUnits: StockUnits | null;
+  // Expense Ads typed per product for `month` (Month view, COGS tab), by product id.
+  productAds: Record<string, number>;
+  // Order-level discounts in range, taken off the Margin Report's Grand Total.
+  orderDiscountTotal: number;
 }) {
   const router = useRouter();
   const [expenseDesc, setExpenseDesc] = useState("");
@@ -812,6 +818,40 @@ export default function AccountanceClient({
     });
   }, [expenses, expenseSearch, expenseCategoryFilter]);
   const filteredExpenseTotal = filteredExpenses.reduce((sum, e) => sum + e.amount, 0);
+  // Month view only: Expense Ads is typed per product, and GPAD = Gross Profit - Expense Ads.
+  const showAdsColumns = mode === "month";
+  const [adsDrafts, setAdsDrafts] = useState<Record<string, string>>({});
+
+  function saveAdsExpense(r: MarginReportRow, saved: number) {
+    const raw = adsDrafts[r.productId];
+    if (raw === undefined) return;
+    const trimmed = raw.trim();
+    const amount = trimmed === "" ? 0 : parseFloat(trimmed);
+    const clearDraft = () =>
+      setAdsDrafts((prev) => {
+        const next = { ...prev };
+        delete next[r.productId];
+        return next;
+      });
+    if (Number.isNaN(amount) || amount < 0) {
+      setError("Expense Ads cannot be negative");
+      return;
+    }
+    setError(null);
+    if (amount === saved) {
+      clearDraft();
+      return;
+    }
+    startTransition(async () => {
+      try {
+        await setProductAdsExpenseAction({ productIds: r.productIds, month, amount });
+        router.refresh();
+        clearDraft();
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Failed to save");
+      }
+    });
+  }
   const expenseCategories = useMemo(
     () =>
       Array.from(
@@ -843,9 +883,11 @@ export default function AccountanceClient({
     let cogs = 0;
     let costedRevenue = 0;
     let unknownCost = 0;
+    let ads = 0;
     for (const r of filteredMarginReport) {
       units += r.unitsSold;
       revenue += r.revenue;
+      for (const id of r.productIds) ads += productAds[id] ?? 0;
       sellingPrice += r.sellingPrice;
       const rowUnitCost = r.unitCost ?? r.suggestedCost;
       const rowCogs = r.totalCogs ?? (rowUnitCost === null ? null : rowUnitCost * r.unitsSold);
@@ -858,8 +900,20 @@ export default function AccountanceClient({
       }
     }
     const { grossProfit, grossMarginPct } = computeGrossMargin(costedRevenue, cogs);
-    return { units, revenue, unitCost, sellingPrice, cogs, grossProfit, grossMarginPct, unknownCost };
-  }, [filteredMarginReport]);
+    return { units, revenue, unitCost, sellingPrice, cogs, grossProfit, grossMarginPct, unknownCost, ads, costedRevenue };
+  }, [filteredMarginReport, productAds]);
+  // Grand Total: the product rows' revenue less the order-level discounts (what customers paid).
+  // Only for the whole report -- a search/category filter can't say which share of a discount is its own.
+  const showGrandTotal = orderDiscountTotal > 0 && !marginSearch.trim() && !marginCategoryFilter;
+  const grandGrossProfit =
+    marginTotals.grossProfit === null ? null : marginTotals.grossProfit - orderDiscountTotal;
+  // Month view: margin % is GPAD (gross profit after ads) over revenue.
+  const grandMarginPct = showAdsColumns
+    ? computeGrossMargin(marginTotals.costedRevenue - orderDiscountTotal, marginTotals.cogs + marginTotals.ads).grossMarginPct
+    : computeGrossMargin(marginTotals.costedRevenue - orderDiscountTotal, marginTotals.cogs).grossMarginPct;
+  const totalMarginPct = showAdsColumns
+    ? computeGrossMargin(marginTotals.costedRevenue, marginTotals.cogs + marginTotals.ads).grossMarginPct
+    : marginTotals.grossMarginPct;
   const marginCategories = useMemo(
     () =>
       Array.from(new Set(marginReport.map((r) => r.categoryName).filter((c): c is string => Boolean(c)))).sort(),
@@ -2073,6 +2127,12 @@ export default function AccountanceClient({
                       <th className="py-2 pr-3 text-right font-medium">Selling Price</th>
                       <th className="py-2 pr-3 text-right font-medium">Total COGS</th>
                       <th className="py-2 pr-3 text-right font-medium">Gross Profit</th>
+                      {showAdsColumns && (
+                        <>
+                          <th className="py-2 pr-3 text-right font-medium">Expense Ads</th>
+                          <th className="py-2 pr-3 text-right font-medium">GPAD</th>
+                        </>
+                      )}
                       <th className="py-2 text-right font-medium">Gross Margin %</th>
                     </tr>
                   </thead>
@@ -2096,6 +2156,13 @@ export default function AccountanceClient({
                       const effectiveMargin = computeGrossMargin(r.revenue, effectiveTotalCogs);
                       const effectiveGrossProfit = r.grossProfit ?? effectiveMargin.grossProfit;
                       const effectiveGrossMarginPct = r.grossMarginPct ?? effectiveMargin.grossMarginPct;
+                      const rowAds = r.productIds.reduce((sum, id) => sum + (productAds[id] ?? 0), 0);
+                      const adsValue = adsDrafts[r.productId] ?? (rowAds > 0 ? String(rowAds) : "");
+                      // Month view: the margin % comes from GPAD (gross profit after ads) over revenue.
+                      const shownMarginPct =
+                        showAdsColumns && effectiveGrossProfit !== null && r.revenue > 0
+                          ? ((effectiveGrossProfit - rowAds) / r.revenue) * 100
+                          : effectiveGrossMarginPct;
                       return (
                       <tr
                         key={r.productId}
@@ -2339,32 +2406,65 @@ export default function AccountanceClient({
                         <td className="py-2 pr-3 text-right">
                           {effectiveGrossProfit === null ? "—" : formatMoney(effectiveGrossProfit)}
                         </td>
+                        {showAdsColumns && (
+                          <>
+                            <td className="py-2 pr-3 text-right">
+                              <div className="flex items-center justify-end gap-1">
+                                <span className="text-zinc-400">$</span>
+                                <input
+                                  type="number"
+                                  min={0}
+                                  step="0.01"
+                                  placeholder="0"
+                                  aria-label={`Expense Ads for ${r.name}`}
+                                  value={adsValue}
+                                  disabled={isPending}
+                                  onChange={(e) => setAdsDrafts((prev) => ({ ...prev, [r.productId]: e.target.value }))}
+                                  onBlur={() => saveAdsExpense(r, rowAds)}
+                                  onKeyDown={(e) => {
+                                    if (e.key === "Enter") e.currentTarget.blur();
+                                    if (e.key === "Escape")
+                                      setAdsDrafts((prev) => {
+                                        const next = { ...prev };
+                                        delete next[r.productId];
+                                        return next;
+                                      });
+                                  }}
+                                  className="w-20 rounded border border-black/[.15] bg-transparent px-2 py-1 text-right text-sm dark:border-white/[.2]"
+                                />
+                              </div>
+                            </td>
+                            <td className="py-2 pr-3 text-right">
+                              {effectiveGrossProfit === null ? "—" : formatMoney(effectiveGrossProfit - rowAds)}
+                            </td>
+                          </>
+                        )}
                         <td className="py-2 text-right">
-                          {effectiveGrossMarginPct === null ? (
+                          {shownMarginPct === null ? (
                             "—"
                           ) : (
                             <div className="flex items-center justify-end gap-2">
                               <span
                                 className={`font-medium ${
-                                  effectiveGrossMarginPct < 0
+                                  shownMarginPct < 0
                                     ? "text-red-600 dark:text-red-400"
-                                    : effectiveGrossMarginPct < 20
+                                    : shownMarginPct < 20
                                       ? "text-amber-600 dark:text-amber-400"
                                       : "text-green-600 dark:text-green-400"
                                 }`}
                               >
-                                {effectiveGrossMarginPct.toFixed(1)}%
+                                {shownMarginPct.toFixed(1)}%
                               </span>
                               <div className="h-1.5 w-14 shrink-0 overflow-hidden rounded-full bg-black/[.08] dark:bg-white/[.1]">
                                 <div
                                   className={`h-full rounded-full ${
-                                    effectiveGrossMarginPct < 0
+                                    shownMarginPct < 0
                                       ? "bg-red-500"
-                                      : effectiveGrossMarginPct < 20
+                                      : shownMarginPct < 20
                                         ? "bg-amber-500"
                                         : "bg-green-500"
                                   }`}
-                                  style={{ width: `${Math.max(0, Math.min(100, effectiveGrossMarginPct))}%` }}
+                                  style={{ width: `${Math.max(0, Math.min(100, shownMarginPct))}%` }}
                                 />
                               </div>
                             </div>
@@ -2375,7 +2475,7 @@ export default function AccountanceClient({
                     })}
                     {filteredMarginReport.length === 0 && (
                       <tr>
-                        <td colSpan={8} className="py-10 text-center text-sm text-zinc-500">
+                        <td colSpan={showAdsColumns ? 10 : 8} className="py-10 text-center text-sm text-zinc-500">
                           <div className="flex flex-col items-center gap-2">
                             <SearchX className="size-6 text-zinc-400" />
                             {marginReport.length === 0 ? (
@@ -2415,10 +2515,52 @@ export default function AccountanceClient({
                         <td className="py-3 pr-3 text-right">
                           {marginTotals.grossProfit === null ? "—" : formatMoney(marginTotals.grossProfit)}
                         </td>
+                        {showAdsColumns && (
+                          <>
+                            <td className="py-3 pr-3 text-right">{formatMoney(marginTotals.ads)}</td>
+                            <td className="py-3 pr-3 text-right">
+                              {marginTotals.grossProfit === null ? "—" : formatMoney(marginTotals.grossProfit - marginTotals.ads)}
+                            </td>
+                          </>
+                        )}
                         <td className="py-3 text-right">
-                          {marginTotals.grossMarginPct === null ? "—" : `${marginTotals.grossMarginPct.toFixed(1)}%`}
+                          {totalMarginPct === null ? "—" : `${totalMarginPct.toFixed(1)}%`}
                         </td>
                       </tr>
+                      {showGrandTotal && (
+                        <>
+                          <tr className="text-zinc-500">
+                            <td className="py-2 pr-3">Order discount</td>
+                            <td />
+                            <td className="py-2 pr-3 text-right">-{formatMoney(orderDiscountTotal)}</td>
+                            <td colSpan={showAdsColumns ? 7 : 5} />
+                          </tr>
+                          <tr className="border-t border-black/[.12] font-semibold dark:border-white/[.2]">
+                            <td className="py-3 pr-3">Grand Total</td>
+                            <td />
+                            <td className="py-3 pr-3 text-right">
+                              {formatMoney(marginTotals.revenue - orderDiscountTotal)}
+                            </td>
+                            <td />
+                            <td />
+                            <td className="py-3 pr-3 text-right">{formatMoney(marginTotals.cogs)}</td>
+                            <td className="py-3 pr-3 text-right">
+                              {grandGrossProfit === null ? "—" : formatMoney(grandGrossProfit)}
+                            </td>
+                            {showAdsColumns && (
+                              <>
+                                <td className="py-3 pr-3 text-right">{formatMoney(marginTotals.ads)}</td>
+                                <td className="py-3 pr-3 text-right">
+                                  {grandGrossProfit === null ? "—" : formatMoney(grandGrossProfit - marginTotals.ads)}
+                                </td>
+                              </>
+                            )}
+                            <td className="py-3 text-right">
+                              {grandMarginPct === null ? "—" : `${grandMarginPct.toFixed(1)}%`}
+                            </td>
+                          </tr>
+                        </>
+                      )}
                     </tfoot>
                   )}
                 </table>
