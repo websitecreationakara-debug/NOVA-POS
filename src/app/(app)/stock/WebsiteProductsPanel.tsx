@@ -1152,6 +1152,13 @@ export default function WebsiteProductsPanel({
   // addon only worked after switching to the Addons chip.
   const showAddonMatches =
     !categoryFilter && !!q && !outOfStockOnly && !lowStockOnly && !recentOnly && filteredAddons.length > 0;
+  // Same for POS-only products: they aren't website products, so a search on the
+  // "All" chip lists the matching ones too (and the POS only chip honors the search).
+  const filteredPosOnly = q
+    ? posOnlyProducts.filter((p) => p.name.toLowerCase().includes(q) || (p.name_km ?? "").toLowerCase().includes(q))
+    : posOnlyProducts;
+  const showPosOnlyMatches =
+    !categoryFilter && !!q && !outOfStockOnly && !lowStockOnly && !recentOnly && filteredPosOnly.length > 0;
   // Linked POS product's cost_price per addon -- the Total box's fallback -- and
   // its Khmer name / scale, for the addon Edit box.
   const addonFallbackCosts: Record<string, number> = {};
@@ -1685,7 +1692,7 @@ export default function WebsiteProductsPanel({
             </p>
             <PosOnlyProductsTable
               brandId={brandId}
-              products={posOnlyProducts}
+              products={filteredPosOnly}
               purchaseCosts={purchaseCosts}
               imageChoices={imageChoices}
               stockChoices={stockChoices}
@@ -2254,7 +2261,7 @@ export default function WebsiteProductsPanel({
                   </tr>
                 );
               })}
-              {filtered.length === 0 && !(showAddonMatches) && (
+              {filtered.length === 0 && !showAddonMatches && !showPosOnlyMatches && (
                 <tr>
                   <td colSpan={13} className="px-6 py-8 text-center text-sm text-zinc-500">
                     {q ? "No products match your search." : "No website products yet."}
@@ -2274,6 +2281,19 @@ export default function WebsiteProductsPanel({
             linkedDetails={addonLinkedDetails}
             onPreviewImage={setPreviewImage}
           />
+          </div>
+        )}
+        {showPosOnlyMatches && (
+          <div className="space-y-2 border-t border-black/[.08] px-3 py-3 sm:px-6 dark:border-white/[.145]">
+            <p className="text-xs text-muted-foreground">POS only</p>
+            <PosOnlyProductsTable
+              brandId={brandId}
+              products={filteredPosOnly}
+              purchaseCosts={purchaseCosts}
+              imageChoices={imageChoices}
+              stockChoices={stockChoices}
+              catalogId={catalogId}
+            />
           </div>
         )}
         </>

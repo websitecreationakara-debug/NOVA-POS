@@ -133,15 +133,10 @@ export function unitsSoldByCost(lines: MarginLine[]): { unitCost: number; units:
   return [...unitsByCost].map(([cost, units]) => ({ unitCost: cost, units: round2(units) }));
 }
 
-// `currentOnly` makes Unit Cost exactly currentCost (null when there is none): no
-// fallback to what the sales were recorded at. The
-// Margin Report passes it for a product linked to a Stock listing, whose Unit Cost
-// is Stock's Total Cost 10% (or a cost typed into the report, which becomes the Unit
-// Cost when every sold line carries it) and nothing else -- so when that cost exists,
-// every sold line is costed at it too (a sale recorded at Stock's Total no longer shows
-// "sold at" a different cost), except a line whose cost was typed into the report,
-// which keeps that typed cost; with none, there is no Unit Cost and no COGS either
-// (the recorded sale costs are not shown), so the row reads "Add cost price".
+// `currentOnly` is passed for a product linked to a Stock listing. Its Unit Cost is Stock's current Total
+// Cost 10% (or a cost typed into the report), but every sold line keeps the cost it was sold with; Stock's
+// cost is only the fallback for a line with no recorded cost. With no Stock cost at all there is no Unit
+// Cost and no COGS either, so the row reads "Add cost price".
 export function summarizeMarginLines(lines: MarginLine[], currentCost: number | null = null, currentOnly = false) {
   // A cost typed into the report (on every sold line, all at one cost) is shown as
   // the Unit Cost instead of Stock's current cost -- that edit never touches Stock.
@@ -157,7 +152,7 @@ export function summarizeMarginLines(lines: MarginLine[], currentCost: number | 
     // read day by day or all at once).
     const stockCost = currentCost;
     lines = lines.map((l) => {
-      const cost = l.costOverridden && l.unitCost !== null ? l.unitCost : stockCost;
+      const cost = linkedLineCost(l, stockCost);
       return { ...l, unitCost: cost, cogs: cost === null ? null : round2(cost * l.quantity) };
     });
   }
@@ -170,6 +165,8 @@ export function summarizeMarginLines(lines: MarginLine[], currentCost: number | 
   const unitCost = currentOnly
     ? currentCost
     : (typedCost ??
+      // From the cutoff on, the cost of the most recent sale (newest first), not the current cost.
+      unitsSoldByCost(lines.filter(usesSaleTimeCost))[0]?.unitCost ??
       currentCost ??
       (totalCogs === null ? null : (soldAt[0]?.unitCost ?? round2(totalCogs / unitsSold))));
   const anyDifferent = unitCost !== null && soldAt.some((s) => s.unitCost !== round2(unitCost));
@@ -184,6 +181,28 @@ export function summarizeMarginLines(lines: MarginLine[], currentCost: number | 
     grossMarginPct,
     hasUnknownCost,
   };
+}
+
+// Costing changed on this day (Phnom Penh), the first with the new process: from it on, a sale keeps the
+// cost it was recorded with (a linked product's is its Stock Total Cost 10% at the time of the order);
+// before it, the old process stands -- a linked product's sales are all costed at its current Total Cost
+// 10%, and an unlinked product's Unit Cost is its current cost.
+export const SALE_TIME_COST_FROM = "2026-11-01";
+
+export function usesSaleTimeCost(l: MarginLine): boolean {
+  return l.paidAt === null || ppDay(l.paidAt) >= SALE_TIME_COST_FROM;
+}
+
+// A sold line of a product linked to a Stock listing. From SALE_TIME_COST_FROM it keeps the cost it was sold
+// with (a cost typed into the report included), so changing Stock's cost later doesn't re-cost it; Stock's
+// current cost is only the fallback for a line with no recorded cost. Earlier lines are costed at Stock's
+// current cost (the old process), except a cost typed into the report. With no current cost at all there is
+// no COGS (the row reads "Add cost price").
+function linkedLineCost(l: MarginLine, stockCost: number | null): number | null {
+  const typed = l.costOverridden && l.unitCost !== null ? l.unitCost : null;
+  if (!usesSaleTimeCost(l)) return typed ?? stockCost;
+  if (stockCost === null) return typed;
+  return l.unitCost ?? stockCost;
 }
 
 // One product's sold lines costed the way summarizeMarginLines costs them -- a product linked to a Stock listing
@@ -201,7 +220,7 @@ export function resolveMarginLines(
   const stockCost = typedCost ?? currentCost;
   return {
     lines: lines.map((l) => {
-      const cost = l.costOverridden && l.unitCost !== null ? l.unitCost : stockCost;
+      const cost = linkedLineCost(l, stockCost);
       return { ...l, unitCost: cost, cogs: cost === null ? null : round2(cost * l.quantity) };
     }),
     unitCost: stockCost,

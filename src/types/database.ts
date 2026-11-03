@@ -394,6 +394,14 @@ export type Expense = {
   created_at: string;
 };
 
+// Expense Ads typed against a product for one month in the Margin Report (migration 0102).
+export type ProductAdsExpense = {
+  product_id: string;
+  month: string;
+  amount: number;
+  updated_at: string;
+};
+
 export type CashReconciliation = {
   id: string;
   brand_id: string;
@@ -813,6 +821,7 @@ export type Database = {
         Expense,
         Omit<Expense, "id" | "created_at"> & Partial<Pick<Expense, "id" | "expense_date">>
       >;
+      product_ads_expenses: Table<ProductAdsExpense, Omit<ProductAdsExpense, "updated_at"> & Partial<Pick<ProductAdsExpense, "updated_at">>>;
       cash_reconciliations: Table<
         CashReconciliation,
         Omit<CashReconciliation, "id" | "created_at"> & Partial<Pick<CashReconciliation, "id">>
