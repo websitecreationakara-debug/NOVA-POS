@@ -834,7 +834,7 @@ export default function AccountanceClient({
         return next;
       });
     if (Number.isNaN(amount) || amount < 0) {
-      setError("Expense Ads cannot be negative");
+      setError("Ads Spend cannot be negative");
       return;
     }
     setError(null);
@@ -2124,7 +2124,7 @@ export default function AccountanceClient({
                       <th className="py-2 pr-3 text-right font-medium">Gross Profit</th>
                       {showAdsColumns && (
                         <>
-                          <th className="py-2 pr-3 text-right font-medium">Expense Ads</th>
+                          <th className="py-2 pr-3 text-right font-medium">Ads Spend</th>
                           <th className="py-2 pr-3 text-right font-medium">GPAD</th>
                         </>
                       )}
@@ -2411,7 +2411,7 @@ export default function AccountanceClient({
                                   min={0}
                                   step="0.01"
                                   placeholder="0"
-                                  aria-label={`Expense Ads for ${r.name}`}
+                                  aria-label={`Ads Spend for ${r.name}`}
                                   value={adsValue}
                                   disabled={isPending}
                                   onChange={(e) => setAdsDrafts((prev) => ({ ...prev, [r.productId]: e.target.value }))}
