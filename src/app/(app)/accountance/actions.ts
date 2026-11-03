@@ -75,7 +75,7 @@ export async function setProductAdsExpenseAction(input: {
   const { productIds, month, amount } = input;
   if (productIds.length === 0) throw new Error("No product");
   if (!/^\d{4}-\d{2}$/.test(month)) throw new Error("Invalid month");
-  if (Number.isNaN(amount) || amount < 0) throw new Error("Expense Ads cannot be negative");
+  if (Number.isNaN(amount) || amount < 0) throw new Error("Ads Spend cannot be negative");
 
   const [primary, ...others] = productIds;
   if (others.length > 0) {
