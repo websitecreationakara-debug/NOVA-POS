@@ -1859,14 +1859,9 @@ export default function AccountanceClient({
                 <div className="mt-4 space-y-2 text-sm">
                   <div className="flex justify-between">
                     <span className="text-zinc-500">Gross sales</span>
-                    <span className="font-medium tabular-nums">{formatMoney(summary.total)}</span>
+                    {/* Delivery fees aren't shown as a line: gross sales here are without them. */}
+                    <span className="font-medium tabular-nums">{formatMoney(summary.total - deliveryFeeTotal)}</span>
                   </div>
-                  {deliveryFeeTotal > 0 && (
-                    <div className="flex justify-between">
-                      <span className="text-zinc-500">Delivery fees</span>
-                      <span className="font-medium tabular-nums">-{formatMoney(deliveryFeeTotal)}</span>
-                    </div>
-                  )}
                   <div className="flex justify-between">
                     <span className="text-zinc-500">
                       Cost of goods sold
