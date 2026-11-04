@@ -322,6 +322,8 @@ export type Order = {
   payment_method: PaymentMethod | null;
   payment_reference: string | null;
   created_by: string | null;
+  // Who last edited the invoice (migration 0105).
+  updated_by?: string | null;
   created_at: string;
   paid_at: string | null;
   // When a Pre-Order was moved to Delivered / Complete / Cancelled (migration 0055).

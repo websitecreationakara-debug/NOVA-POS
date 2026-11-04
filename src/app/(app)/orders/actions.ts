@@ -486,6 +486,13 @@ export async function updateOrderAction(
     if (noteErr && noteErr.code !== "42703" && noteErr.code !== "PGRST204") throw noteErr;
   }
 
+  // Who saved this edit (migration 0105); same undefined-column tolerance as note above.
+  const editor = await getSessionUser();
+  if (editor) {
+    const { error: byErr } = await supabaseAdmin.from("orders").update({ updated_by: editor.id }).eq("id", orderId);
+    if (byErr && byErr.code !== "42703" && byErr.code !== "PGRST204") throw byErr;
+  }
+
   // order_source lives on migration 0037; same undefined-column tolerance as
   // note above.
   if (input.orderSource !== undefined) {
