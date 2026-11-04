@@ -277,10 +277,15 @@ export async function updateOrderAction(
 
   const directCostProductIds = productIds.filter((id) => !recipesByProduct.has(id));
   // The cost already recorded on this order for a product, if any.
-  const recordedCostByProduct = new Map<string, number>();
+  // A cost typed into the Margin Report (cost_source "report") is kept too, and stays marked as typed.
+  const recordedCostByProduct = new Map<string, { cost: number; source: "direct" | "report" }>();
   for (const row of existing ?? []) {
-    if (row.cost_source === "direct" && row.unit_cost !== null && !recordedCostByProduct.has(row.product_id)) {
-      recordedCostByProduct.set(row.product_id, Number(row.unit_cost));
+    if (
+      (row.cost_source === "direct" || row.cost_source === "report") &&
+      row.unit_cost !== null &&
+      !recordedCostByProduct.has(row.product_id)
+    ) {
+      recordedCostByProduct.set(row.product_id, { cost: Number(row.unit_cost), source: row.cost_source });
     }
   }
   const directCostByProduct = new Map<string, number | null>();
@@ -288,7 +293,7 @@ export async function updateOrderAction(
     directCostProductIds.map(async (id) => {
       directCostByProduct.set(
         id,
-        recordedCostByProduct.get(id) ?? (await getSaleUnitCost(id).catch(() => null))
+        recordedCostByProduct.get(id)?.cost ?? (await getSaleUnitCost(id).catch(() => null))
       );
     })
   );
@@ -317,7 +322,7 @@ export async function updateOrderAction(
       ...it,
       unitCost,
       cogs: computeLineCogs(unitCost, it.quantity),
-      costSource: "direct" as const,
+      costSource: (recordedCostByProduct.get(it.productId)?.source ?? "direct") as "direct" | "report",
       ingredients: [] as { ingredientProductId: string; quantity: number; unitCost: number | null }[],
     };
   });
