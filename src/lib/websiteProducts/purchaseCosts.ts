@@ -148,7 +148,21 @@ export async function getEffectiveProductCost(productId: string): Promise<number
 export async function getSaleUnitCost(productId: string): Promise<number | null> {
   const cost10 = (await getLinkedStockCost10pcts([productId]).catch(() => new Map<string, number | null>())).get(productId);
   if (cost10 !== undefined && cost10 !== null) return cost10;
-  return getEffectiveProductCost(productId);
+  const effective = await getEffectiveProductCost(productId);
+  if (effective !== null) return effective;
+  // Nothing in Stock gives a cost: use the one last typed into the Margin Report (migration 0104).
+  const { data } = await supabaseAdmin
+    .from("order_items")
+    .select("unit_cost, orders!inner(paid_at)")
+    .eq("product_id", productId)
+    .eq("cost_source", "report")
+    .not("unit_cost", "is", null);
+  let latest: { paidAt: string; cost: number } | null = null;
+  for (const row of (data ?? []) as unknown as { unit_cost: number; orders: { paid_at: string | null } }[]) {
+    const paidAt = row.orders?.paid_at ?? "";
+    if (!latest || paidAt > latest.paidAt) latest = { paidAt, cost: Number(row.unit_cost) };
+  }
+  return latest?.cost ?? null;
 }
 
 // getEffectiveProductCost for many products at once -- the same rules, but a
