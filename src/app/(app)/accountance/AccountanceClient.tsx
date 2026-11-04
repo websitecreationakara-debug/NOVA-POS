@@ -1859,8 +1859,8 @@ export default function AccountanceClient({
                 <div className="mt-4 space-y-2 text-sm">
                   <div className="flex justify-between">
                     <span className="text-zinc-500">Gross sales</span>
-                    {/* Delivery fees aren't shown as a line: gross sales here are without them. */}
-                    <span className="font-medium tabular-nums">{formatMoney(summary.total - deliveryFeeTotal)}</span>
+                    {/* Same figure as the Total revenue card: the invoice totals, delivery fee included. */}
+                    <span className="font-medium tabular-nums">{formatMoney(summary.total)}</span>
                   </div>
                   <div className="flex justify-between">
                     <span className="text-zinc-500">
