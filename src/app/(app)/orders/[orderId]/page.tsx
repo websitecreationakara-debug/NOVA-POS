@@ -2,6 +2,7 @@ import Link from "next/link";
 import BackLink from "@/components/BackLink";
 import { notFound } from "next/navigation";
 import { getBrands, getInvoice } from "@/lib/supabase/queries";
+import { supabaseAdmin } from "@/lib/supabase/server";
 import OrderStatusControl from "@/components/OrderStatusControl";
 import OrderEditor from "@/components/OrderEditor";
 import InvoiceNumberEditor from "@/components/InvoiceNumberEditor";
@@ -29,6 +30,26 @@ export default async function OrderDetailPage({
   if (!invoice) notFound();
 
   const { order, invoiceNumber, customerAddress, items } = invoice;
+
+  // Who created / last edited the invoice: one name when it is the same person, else both.
+  const staffIds = [...new Set([order.created_by, order.updated_by].filter((id): id is string => !!id))];
+  const { data: staffRows } = staffIds.length
+    ? await supabaseAdmin.from("profiles").select("id, full_name").in("id", staffIds)
+    : { data: [] };
+  const staffName = (id: string | null | undefined) =>
+    id ? ((staffRows ?? []).find((s) => s.id === id)?.full_name ?? "Unknown staff") : null;
+  const createdBy = staffName(order.created_by) ?? (order.channel === "online" ? "Website" : null);
+  const updatedBy = staffName(order.updated_by);
+  const trackLabel =
+    createdBy && updatedBy
+      ? createdBy === updatedBy
+        ? `Created & updated by ${createdBy}`
+        : `Created by ${createdBy} · Updated by ${updatedBy}`
+      : createdBy
+        ? `Created by ${createdBy}`
+        : updatedBy
+          ? `Updated by ${updatedBy}`
+          : null;
 
   const deliveryLabel = order.delivery_at
     ? new Date(order.delivery_at).toLocaleString("en-US", {
@@ -69,6 +90,7 @@ export default async function OrderDetailPage({
             <p className="mt-1 text-sm text-muted-foreground">
               {order.paid_at ? new Date(order.paid_at).toLocaleString("en-US", { timeZone: "Asia/Phnom_Penh" }) : "—"}
             </p>
+            {trackLabel && <p className="mt-0.5 text-xs text-muted-foreground">{trackLabel}</p>}
           </div>
           <OrderStatusControl orderId={order.id} status={order.fulfillment_status} />
         </div>
