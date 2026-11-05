@@ -9,8 +9,9 @@ import {
   ChevronDown,
   ChevronLeft,
   ChevronRight,
-  Coins,
   CreditCard,
+  Eye,
+  EyeOff,
   Info,
   Pencil,
   Package,
@@ -604,6 +605,8 @@ export default function AccountanceClient({
   orderDiscountTotal: number;
 }) {
   const router = useRouter();
+  // Hide / Show toggle for the summary cards at the top.
+  const [showSummary, setShowSummary] = useState(true);
   const [expenseDesc, setExpenseDesc] = useState("");
   const [expenseAmount, setExpenseAmount] = useState("");
   const [expenseCategory, setExpenseCategory] = useState("");
@@ -799,7 +802,7 @@ export default function AccountanceClient({
   // Gross profit = Gross sales - COGS (delivery fees are no longer taken off).
   const grossProfit = summary.total - cogsSummary.totalCogs;
   const netProfit = grossProfit - expenseTotal - wastePromoTotal;
-  // The Gross profit / GP % summary cards use Total revenue - (Total COGS + Other expenses);
+  // The Gross profit / Gross profit % summary cards use Total revenue - (Total COGS + Other expenses);
   // the Profit & Loss breakdown below keeps its own waterfall (`grossProfit` above).
   const cardGrossProfit = summary.total - (cogsSummary.totalCogs + expenseTotal);
   const prevCardGrossProfit =
@@ -1454,7 +1457,20 @@ export default function AccountanceClient({
 
       {/* The summary cards are for the other tabs; COGS & Margin Tracking has its own stock boxes. */}
       {tab !== "cogs" && (
-      <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+      <>
+      <div className="mb-3 flex justify-end">
+        <button
+          type="button"
+          onClick={() => setShowSummary((v) => !v)}
+          aria-expanded={showSummary}
+          className="flex items-center gap-1.5 rounded-full border border-black/[.15] px-3 py-1 text-xs font-medium text-zinc-600 hover:text-foreground dark:border-white/[.2] dark:text-zinc-400"
+        >
+          {showSummary ? <EyeOff className="size-3.5" /> : <Eye className="size-3.5" />}
+          {showSummary ? "Hide summary" : "Show summary"}
+        </button>
+      </div>
+      {showSummary && (
+      <div className="grid grid-cols-2 gap-4 lg:grid-cols-3">
         <div className="rounded-lg border border-black/[.08] bg-card p-4 shadow-sm dark:border-white/[.145]">
           <div className="flex items-center justify-between gap-2 text-xs font-medium text-zinc-600 dark:text-zinc-400">
             <span className="flex items-center gap-1.5">
@@ -1476,21 +1492,14 @@ export default function AccountanceClient({
           <div className="mt-1 text-xl font-semibold">{formatMoney(summary.nonCashTotal)}</div>
         </div>
         <div className="rounded-lg border border-black/[.08] bg-card p-4 shadow-sm dark:border-white/[.145]">
-          <div className="flex items-center justify-between gap-1 text-xs font-medium text-zinc-600 dark:text-zinc-400">
-            <span className="flex items-center gap-1 whitespace-nowrap">
-              <Coins className="size-3.5 shrink-0" />
-              Cash + KHQR
+          <div className="flex items-center justify-between gap-2 text-xs font-medium text-zinc-600 dark:text-zinc-400">
+            <span className="flex items-center gap-1.5">
+              <TrendingUp className="size-3.5" />
+              Total revenue
             </span>
-            <TrendChip
-              pct={pctChange(
-                summary.cashTotal + summary.nonCashTotal,
-                previousPeriod.cashTotal + previousPeriod.nonCashTotal
-              )}
-            />
+            <TrendChip pct={pctChange(summary.total, previousPeriod.total)} />
           </div>
-          <div className="mt-1 text-xl font-semibold">
-            {formatMoney(summary.cashTotal + summary.nonCashTotal)}
-          </div>
+          <div className="mt-1 text-xl font-semibold">{formatMoney(summary.total)}</div>
         </div>
         <div className="rounded-lg border border-black/[.08] bg-card p-4 shadow-sm dark:border-white/[.145]">
           <div className="flex items-center justify-between gap-2 text-xs font-medium text-zinc-600 dark:text-zinc-400">
@@ -1512,17 +1521,7 @@ export default function AccountanceClient({
           </div>
           <div className="mt-1 text-xl font-semibold">{formatMoney(expenseTotal)}</div>
         </div>
-        <div className="rounded-lg border border-black/[.08] bg-card p-4 shadow-sm dark:border-white/[.145]">
-          <div className="flex items-center justify-between gap-2 text-xs font-medium text-zinc-600 dark:text-zinc-400">
-            <span className="flex items-center gap-1.5">
-              <TrendingUp className="size-3.5" />
-              Total revenue
-            </span>
-            <TrendChip pct={pctChange(summary.total, previousPeriod.total)} />
-          </div>
-          <div className="mt-1 text-xl font-semibold">{formatMoney(summary.total)}</div>
-        </div>
-        <div className="rounded-lg border border-black/[.08] bg-card p-4 shadow-sm dark:border-white/[.145]">
+        <div className="lg:col-start-1 rounded-lg border border-black/[.08] bg-card p-4 shadow-sm dark:border-white/[.145]">
           <div className="flex items-center justify-between gap-2 text-xs font-medium text-zinc-600 dark:text-zinc-400">
             <span className="flex items-center gap-1.5">
               <BarChart3 className="size-3.5" />
@@ -1541,7 +1540,7 @@ export default function AccountanceClient({
           <div className="flex items-center justify-between gap-2 text-xs font-medium text-zinc-600 dark:text-zinc-400">
             <span className="flex items-center gap-1.5">
               <Percent className="size-3.5" />
-              GP
+              Gross profit %
             </span>
           </div>
           {/* Gross profit as a share of Total revenue. */}
@@ -1552,6 +1551,8 @@ export default function AccountanceClient({
           </div>
         </div>
       </div>
+      )}
+      </>
       )}
 
       {error && <p className="mt-4 text-sm text-red-500">{error}</p>}

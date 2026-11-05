@@ -151,9 +151,9 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Invalid amount" }, { status: 400 });
   }
 
-  // Absent / null / "" means "method unknown" and is stored as NULL; a
-  // non-empty value that isn't one of ours used to be silently dropped to
-  // NULL too, leaving a "paid" order with no method -- reject it instead.
+  // Absent / null / "" now defaults to KHQR (below); a non-empty value that
+  // isn't one of ours used to be silently dropped to NULL, leaving a "paid"
+  // order with no method -- reject it instead.
   const rawPaymentMethod = body.paymentMethod;
   if (
     rawPaymentMethod !== undefined &&
@@ -163,7 +163,9 @@ export async function POST(request: NextRequest) {
   ) {
     return NextResponse.json({ error: "Invalid paymentMethod" }, { status: 400 });
   }
-  const paymentMethod = rawPaymentMethod ? (rawPaymentMethod as PaymentMethod) : null;
+  // A website order that doesn't say how it was paid is a KHQR payment (the storefront's checkout),
+  // so it's saved as KHQR instead of NULL -- which Accountance would otherwise count as cash.
+  const paymentMethod: PaymentMethod = rawPaymentMethod ? (rawPaymentMethod as PaymentMethod) : "khqr";
 
   let deliveryAt: string | null = null;
   if (typeof body.deliveryAt === "string" && body.deliveryAt.trim()) {
