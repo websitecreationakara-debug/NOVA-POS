@@ -807,6 +807,8 @@ export default function AccountanceClient({
   const cardGrossProfit = summary.total - (cogsSummary.totalCogs + expenseTotal);
   const prevCardGrossProfit =
     previousPeriod.total - (previousPeriod.cogsTotal + previousPeriod.expenseTotal);
+  const totalCost = cogsSummary.totalCogs + expenseTotal;
+  const prevTotalCost = previousPeriod.cogsTotal + previousPeriod.expenseTotal;
   const netMarginPct = summary.total === 0 ? null : (cardGrossProfit / summary.total) * 100;
   // Flags the Waste card as "high" when waste cost eats more than 5% of COGS.
   const wasteRatio = cogsSummary.totalCogs > 0 ? cogsSummary.wasteCost / cogsSummary.totalCogs : 0;
@@ -1474,12 +1476,12 @@ export default function AccountanceClient({
         <div className="rounded-lg border border-black/[.08] bg-card p-4 shadow-sm dark:border-white/[.145]">
           <div className="flex items-center justify-between gap-2 text-xs font-medium text-zinc-600 dark:text-zinc-400">
             <span className="flex items-center gap-1.5">
-              <Banknote className="size-3.5" />
-              Cash
+              <TrendingUp className="size-3.5" />
+              Total revenue
             </span>
-            <TrendChip pct={pctChange(summary.cashTotal, previousPeriod.cashTotal)} />
+            <TrendChip pct={pctChange(summary.total, previousPeriod.total)} />
           </div>
-          <div className="mt-1 text-xl font-semibold">{formatMoney(summary.cashTotal)}</div>
+          <div className="mt-1 text-xl font-semibold">{formatMoney(summary.total)}</div>
         </div>
         <div className="rounded-lg border border-black/[.08] bg-card p-4 shadow-sm dark:border-white/[.145]">
           <div className="flex items-center justify-between gap-2 text-xs font-medium text-zinc-600 dark:text-zinc-400">
@@ -1494,22 +1496,23 @@ export default function AccountanceClient({
         <div className="rounded-lg border border-black/[.08] bg-card p-4 shadow-sm dark:border-white/[.145]">
           <div className="flex items-center justify-between gap-2 text-xs font-medium text-zinc-600 dark:text-zinc-400">
             <span className="flex items-center gap-1.5">
-              <TrendingUp className="size-3.5" />
-              Total revenue
+              <Banknote className="size-3.5" />
+              Cash
             </span>
-            <TrendChip pct={pctChange(summary.total, previousPeriod.total)} />
+            <TrendChip pct={pctChange(summary.cashTotal, previousPeriod.cashTotal)} />
           </div>
-          <div className="mt-1 text-xl font-semibold">{formatMoney(summary.total)}</div>
+          <div className="mt-1 text-xl font-semibold">{formatMoney(summary.cashTotal)}</div>
         </div>
         <div className="rounded-lg border border-black/[.08] bg-card p-4 shadow-sm dark:border-white/[.145]">
           <div className="flex items-center justify-between gap-2 text-xs font-medium text-zinc-600 dark:text-zinc-400">
             <span className="flex items-center gap-1.5">
-              <Package className="size-3.5" />
-              Total COGS
+              <Receipt className="size-3.5" />
+              Total expenses
             </span>
-            <TrendChip pct={pctChange(cogsSummary.totalCogs, previousPeriod.cogsTotal)} higherIsBetter={false} />
+            <TrendChip pct={pctChange(totalCost, prevTotalCost)} higherIsBetter={false} />
           </div>
-          <div className="mt-1 text-xl font-semibold">{formatMoney(cogsSummary.totalCogs)}</div>
+          {/* Total COGS + Other expenses (the two cards to its left). */}
+          <div className="mt-1 text-xl font-semibold">{formatMoney(totalCost)}</div>
         </div>
         <div className="rounded-lg border border-black/[.08] bg-card p-4 shadow-sm dark:border-white/[.145]">
           <div className="flex items-center justify-between gap-2 text-xs font-medium text-zinc-600 dark:text-zinc-400">
@@ -1520,6 +1523,16 @@ export default function AccountanceClient({
             <TrendChip pct={pctChange(expenseTotal, previousPeriod.expenseTotal)} higherIsBetter={false} />
           </div>
           <div className="mt-1 text-xl font-semibold">{formatMoney(expenseTotal)}</div>
+        </div>
+        <div className="rounded-lg border border-black/[.08] bg-card p-4 shadow-sm dark:border-white/[.145]">
+          <div className="flex items-center justify-between gap-2 text-xs font-medium text-zinc-600 dark:text-zinc-400">
+            <span className="flex items-center gap-1.5">
+              <Package className="size-3.5" />
+              Total COGS
+            </span>
+            <TrendChip pct={pctChange(cogsSummary.totalCogs, previousPeriod.cogsTotal)} higherIsBetter={false} />
+          </div>
+          <div className="mt-1 text-xl font-semibold">{formatMoney(cogsSummary.totalCogs)}</div>
         </div>
         <div className="lg:col-start-1 rounded-lg border border-black/[.08] bg-card p-4 shadow-sm dark:border-white/[.145]">
           <div className="flex items-center justify-between gap-2 text-xs font-medium text-zinc-600 dark:text-zinc-400">
