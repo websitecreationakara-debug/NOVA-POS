@@ -15,7 +15,6 @@ import {
   Pencil,
   Package,
   Percent,
-  PiggyBank,
   Receipt,
   SearchX,
   Trash2,
@@ -797,15 +796,15 @@ export default function AccountanceClient({
   // Gross profit = revenue - COGS; net profit also backs out operating
   // expenses and the cost of waste/spillage/comps -- see the plan's
   // confirmed decision on folding waste/promo into net profit.
-  // Delivery fees are passed on to the courier, not product profit, so they come off too -- the same
-  // gross profit the Dashboard shows (see getDashboardStats).
-  const deliveryFeeTotal = orders.reduce((sum, o) => sum + Number(o.delivery_fee ?? 0), 0);
-  const grossProfit = summary.total - deliveryFeeTotal - cogsSummary.totalCogs;
+  // Gross profit = Gross sales - COGS (delivery fees are no longer taken off).
+  const grossProfit = summary.total - cogsSummary.totalCogs;
   const netProfit = grossProfit - expenseTotal - wastePromoTotal;
-  // The Net profit summary card is simply Total revenue - Total expenses; the
-  // Profit & Loss breakdown below keeps the full COGS/waste waterfall.
-  const cardNetProfit = summary.total - expenseTotal;
-  const netMarginPct = summary.total === 0 ? null : (cardNetProfit / summary.total) * 100;
+  // The Gross profit / GP % summary cards use Total revenue - (Total COGS + Other expenses);
+  // the Profit & Loss breakdown below keeps its own waterfall (`grossProfit` above).
+  const cardGrossProfit = summary.total - (cogsSummary.totalCogs + expenseTotal);
+  const prevCardGrossProfit =
+    previousPeriod.total - (previousPeriod.cogsTotal + previousPeriod.expenseTotal);
+  const netMarginPct = summary.total === 0 ? null : (cardGrossProfit / summary.total) * 100;
   // Flags the Waste card as "high" when waste cost eats more than 5% of COGS.
   const wasteRatio = cogsSummary.totalCogs > 0 ? cogsSummary.wasteCost / cogsSummary.totalCogs : 0;
 
@@ -1506,17 +1505,12 @@ export default function AccountanceClient({
         <div className="rounded-lg border border-black/[.08] bg-card p-4 shadow-sm dark:border-white/[.145]">
           <div className="flex items-center justify-between gap-2 text-xs font-medium text-zinc-600 dark:text-zinc-400">
             <span className="flex items-center gap-1.5">
-              <BarChart3 className="size-3.5" />
-              Gross profit
+              <Wallet className="size-3.5" />
+              Other expenses
             </span>
-            <TrendChip pct={pctChange(grossProfit, previousPeriod.grossProfit)} />
+            <TrendChip pct={pctChange(expenseTotal, previousPeriod.expenseTotal)} higherIsBetter={false} />
           </div>
-          {/* Cash + KHQR minus Total COGS. */}
-          <div
-            className={`mt-1 text-xl font-semibold ${grossProfit < 0 ? "text-rose-600 dark:text-rose-400" : ""}`}
-          >
-            {formatMoney(grossProfit)}
-          </div>
+          <div className="mt-1 text-xl font-semibold">{formatMoney(expenseTotal)}</div>
         </div>
         <div className="rounded-lg border border-black/[.08] bg-card p-4 shadow-sm dark:border-white/[.145]">
           <div className="flex items-center justify-between gap-2 text-xs font-medium text-zinc-600 dark:text-zinc-400">
@@ -1531,39 +1525,26 @@ export default function AccountanceClient({
         <div className="rounded-lg border border-black/[.08] bg-card p-4 shadow-sm dark:border-white/[.145]">
           <div className="flex items-center justify-between gap-2 text-xs font-medium text-zinc-600 dark:text-zinc-400">
             <span className="flex items-center gap-1.5">
-              <Wallet className="size-3.5" />
-              Total expenses
+              <BarChart3 className="size-3.5" />
+              Gross profit
             </span>
-            <TrendChip pct={pctChange(expenseTotal, previousPeriod.expenseTotal)} higherIsBetter={false} />
+            <TrendChip pct={pctChange(cardGrossProfit, prevCardGrossProfit)} />
           </div>
-          <div className="mt-1 text-xl font-semibold">{formatMoney(expenseTotal)}</div>
-        </div>
-        <div className="rounded-lg border border-black/[.08] bg-card p-4 shadow-sm dark:border-white/[.145]">
-          <div className="flex items-center justify-between gap-2 text-xs font-medium text-zinc-600 dark:text-zinc-400">
-            <span className="flex items-center gap-1.5">
-              <PiggyBank className="size-3.5" />
-              {cardNetProfit < 0 ? "Net Loss" : "Net profit"}
-            </span>
-            {/* A "+X%" badge here means the *loss shrank* (or profit grew) vs
-                the previous period -- still worth showing, but never on its
-                own next to a negative number without the red "Net Loss"
-                label above making clear the period itself was a loss. */}
-            <TrendChip pct={pctChange(cardNetProfit, previousPeriod.netProfit)} />
-          </div>
+          {/* Total revenue minus (Total COGS + Other expenses). */}
           <div
-            className={`mt-1 text-xl font-semibold ${cardNetProfit < 0 ? "text-rose-600 dark:text-rose-400" : ""}`}
+            className={`mt-1 text-xl font-semibold ${cardGrossProfit < 0 ? "text-rose-600 dark:text-rose-400" : ""}`}
           >
-            {formatMoney(cardNetProfit)}
+            {formatMoney(cardGrossProfit)}
           </div>
         </div>
         <div className="rounded-lg border border-black/[.08] bg-card p-4 shadow-sm dark:border-white/[.145]">
           <div className="flex items-center justify-between gap-2 text-xs font-medium text-zinc-600 dark:text-zinc-400">
             <span className="flex items-center gap-1.5">
               <Percent className="size-3.5" />
-              Net profit margin
+              GP
             </span>
           </div>
-          {/* Net profit as a share of Total revenue. */}
+          {/* Gross profit as a share of Total revenue. */}
           <div
             className={`mt-1 text-xl font-semibold ${netMarginPct !== null && netMarginPct < 0 ? "text-rose-600 dark:text-rose-400" : ""}`}
           >
