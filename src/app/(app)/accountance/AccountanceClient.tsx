@@ -1517,22 +1517,22 @@ export default function AccountanceClient({
         <div className="rounded-lg border border-black/[.08] bg-card p-4 shadow-sm dark:border-white/[.145]">
           <div className="flex items-center justify-between gap-2 text-xs font-medium text-zinc-600 dark:text-zinc-400">
             <span className="flex items-center gap-1.5">
-              <Wallet className="size-3.5" />
-              Other expenses
-            </span>
-            <TrendChip pct={pctChange(expenseTotal, previousPeriod.expenseTotal)} higherIsBetter={false} />
-          </div>
-          <div className="mt-1 text-xl font-semibold">{formatMoney(expenseTotal)}</div>
-        </div>
-        <div className="rounded-lg border border-black/[.08] bg-card p-4 shadow-sm dark:border-white/[.145]">
-          <div className="flex items-center justify-between gap-2 text-xs font-medium text-zinc-600 dark:text-zinc-400">
-            <span className="flex items-center gap-1.5">
               <Package className="size-3.5" />
               Total COGS
             </span>
             <TrendChip pct={pctChange(cogsSummary.totalCogs, previousPeriod.cogsTotal)} higherIsBetter={false} />
           </div>
           <div className="mt-1 text-xl font-semibold">{formatMoney(cogsSummary.totalCogs)}</div>
+        </div>
+        <div className="rounded-lg border border-black/[.08] bg-card p-4 shadow-sm dark:border-white/[.145]">
+          <div className="flex items-center justify-between gap-2 text-xs font-medium text-zinc-600 dark:text-zinc-400">
+            <span className="flex items-center gap-1.5">
+              <Wallet className="size-3.5" />
+              Other expenses
+            </span>
+            <TrendChip pct={pctChange(expenseTotal, previousPeriod.expenseTotal)} higherIsBetter={false} />
+          </div>
+          <div className="mt-1 text-xl font-semibold">{formatMoney(expenseTotal)}</div>
         </div>
         <div className="lg:col-start-1 rounded-lg border border-black/[.08] bg-card p-4 shadow-sm dark:border-white/[.145]">
           <div className="flex items-center justify-between gap-2 text-xs font-medium text-zinc-600 dark:text-zinc-400">
