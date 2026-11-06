@@ -9,13 +9,13 @@ import {
   ChevronDown,
   ChevronLeft,
   ChevronRight,
-  Coins,
   CreditCard,
+  Eye,
+  EyeOff,
   Info,
   Pencil,
   Package,
   Percent,
-  PiggyBank,
   Receipt,
   SearchX,
   Trash2,
@@ -37,7 +37,7 @@ import {
 } from "@/lib/supabase/queries";
 import { PAYMENT_METHOD_LABELS, type PaymentMethod } from "@/lib/paymentMethods";
 import { computeGrossMargin } from "@/lib/cogs";
-import { addExpenseAction, getWasteItemsAction, updateExpenseAction } from "./actions";
+import { addExpenseAction, getWasteItemsAction, setProductAdsExpenseAction, updateExpenseAction } from "./actions";
 import { setMarginSoldAtCostAction, setMarginUnitCostAction, setProductPriceAction } from "../stock/actions";
 import { ppDay, ppHour, ppToday } from "@/lib/phnomPenhTime";
 import { exportAccountancePdf } from "@/lib/exportAccountancePdf";
@@ -564,6 +564,8 @@ export default function AccountanceClient({
   wasteLog,
   previousPeriod,
   stockUnits,
+  productAds,
+  orderDiscountTotal,
 }: {
   brands: Brand[];
   currentBrand: Brand;
@@ -600,8 +602,14 @@ export default function AccountanceClient({
     netProfit: number;
   };
   stockUnits: StockUnits | null;
+  // Expense Ads typed per product for `month` (Month view, COGS tab), by product id.
+  productAds: Record<string, number>;
+  // Order-level discounts in range, taken off the Margin Report's Grand Total.
+  orderDiscountTotal: number;
 }) {
   const router = useRouter();
+  // Hide / Show toggle for the summary cards at the top.
+  const [showSummary, setShowSummary] = useState(true);
   const [expenseDesc, setExpenseDesc] = useState("");
   const [expenseAmount, setExpenseAmount] = useState("");
   const [expenseCategory, setExpenseCategory] = useState("");
@@ -794,12 +802,17 @@ export default function AccountanceClient({
   // Gross profit = revenue - COGS; net profit also backs out operating
   // expenses and the cost of waste/spillage/comps -- see the plan's
   // confirmed decision on folding waste/promo into net profit.
+  // Gross profit = Gross sales - COGS (delivery fees are no longer taken off).
   const grossProfit = summary.total - cogsSummary.totalCogs;
   const netProfit = grossProfit - expenseTotal - wastePromoTotal;
-  // The Net profit summary card is simply Total revenue - Total expenses; the
-  // Profit & Loss breakdown below keeps the full COGS/waste waterfall.
-  const cardNetProfit = summary.total - expenseTotal;
-  const netMarginPct = summary.total === 0 ? null : (cardNetProfit / summary.total) * 100;
+  // The Gross profit / Gross profit % summary cards use Total revenue - (Total COGS + Other expenses);
+  // the Profit & Loss breakdown below keeps its own waterfall (`grossProfit` above).
+  const cardGrossProfit = summary.total - (cogsSummary.totalCogs + expenseTotal);
+  const prevCardGrossProfit =
+    previousPeriod.total - (previousPeriod.cogsTotal + previousPeriod.expenseTotal);
+  const totalCost = cogsSummary.totalCogs + expenseTotal;
+  const prevTotalCost = previousPeriod.cogsTotal + previousPeriod.expenseTotal;
+  const netMarginPct = summary.total === 0 ? null : (cardGrossProfit / summary.total) * 100;
   // Flags the Waste card as "high" when waste cost eats more than 5% of COGS.
   const wasteRatio = cogsSummary.totalCogs > 0 ? cogsSummary.wasteCost / cogsSummary.totalCogs : 0;
 
@@ -812,6 +825,40 @@ export default function AccountanceClient({
     });
   }, [expenses, expenseSearch, expenseCategoryFilter]);
   const filteredExpenseTotal = filteredExpenses.reduce((sum, e) => sum + e.amount, 0);
+  // Month view only: Expense Ads is typed per product, and GPAD = Gross Profit - Expense Ads.
+  const showAdsColumns = mode === "month";
+  const [adsDrafts, setAdsDrafts] = useState<Record<string, string>>({});
+
+  function saveAdsExpense(r: MarginReportRow, saved: number) {
+    const raw = adsDrafts[r.productId];
+    if (raw === undefined) return;
+    const trimmed = raw.trim();
+    const amount = trimmed === "" ? 0 : parseFloat(trimmed);
+    const clearDraft = () =>
+      setAdsDrafts((prev) => {
+        const next = { ...prev };
+        delete next[r.productId];
+        return next;
+      });
+    if (Number.isNaN(amount) || amount < 0) {
+      setError("Ads Spend cannot be negative");
+      return;
+    }
+    setError(null);
+    if (amount === saved) {
+      clearDraft();
+      return;
+    }
+    startTransition(async () => {
+      try {
+        await setProductAdsExpenseAction({ productIds: r.productIds, month, amount });
+        router.refresh();
+        clearDraft();
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Failed to save");
+      }
+    });
+  }
   const expenseCategories = useMemo(
     () =>
       Array.from(
@@ -832,6 +879,48 @@ export default function AccountanceClient({
       return true;
     });
   }, [marginReport, marginSearch, marginCategoryFilter]);
+  // The Margin Report footer: totals over every row that matches the search/filter (all pages), using the
+  // same cost fallback as the rows. A row with no cost at all adds nothing to the cost columns and is left
+  // out of the profit/margin, so one missing cost never makes the profit look bigger than it is.
+  const marginTotals = useMemo(() => {
+    let units = 0;
+    let revenue = 0;
+    let unitCost = 0;
+    let sellingPrice = 0;
+    let cogs = 0;
+    let costedRevenue = 0;
+    let unknownCost = 0;
+    let ads = 0;
+    for (const r of filteredMarginReport) {
+      units += r.unitsSold;
+      revenue += r.revenue;
+      for (const id of r.productIds) ads += productAds[id] ?? 0;
+      sellingPrice += r.sellingPrice;
+      const rowUnitCost = r.unitCost ?? r.suggestedCost;
+      const rowCogs = r.totalCogs ?? (rowUnitCost === null ? null : rowUnitCost * r.unitsSold);
+      if (rowUnitCost !== null) unitCost += rowUnitCost;
+      if (rowCogs === null) {
+        unknownCost += 1;
+      } else {
+        cogs += rowCogs;
+        costedRevenue += r.revenue;
+      }
+    }
+    const { grossProfit, grossMarginPct } = computeGrossMargin(costedRevenue, cogs);
+    return { units, revenue, unitCost, sellingPrice, cogs, grossProfit, grossMarginPct, unknownCost, ads, costedRevenue };
+  }, [filteredMarginReport, productAds]);
+  // Grand Total: the product rows' revenue less the order-level discounts (what customers paid).
+  // Only for the whole report -- a search/category filter can't say which share of a discount is its own.
+  const showGrandTotal = orderDiscountTotal > 0 && !marginSearch.trim() && !marginCategoryFilter;
+  const grandGrossProfit =
+    marginTotals.grossProfit === null ? null : marginTotals.grossProfit - orderDiscountTotal;
+  // Month view: margin % is GPAD (gross profit after ads) over revenue.
+  const grandMarginPct = showAdsColumns
+    ? computeGrossMargin(marginTotals.costedRevenue - orderDiscountTotal, marginTotals.cogs + marginTotals.ads).grossMarginPct
+    : computeGrossMargin(marginTotals.costedRevenue - orderDiscountTotal, marginTotals.cogs).grossMarginPct;
+  const totalMarginPct = showAdsColumns
+    ? computeGrossMargin(marginTotals.costedRevenue, marginTotals.cogs + marginTotals.ads).grossMarginPct
+    : marginTotals.grossMarginPct;
   const marginCategories = useMemo(
     () =>
       Array.from(new Set(marginReport.map((r) => r.categoryName).filter((c): c is string => Boolean(c)))).sort(),
@@ -900,7 +989,7 @@ export default function AccountanceClient({
   const [editingMarginId, setEditingMarginId] = useState<string | null>(null);
   // The "N sold at $X" line being edited (one at a time): which product and which
   // cost group, plus the new cost typed so far.
-  const [editingSoldAt, setEditingSoldAt] = useState<{ productId: string; cost: number } | null>(null);
+  const [editingSoldAt, setEditingSoldAt] = useState<{ productId: string; productIds: string[]; cost: number } | null>(null);
   const [soldAtDraft, setSoldAtDraft] = useState("");
   const [bulkCostModalOpen, setBulkCostModalOpen] = useState(false);
   const [wasteModalOpen, setWasteModalOpen] = useState(false);
@@ -973,15 +1062,18 @@ export default function AccountanceClient({
 
     startTransition(async () => {
       try {
-        if (costChanged)
-          await setMarginUnitCostAction({
-            productId: r.productId,
-            unitCost: costPrice as number,
-            brandId: currentBrand.id,
-            fromDate,
-            toDate,
-          });
-        if (priceChanged) await setProductPriceAction({ productId: r.productId, price: price as number });
+        // A row that is several same-named products changes every one of them.
+        for (const productId of r.productIds) {
+          if (costChanged)
+            await setMarginUnitCostAction({
+              productId,
+              unitCost: costPrice as number,
+              brandId: currentBrand.id,
+              fromDate,
+              toDate,
+            });
+          if (priceChanged) await setProductPriceAction({ productId, price: price as number });
+        }
         router.refresh();
       } catch (e) {
         setError(e instanceof Error ? e.message : "Failed to save");
@@ -996,7 +1088,7 @@ export default function AccountanceClient({
   // in Stock stay as they are.
   function saveSoldAt() {
     if (!editingSoldAt) return;
-    const { productId, cost } = editingSoldAt;
+    const { productIds, cost } = editingSoldAt;
     const next = parseFloat(soldAtDraft);
     if (Number.isNaN(next) || next < 0) {
       setError("Cost cannot be negative");
@@ -1009,14 +1101,15 @@ export default function AccountanceClient({
     }
     startTransition(async () => {
       try {
-        await setMarginSoldAtCostAction({
-          productId,
-          fromCost: cost,
-          toCost: next,
-          brandId: currentBrand.id,
-          fromDate,
-          toDate,
-        });
+        // Only some of a combined row's products may have sales at that cost: each one that does is
+        // re-priced, and it is an error only if none did.
+        const results = await Promise.allSettled(
+          productIds.map((productId) =>
+            setMarginSoldAtCostAction({ productId, fromCost: cost, toCost: next, brandId: currentBrand.id, fromDate, toDate })
+          )
+        );
+        const failed = results.find((r): r is PromiseRejectedResult => r.status === "rejected");
+        if (failed && results.every((r) => r.status === "rejected")) throw failed.reason;
         router.refresh();
       } catch (e) {
         setError(e instanceof Error ? e.message : "Failed to save");
@@ -1369,7 +1462,40 @@ export default function AccountanceClient({
 
       {/* The summary cards are for the other tabs; COGS & Margin Tracking has its own stock boxes. */}
       {tab !== "cogs" && (
-      <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+      <>
+      <div className="mb-3 flex justify-end">
+        <button
+          type="button"
+          onClick={() => setShowSummary((v) => !v)}
+          aria-expanded={showSummary}
+          className="flex items-center gap-1.5 rounded-full border border-black/[.15] px-3 py-1 text-xs font-medium text-zinc-600 hover:text-foreground dark:border-white/[.2] dark:text-zinc-400"
+        >
+          {showSummary ? <EyeOff className="size-3.5" /> : <Eye className="size-3.5" />}
+          {showSummary ? "Hide summary" : "Show summary"}
+        </button>
+      </div>
+      {showSummary && (
+      <div className="grid grid-cols-2 gap-4 lg:grid-cols-3">
+        <div className="rounded-lg border border-black/[.08] bg-card p-4 shadow-sm dark:border-white/[.145]">
+          <div className="flex items-center justify-between gap-2 text-xs font-medium text-zinc-600 dark:text-zinc-400">
+            <span className="flex items-center gap-1.5">
+              <TrendingUp className="size-3.5" />
+              Total revenue
+            </span>
+            <TrendChip pct={pctChange(summary.total, previousPeriod.total)} />
+          </div>
+          <div className="mt-1 text-xl font-semibold">{formatMoney(summary.total)}</div>
+        </div>
+        <div className="rounded-lg border border-black/[.08] bg-card p-4 shadow-sm dark:border-white/[.145]">
+          <div className="flex items-center justify-between gap-2 text-xs font-medium text-zinc-600 dark:text-zinc-400">
+            <span className="flex items-center gap-1.5">
+              <CreditCard className="size-3.5" />
+              KHQR
+            </span>
+            <TrendChip pct={pctChange(summary.nonCashTotal, previousPeriod.nonCashTotal)} />
+          </div>
+          <div className="mt-1 text-xl font-semibold">{formatMoney(summary.nonCashTotal)}</div>
+        </div>
         <div className="rounded-lg border border-black/[.08] bg-card p-4 shadow-sm dark:border-white/[.145]">
           <div className="flex items-center justify-between gap-2 text-xs font-medium text-zinc-600 dark:text-zinc-400">
             <span className="flex items-center gap-1.5">
@@ -1383,29 +1509,13 @@ export default function AccountanceClient({
         <div className="rounded-lg border border-black/[.08] bg-card p-4 shadow-sm dark:border-white/[.145]">
           <div className="flex items-center justify-between gap-2 text-xs font-medium text-zinc-600 dark:text-zinc-400">
             <span className="flex items-center gap-1.5">
-              <CreditCard className="size-3.5" />
-              KHQR
+              <Receipt className="size-3.5" />
+              Total expenses
             </span>
-            <TrendChip pct={pctChange(summary.nonCashTotal, previousPeriod.nonCashTotal)} />
+            <TrendChip pct={pctChange(totalCost, prevTotalCost)} higherIsBetter={false} />
           </div>
-          <div className="mt-1 text-xl font-semibold">{formatMoney(summary.nonCashTotal)}</div>
-        </div>
-        <div className="rounded-lg border border-black/[.08] bg-card p-4 shadow-sm dark:border-white/[.145]">
-          <div className="flex items-center justify-between gap-1 text-xs font-medium text-zinc-600 dark:text-zinc-400">
-            <span className="flex items-center gap-1 whitespace-nowrap">
-              <Coins className="size-3.5 shrink-0" />
-              Cash + KHQR
-            </span>
-            <TrendChip
-              pct={pctChange(
-                summary.cashTotal + summary.nonCashTotal,
-                previousPeriod.cashTotal + previousPeriod.nonCashTotal
-              )}
-            />
-          </div>
-          <div className="mt-1 text-xl font-semibold">
-            {formatMoney(summary.cashTotal + summary.nonCashTotal)}
-          </div>
+          {/* Total COGS + Other expenses (the two cards to its left). */}
+          <div className="mt-1 text-xl font-semibold">{formatMoney(totalCost)}</div>
         </div>
         <div className="rounded-lg border border-black/[.08] bg-card p-4 shadow-sm dark:border-white/[.145]">
           <div className="flex items-center justify-between gap-2 text-xs font-medium text-zinc-600 dark:text-zinc-400">
@@ -1420,64 +1530,36 @@ export default function AccountanceClient({
         <div className="rounded-lg border border-black/[.08] bg-card p-4 shadow-sm dark:border-white/[.145]">
           <div className="flex items-center justify-between gap-2 text-xs font-medium text-zinc-600 dark:text-zinc-400">
             <span className="flex items-center gap-1.5">
-              <BarChart3 className="size-3.5" />
-              Gross profit
-            </span>
-            <TrendChip pct={pctChange(grossProfit, previousPeriod.grossProfit)} />
-          </div>
-          {/* Cash + KHQR minus Total COGS. */}
-          <div
-            className={`mt-1 text-xl font-semibold ${grossProfit < 0 ? "text-rose-600 dark:text-rose-400" : ""}`}
-          >
-            {formatMoney(grossProfit)}
-          </div>
-        </div>
-        <div className="rounded-lg border border-black/[.08] bg-card p-4 shadow-sm dark:border-white/[.145]">
-          <div className="flex items-center justify-between gap-2 text-xs font-medium text-zinc-600 dark:text-zinc-400">
-            <span className="flex items-center gap-1.5">
-              <TrendingUp className="size-3.5" />
-              Total revenue
-            </span>
-            <TrendChip pct={pctChange(summary.total, previousPeriod.total)} />
-          </div>
-          <div className="mt-1 text-xl font-semibold">{formatMoney(summary.total)}</div>
-        </div>
-        <div className="rounded-lg border border-black/[.08] bg-card p-4 shadow-sm dark:border-white/[.145]">
-          <div className="flex items-center justify-between gap-2 text-xs font-medium text-zinc-600 dark:text-zinc-400">
-            <span className="flex items-center gap-1.5">
               <Wallet className="size-3.5" />
-              Total expenses
+              Other expenses
             </span>
             <TrendChip pct={pctChange(expenseTotal, previousPeriod.expenseTotal)} higherIsBetter={false} />
           </div>
           <div className="mt-1 text-xl font-semibold">{formatMoney(expenseTotal)}</div>
         </div>
-        <div className="rounded-lg border border-black/[.08] bg-card p-4 shadow-sm dark:border-white/[.145]">
+        <div className="lg:col-start-1 rounded-lg border border-black/[.08] bg-card p-4 shadow-sm dark:border-white/[.145]">
           <div className="flex items-center justify-between gap-2 text-xs font-medium text-zinc-600 dark:text-zinc-400">
             <span className="flex items-center gap-1.5">
-              <PiggyBank className="size-3.5" />
-              {cardNetProfit < 0 ? "Net Loss" : "Net profit"}
+              <BarChart3 className="size-3.5" />
+              Gross profit
             </span>
-            {/* A "+X%" badge here means the *loss shrank* (or profit grew) vs
-                the previous period -- still worth showing, but never on its
-                own next to a negative number without the red "Net Loss"
-                label above making clear the period itself was a loss. */}
-            <TrendChip pct={pctChange(cardNetProfit, previousPeriod.netProfit)} />
+            <TrendChip pct={pctChange(cardGrossProfit, prevCardGrossProfit)} />
           </div>
+          {/* Total revenue minus (Total COGS + Other expenses). */}
           <div
-            className={`mt-1 text-xl font-semibold ${cardNetProfit < 0 ? "text-rose-600 dark:text-rose-400" : ""}`}
+            className={`mt-1 text-xl font-semibold ${cardGrossProfit < 0 ? "text-rose-600 dark:text-rose-400" : ""}`}
           >
-            {formatMoney(cardNetProfit)}
+            {formatMoney(cardGrossProfit)}
           </div>
         </div>
         <div className="rounded-lg border border-black/[.08] bg-card p-4 shadow-sm dark:border-white/[.145]">
           <div className="flex items-center justify-between gap-2 text-xs font-medium text-zinc-600 dark:text-zinc-400">
             <span className="flex items-center gap-1.5">
               <Percent className="size-3.5" />
-              Net profit margin
+              Gross profit %
             </span>
           </div>
-          {/* Net profit as a share of Total revenue. */}
+          {/* Gross profit as a share of Total revenue. */}
           <div
             className={`mt-1 text-xl font-semibold ${netMarginPct !== null && netMarginPct < 0 ? "text-rose-600 dark:text-rose-400" : ""}`}
           >
@@ -1485,6 +1567,8 @@ export default function AccountanceClient({
           </div>
         </div>
       </div>
+      )}
+      </>
       )}
 
       {error && <p className="mt-4 text-sm text-red-500">{error}</p>}
@@ -1773,6 +1857,7 @@ export default function AccountanceClient({
                 <div className="mt-4 space-y-2 text-sm">
                   <div className="flex justify-between">
                     <span className="text-zinc-500">Gross sales</span>
+                    {/* Same figure as the Total revenue card: the invoice totals, delivery fee included. */}
                     <span className="font-medium tabular-nums">{formatMoney(summary.total)}</span>
                   </div>
                   <div className="flex justify-between">
@@ -2035,6 +2120,12 @@ export default function AccountanceClient({
                       <th className="py-2 pr-3 text-right font-medium">Selling Price</th>
                       <th className="py-2 pr-3 text-right font-medium">Total COGS</th>
                       <th className="py-2 pr-3 text-right font-medium">Gross Profit</th>
+                      {showAdsColumns && (
+                        <>
+                          <th className="py-2 pr-3 text-right font-medium">Ads Spend</th>
+                          <th className="py-2 pr-3 text-right font-medium">GPAD</th>
+                        </>
+                      )}
                       <th className="py-2 text-right font-medium">Gross Margin %</th>
                     </tr>
                   </thead>
@@ -2058,6 +2149,13 @@ export default function AccountanceClient({
                       const effectiveMargin = computeGrossMargin(r.revenue, effectiveTotalCogs);
                       const effectiveGrossProfit = r.grossProfit ?? effectiveMargin.grossProfit;
                       const effectiveGrossMarginPct = r.grossMarginPct ?? effectiveMargin.grossMarginPct;
+                      const rowAds = r.productIds.reduce((sum, id) => sum + (productAds[id] ?? 0), 0);
+                      const adsValue = adsDrafts[r.productId] ?? (rowAds > 0 ? String(rowAds) : "");
+                      // Month view: the margin % comes from GPAD (gross profit after ads) over revenue.
+                      const shownMarginPct =
+                        showAdsColumns && effectiveGrossProfit !== null && r.revenue > 0
+                          ? ((effectiveGrossProfit - rowAds) / r.revenue) * 100
+                          : effectiveGrossMarginPct;
                       return (
                       <tr
                         key={r.productId}
@@ -2071,6 +2169,8 @@ export default function AccountanceClient({
                               from: fromDate,
                               to: toDate,
                               back: urlFor({}),
+                              // Several same-named products shown as one row open together.
+                              ...(r.productIds.length > 1 ? { ids: r.productIds.join(",") } : {}),
                             })}`
                           );
                         }}
@@ -2093,8 +2193,40 @@ export default function AccountanceClient({
                             <span>{withoutBareNumberSuffix(r.name)}</span>
                           </div>
                         </td>
-                        <td className="py-2 pr-3 text-right">{r.unitsSold}</td>
-                        <td className="py-2 pr-3 text-right">{formatMoney(r.revenue)}</td>
+                        <td className="py-2 pr-3 text-right">{Math.round(r.unitsSold * 100) / 100}</td>
+                        <td className="py-2 pr-3 text-right">
+                          {r.discount > 0 || r.deliveryFee > 0 ? (
+                            <div
+                              className="inline-flex flex-col items-end"
+                              title={[
+                                `Before discount ${formatMoney(r.revenueBeforeDiscount)}`,
+                                r.discount > 0 ? `Discount -${formatMoney(r.discount)}` : null,
+                                r.deliveryFee > 0 ? `Includes delivery ${formatMoney(r.deliveryFee)}` : null,
+                              ]
+                                .filter(Boolean)
+                                .join(" · ")}
+                            >
+                              <span>
+                                {formatMoney(r.revenue)}
+                                {r.discount > 0 && (
+                                  <span className="ml-1 rounded bg-amber-100 px-1 py-0.5 align-middle text-[10px] font-semibold text-amber-700 dark:bg-amber-500/20 dark:text-amber-300">
+                                    Discount
+                                  </span>
+                                )}
+                              </span>
+                              {r.discount > 0 && (
+                                <span className="text-[11px] text-zinc-500 line-through">
+                                  {formatMoney(r.revenueBeforeDiscount)}
+                                </span>
+                              )}
+                              {r.deliveryFee > 0 && (
+                                <span className="text-[11px] text-zinc-500">incl. {formatMoney(r.deliveryFee)} delivery</span>
+                              )}
+                            </div>
+                          ) : (
+                            formatMoney(r.revenue)
+                          )}
+                        </td>
                         {editing ? (
                           <>
                             <td className="py-2 pr-3 text-right">
@@ -2188,7 +2320,7 @@ export default function AccountanceClient({
                                   {r.soldAt.slice(0, MARGIN_SOLD_AT_PREVIEW).map((s) =>
                                     editingSoldAt?.productId === r.productId && editingSoldAt.cost === s.unitCost ? (
                                       <div key={s.unitCost} className="flex items-center justify-end gap-1">
-                                        <span>{s.units} sold at $</span>
+                                        <span>{Math.round(s.units * 100) / 100} sold at $</span>
                                         <input
                                           autoFocus
                                           type="number"
@@ -2228,11 +2360,11 @@ export default function AccountanceClient({
                                           title="Edit the cost these units were sold at"
                                           onClick={() => {
                                             setSoldAtDraft(String(s.unitCost));
-                                            setEditingSoldAt({ productId: r.productId, cost: s.unitCost });
+                                            setEditingSoldAt({ productId: r.productId, productIds: r.productIds, cost: s.unitCost });
                                           }}
                                           className="inline-flex items-center gap-1 rounded px-1 hover:bg-black/[.05] hover:text-foreground dark:hover:bg-white/[.08]"
                                         >
-                                          {s.units} sold at {formatMoney(s.unitCost)}
+                                          {Math.round(s.units * 100) / 100} sold at {formatMoney(s.unitCost)}
                                           <Pencil className="size-3" />
                                         </button>
                                       </div>
@@ -2267,32 +2399,65 @@ export default function AccountanceClient({
                         <td className="py-2 pr-3 text-right">
                           {effectiveGrossProfit === null ? "—" : formatMoney(effectiveGrossProfit)}
                         </td>
+                        {showAdsColumns && (
+                          <>
+                            <td className="py-2 pr-3 text-right">
+                              <div className="flex items-center justify-end gap-1">
+                                <span className="text-zinc-400">$</span>
+                                <input
+                                  type="number"
+                                  min={0}
+                                  step="0.01"
+                                  placeholder="0"
+                                  aria-label={`Ads Spend for ${r.name}`}
+                                  value={adsValue}
+                                  disabled={isPending}
+                                  onChange={(e) => setAdsDrafts((prev) => ({ ...prev, [r.productId]: e.target.value }))}
+                                  onBlur={() => saveAdsExpense(r, rowAds)}
+                                  onKeyDown={(e) => {
+                                    if (e.key === "Enter") e.currentTarget.blur();
+                                    if (e.key === "Escape")
+                                      setAdsDrafts((prev) => {
+                                        const next = { ...prev };
+                                        delete next[r.productId];
+                                        return next;
+                                      });
+                                  }}
+                                  className="w-20 rounded border border-black/[.15] bg-transparent px-2 py-1 text-right text-sm dark:border-white/[.2]"
+                                />
+                              </div>
+                            </td>
+                            <td className="py-2 pr-3 text-right">
+                              {effectiveGrossProfit === null ? "—" : formatMoney(effectiveGrossProfit - rowAds)}
+                            </td>
+                          </>
+                        )}
                         <td className="py-2 text-right">
-                          {effectiveGrossMarginPct === null ? (
+                          {shownMarginPct === null ? (
                             "—"
                           ) : (
                             <div className="flex items-center justify-end gap-2">
                               <span
                                 className={`font-medium ${
-                                  effectiveGrossMarginPct < 0
+                                  shownMarginPct < 0
                                     ? "text-red-600 dark:text-red-400"
-                                    : effectiveGrossMarginPct < 20
+                                    : shownMarginPct < 20
                                       ? "text-amber-600 dark:text-amber-400"
                                       : "text-green-600 dark:text-green-400"
                                 }`}
                               >
-                                {effectiveGrossMarginPct.toFixed(1)}%
+                                {shownMarginPct.toFixed(1)}%
                               </span>
                               <div className="h-1.5 w-14 shrink-0 overflow-hidden rounded-full bg-black/[.08] dark:bg-white/[.1]">
                                 <div
                                   className={`h-full rounded-full ${
-                                    effectiveGrossMarginPct < 0
+                                    shownMarginPct < 0
                                       ? "bg-red-500"
-                                      : effectiveGrossMarginPct < 20
+                                      : shownMarginPct < 20
                                         ? "bg-amber-500"
                                         : "bg-green-500"
                                   }`}
-                                  style={{ width: `${Math.max(0, Math.min(100, effectiveGrossMarginPct))}%` }}
+                                  style={{ width: `${Math.max(0, Math.min(100, shownMarginPct))}%` }}
                                 />
                               </div>
                             </div>
@@ -2303,7 +2468,7 @@ export default function AccountanceClient({
                     })}
                     {filteredMarginReport.length === 0 && (
                       <tr>
-                        <td colSpan={8} className="py-10 text-center text-sm text-zinc-500">
+                        <td colSpan={showAdsColumns ? 10 : 8} className="py-10 text-center text-sm text-zinc-500">
                           <div className="flex flex-col items-center gap-2">
                             <SearchX className="size-6 text-zinc-400" />
                             {marginReport.length === 0 ? (
@@ -2324,6 +2489,73 @@ export default function AccountanceClient({
                       </tr>
                     )}
                   </tbody>
+                  {filteredMarginReport.length > 0 && (
+                    <tfoot>
+                      <tr className="border-t-2 border-black/[.12] font-semibold dark:border-white/[.2]">
+                        <td className="py-3 pr-3">Total ({filteredMarginReport.length} products)</td>
+                        <td className="py-3 pr-3 text-right">{Math.round(marginTotals.units * 100) / 100}</td>
+                        <td className="py-3 pr-3 text-right">{formatMoney(marginTotals.revenue)}</td>
+                        <td className="py-3 pr-3 text-right">{formatMoney(marginTotals.unitCost)}</td>
+                        <td className="py-3 pr-3 text-right">{formatMoney(marginTotals.sellingPrice)}</td>
+                        <td className="py-3 pr-3 text-right">
+                          {formatMoney(marginTotals.cogs)}
+                          {marginTotals.unknownCost > 0 && (
+                            <div className="text-xs font-normal text-amber-500">
+                              ⚠ {marginTotals.unknownCost} with no cost
+                            </div>
+                          )}
+                        </td>
+                        <td className="py-3 pr-3 text-right">
+                          {marginTotals.grossProfit === null ? "—" : formatMoney(marginTotals.grossProfit)}
+                        </td>
+                        {showAdsColumns && (
+                          <>
+                            <td className="py-3 pr-3 text-right">{formatMoney(marginTotals.ads)}</td>
+                            <td className="py-3 pr-3 text-right">
+                              {marginTotals.grossProfit === null ? "—" : formatMoney(marginTotals.grossProfit - marginTotals.ads)}
+                            </td>
+                          </>
+                        )}
+                        <td className="py-3 text-right">
+                          {totalMarginPct === null ? "—" : `${totalMarginPct.toFixed(1)}%`}
+                        </td>
+                      </tr>
+                      {showGrandTotal && (
+                        <>
+                          <tr className="text-zinc-500">
+                            <td className="py-2 pr-3">Order discount</td>
+                            <td />
+                            <td className="py-2 pr-3 text-right">-{formatMoney(orderDiscountTotal)}</td>
+                            <td colSpan={showAdsColumns ? 7 : 5} />
+                          </tr>
+                          <tr className="border-t border-black/[.12] font-semibold dark:border-white/[.2]">
+                            <td className="py-3 pr-3">Grand Total</td>
+                            <td />
+                            <td className="py-3 pr-3 text-right">
+                              {formatMoney(marginTotals.revenue - orderDiscountTotal)}
+                            </td>
+                            <td />
+                            <td />
+                            <td className="py-3 pr-3 text-right">{formatMoney(marginTotals.cogs)}</td>
+                            <td className="py-3 pr-3 text-right">
+                              {grandGrossProfit === null ? "—" : formatMoney(grandGrossProfit)}
+                            </td>
+                            {showAdsColumns && (
+                              <>
+                                <td className="py-3 pr-3 text-right">{formatMoney(marginTotals.ads)}</td>
+                                <td className="py-3 pr-3 text-right">
+                                  {grandGrossProfit === null ? "—" : formatMoney(grandGrossProfit - marginTotals.ads)}
+                                </td>
+                              </>
+                            )}
+                            <td className="py-3 text-right">
+                              {grandMarginPct === null ? "—" : `${grandMarginPct.toFixed(1)}%`}
+                            </td>
+                          </tr>
+                        </>
+                      )}
+                    </tfoot>
+                  )}
                 </table>
               </div>
 

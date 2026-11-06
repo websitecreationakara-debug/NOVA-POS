@@ -8,12 +8,21 @@
 // colors, which plain html2canvas can't parse and throws on.
 import { captureInvoiceSheet, withInvoicesAtFullSize } from "./invoiceCapture";
 
+export type InvoicePdfOptions = {
+  // Both copies of every invoice (the customer and the shop voucher, 2 pages each)
+  // instead of just the first -- what the Print button wants.
+  allCopies?: boolean;
+  // A tab already opened by the click (a popup blocker only allows that inside the
+  // click itself): the finished PDF is shown there instead of being downloaded.
+  tab?: Window | null;
+};
+
 // The sheets may be shown shrunk-to-fit on a phone; capture them at full size.
-export function exportInvoicePdf(filename: string): Promise<void> {
-  return withInvoicesAtFullSize(() => buildInvoicePdf(filename));
+export function exportInvoicePdf(filename: string, options: InvoicePdfOptions = {}): Promise<void> {
+  return withInvoicesAtFullSize(() => buildInvoicePdf(filename, options));
 }
 
-async function buildInvoicePdf(filename: string): Promise<void> {
+async function buildInvoicePdf(filename: string, options: InvoicePdfOptions): Promise<void> {
   const [{ default: html2canvas }, { jsPDF }] = await Promise.all([
     import("html2canvas-pro"),
     import("jspdf"),
@@ -28,7 +37,7 @@ async function buildInvoicePdf(filename: string): Promise<void> {
   // html2canvas force-renders a clone regardless of the original's
   // display:none, and roughly double the file size per page besides.
   const sheets = Array.from(
-    document.querySelectorAll<HTMLElement>('.invoice-sheet[data-copy="1"]')
+    document.querySelectorAll<HTMLElement>(options.allCopies ? ".invoice-sheet" : '.invoice-sheet[data-copy="1"]')
   ).filter((el) => el.offsetParent !== null);
   if (sheets.length === 0) return;
 
@@ -97,5 +106,11 @@ async function buildInvoicePdf(filename: string): Promise<void> {
   }
 
   const safeName = filename.replace(/[\\/:*?"<>|]/g, "-");
+  if (options.tab && !options.tab.closed) {
+    // The viewer names the tab (and a download from it) after the PDF's title.
+    pdf.setProperties({ title: safeName });
+    options.tab.location.href = URL.createObjectURL(pdf.output("blob"));
+    return;
+  }
   pdf.save(`${safeName}.pdf`);
 }

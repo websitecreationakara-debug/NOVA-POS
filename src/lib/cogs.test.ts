@@ -6,6 +6,10 @@ import {
   computeGrossMargin,
   computeLineCogs,
   computeRecipeUnitCost,
+  resolveMarginLines,
+  splitByWeight,
+  summarizeCogsByDay,
+  summarizeMarginLines,
 } from "./cogs";
 
 describe("computeRecipeUnitCost", () => {
@@ -109,5 +113,123 @@ describe("historical cost snapshot", () => {
     expect(storedCogs).toBeCloseTo(6);
     expect(recomputedFromToday).toBeCloseTo(15);
     expect(storedCogs).not.toBe(recomputedFromToday);
+  });
+});
+
+describe("splitByWeight", () => {
+  it("shares add up to the exact amount, not a cent off per line", () => {
+    const shares = splitByWeight(2, [1, 1, 1]);
+    expect(shares.reduce((a, b) => a + b, 0)).toBeCloseTo(2, 10);
+    expect(shares.slice().sort()).toEqual([0.66, 0.67, 0.67]);
+  });
+
+  it("is proportional to the weights", () => {
+    expect(splitByWeight(4.65, [63.65])).toEqual([4.65]);
+    expect(splitByWeight(10, [75, 25])).toEqual([7.5, 2.5]);
+  });
+
+  it("splits evenly when every weight is 0, and handles no lines", () => {
+    expect(splitByWeight(1, [0, 0])).toEqual([0.5, 0.5]);
+    expect(splitByWeight(1, [])).toEqual([]);
+  });
+});
+
+describe("summarizeCogsByDay", () => {
+  const sale = (paidAt: string, quantity: number) => ({
+    quantity,
+    lineTotal: quantity * 10,
+    cogs: null,
+    unitCost: 0.33,
+    paidAt,
+  });
+  const lines = [sale("2026-10-01T10:00:00+07:00", 1.5), sale("2026-10-02T10:00:00+07:00", 1.5)];
+
+  it("rounds each day's cost on its own and adds the days up", () => {
+    // 1.5 x 0.33 = 0.495 -> 0.5 a day, so 1.0; the 3 units costed together are 3 x 0.33 = 0.99.
+    expect(summarizeMarginLines([sale("2026-10-02T10:00:00+07:00", 3)], 0.33, true).totalCogs).toBe(0.99);
+    expect(summarizeCogsByDay(lines, 0.33, true)).toBe(1);
+  });
+
+  it("is the same as costing one day when there is only one day", () => {
+    expect(summarizeCogsByDay(lines.slice(0, 1), 0.33, true)).toBe(
+      summarizeMarginLines(lines.slice(0, 1), 0.33, true).totalCogs
+    );
+  });
+
+  it("is null when a day has a sale with no cost", () => {
+    expect(summarizeCogsByDay([{ ...lines[0], unitCost: null }], null, false)).toBeNull();
+  });
+});
+
+describe("resolveMarginLines (same-named products as one Margin Report row)", () => {
+  const sold = (quantity: number, lineTotal: number, unitCost: number | null) => ({
+    quantity,
+    lineTotal,
+    cogs: unitCost === null ? null : quantity * unitCost,
+    unitCost,
+    paidAt: "2026-11-02T03:00:00Z",
+  });
+
+  it("resolves a Stock-linked product's lines the same way summarizeMarginLines does", () => {
+    const lines = [sold(2, 20, 4), { ...sold(1, 10, 6), paidAt: "2026-11-02T04:00:00Z" }];
+    const { lines: resolved, unitCost } = resolveMarginLines(lines, 5, true);
+    expect(unitCost).toBe(5);
+    expect(summarizeMarginLines(resolved, unitCost, false).totalCogs).toBe(summarizeMarginLines(lines, 5, true).totalCogs);
+  });
+
+  it("keeps each sale's own cost for a Stock-linked product, not Stock's current cost", () => {
+    const first = { ...sold(2, 12, 4), paidAt: "2026-11-03T02:16:24Z" };
+    const second = { ...sold(2, 12, 3), paidAt: "2026-11-03T02:17:05Z" };
+    const r = summarizeMarginLines([first, second], 2, true);
+    expect(r.totalCogs).toBe(14); // 2 x 4 + 2 x 3, not 4 x 2
+    expect(r.unitCost).toBe(2);
+    expect(r.soldAt).toEqual([
+      { unitCost: 3, units: 2 },
+      { unitCost: 4, units: 2 },
+    ]);
+  });
+
+  it("an unlinked product's Unit Cost is its latest sale's cost, not its current cost", () => {
+    const old = { ...sold(2, 12, 4), paidAt: "2026-11-03T02:16:24Z" };
+    const latest = { ...sold(2, 12, 3), paidAt: "2026-11-03T02:17:05Z" };
+    const r = summarizeMarginLines([old, latest], 9, false);
+    expect(r.unitCost).toBe(3);
+    expect(r.totalCogs).toBe(14);
+    expect(summarizeMarginLines([], 9, false).unitCost).toBe(9);
+  });
+
+  it("before 2026-11-01 the old process stands: a linked product's sales are costed at Stock's current cost", () => {
+    const oct = { ...sold(2, 12, 4), paidAt: "2026-10-31T10:00:00Z" }; // 17:00 Phnom Penh, still October
+    const nov = { ...sold(2, 12, 3), paidAt: "2026-10-31T17:30:00Z" }; // 00:30 on Nov 1 in Phnom Penh
+    const r = summarizeMarginLines([oct, nov], 2, true);
+    expect(r.totalCogs).toBe(10); // 2 x 2 (current cost, old process) + 2 x 3 (its own cost)
+    // an unlinked product's Unit Cost stays its current cost until a sale on/after the cutoff
+    expect(summarizeMarginLines([oct], 9, false).unitCost).toBe(9);
+    expect(summarizeMarginLines([oct, nov], 9, false).unitCost).toBe(3);
+  });
+
+  it("falls back to Stock's cost for a linked sale with no recorded cost, and has no COGS without any cost", () => {
+    expect(summarizeMarginLines([sold(2, 12, null)], 2, true).totalCogs).toBe(4);
+    expect(summarizeMarginLines([sold(2, 12, 3)], null, true).totalCogs).toBeNull();
+  });
+
+  it("leaves an unlinked product's lines as sold", () => {
+    const lines = [sold(2, 20, 4)];
+    expect(resolveMarginLines(lines, 5, false)).toEqual({ lines, unitCost: 5 });
+  });
+
+  it("adds two products' sales up: units, revenue and COGS are the sums", () => {
+    const a = [sold(2, 20, 4)];
+    const b = [sold(3, 36, 5)];
+    const merged = summarizeMarginLines([...a, ...b], 4, false);
+    expect(merged.unitsSold).toBe(5);
+    expect(merged.revenue).toBe(56);
+    expect(merged.totalCogs).toBe(23);
+    // b was sold at a cost other than the Unit Cost shown, so the row lists it
+    expect(merged.soldAt.map((s) => s.unitCost).sort()).toEqual([4, 5]);
+  });
+
+  it("is unknown the moment one product has a sale with no cost", () => {
+    expect(summarizeMarginLines([sold(1, 10, 4), sold(1, 10, null)], null, false).totalCogs).toBeNull();
   });
 });

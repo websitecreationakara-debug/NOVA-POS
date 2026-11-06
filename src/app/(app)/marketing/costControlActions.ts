@@ -47,6 +47,7 @@ export type SetSummary = {
   code: string;
   name: string;
   status: SetStatus;
+  note: string | null;
   itemCount: number;
   totalCost: number | null;
   itemsMissingCost: number;
@@ -122,6 +123,7 @@ export async function listSetsAction(
       code: s.code,
       name: s.name,
       status: s.status,
+      note: s.note ?? null,
       itemCount: items.length,
       totalCost,
       itemsMissingCost: countItemsMissingCost(itemCosts),
@@ -178,6 +180,7 @@ export type SetDetail = {
   code: string;
   name: string;
   status: SetStatus;
+  note: string | null;
   suggestedSellPrice: number | null;
   items: SetItemDetail[];
   totalCost: number | null;
@@ -284,6 +287,7 @@ async function loadSet(setId: string): Promise<{ detail: SetDetail; staleProduct
       code: set.code,
       name: set.name,
       status: set.status,
+      note: set.note ?? null,
       suggestedSellPrice: set.suggested_sell_price,
       items,
       totalCost,
@@ -516,6 +520,7 @@ export async function updateSetAction(
     laborCost: number | null;
     competitorName: string | null;
     competitorBasePrice: number | null;
+    note: string | null;
   }>
 ): Promise<void> {
   await requireMarketingAccess();
@@ -529,6 +534,7 @@ export async function updateSetAction(
     labor_cost?: number | null;
     competitor_name?: string | null;
     competitor_base_price?: number | null;
+    note?: string | null;
   } = { updated_at: new Date().toISOString() };
   if (input.code !== undefined) {
     const code = input.code.trim();
@@ -546,9 +552,11 @@ export async function updateSetAction(
   if (input.laborCost !== undefined) fields.labor_cost = input.laborCost;
   if (input.competitorName !== undefined) fields.competitor_name = input.competitorName?.trim() || null;
   if (input.competitorBasePrice !== undefined) fields.competitor_base_price = input.competitorBasePrice;
+  if (input.note !== undefined) fields.note = input.note?.trim() || null;
 
   const { error } = await supabaseAdmin.from("sets").update(fields).eq("id", setId);
   if (error) {
+    if (/note/.test(error.message)) throw new Error("Run migration 0094 first, then try again.");
     if (error.code === "23505") throw new Error(`Set ID "${input.code}" is already in use`);
     throw new Error(error.message);
   }
@@ -578,6 +586,70 @@ export async function deleteSetAction(setId: string): Promise<void> {
   const { error } = await supabaseAdmin.from("sets").delete().eq("id", setId);
   if (error) throw new Error(error.message);
   revalidatePath("/marketing");
+}
+
+// Moves a Set to another business. Its lines keep pointing at the same Stock
+// products (costing only), so nothing about the cost changes. An Active Set's
+// listing belongs to the old business (its Stock product and storefront draft), so
+// that is taken down first and the Set goes back to Draft -- activating it again
+// creates a fresh listing under the new business. `newCode` renames the Set ID on
+// the way (IDs are unique per business). Expected problems come back as `error`
+// instead of being thrown: a production build hides a thrown message from the page.
+export async function moveSetAction(
+  setId: string,
+  targetBrandId: string,
+  newCode?: string
+): Promise<{ error?: string }> {
+  await requireMarketingAccess();
+
+  const { data: set, error: fetchErr } = await supabaseAdmin
+    .from("sets")
+    .select("brand_id, code, status")
+    .eq("id", setId)
+    .single();
+  if (fetchErr || !set) return { error: fetchErr?.message ?? "Set not found" };
+  if (set.brand_id === targetBrandId) return { error: "The set is already in that business" };
+
+  const { data: target } = await supabaseAdmin.from("brands").select("name").eq("id", targetBrandId).maybeSingle();
+  if (!target) return { error: "Business not found" };
+
+  const code = (newCode ?? set.code).trim();
+  if (!code) return { error: "Set ID is required" };
+  const clashMessage = `${target.name} already has a set with ID "${code}" -- enter a different Set ID.`;
+
+  // Set IDs are unique per business -- check before taking anything down.
+  const { data: clash } = await supabaseAdmin
+    .from("sets")
+    .select("id")
+    .eq("brand_id", targetBrandId)
+    .eq("code", code)
+    .limit(1);
+  if (clash?.length) return { error: clashMessage };
+
+  const wasActive = set.status === "active";
+  try {
+    if (wasActive) await deactivateSetListing(setId);
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : "Couldn't take the set's listing down" };
+  }
+
+  const { error } = await supabaseAdmin
+    .from("sets")
+    .update({
+      brand_id: targetBrandId,
+      code,
+      updated_at: new Date().toISOString(),
+      ...(wasActive ? { status: "draft" as const, linked_product_id: null } : {}),
+    })
+    .eq("id", setId);
+  if (error) return { error: error.code === "23505" ? clashMessage : error.message };
+
+  if (wasActive) {
+    revalidatePath("/stock");
+    revalidatePath("/sales");
+  }
+  revalidatePath("/marketing");
+  return {};
 }
 
 // New code/name required from the caller (a small form on the confirm step)

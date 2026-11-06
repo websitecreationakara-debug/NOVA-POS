@@ -5,6 +5,7 @@ import type { ProductSiteLink } from "@/types/database";
 import { ALL_PAYMENT_METHODS, type PaymentMethod } from "@/lib/paymentMethods";
 import { ppDay } from "@/lib/phnomPenhTime";
 import { sendPurchaseEvent } from "@/lib/metaConversions";
+import { pushStockToSites } from "@/lib/site-sync";
 
 const VALID_SITES: ProductSiteLink["site"][] = [
   "bosba-premium-foods",
@@ -23,6 +24,8 @@ function normalizePhone(raw: unknown): string | null {
   if (typeof raw !== "string") return null;
   const cleaned = raw.replace(/[\s\-().]/g, "");
   if (!/^\+?\d{8,15}$/.test(cleaned)) return null;
+  // "+855…" is saved without the "+", like the POS does ("855…").
+  if (cleaned.startsWith("+")) return cleaned.slice(1);
   // "00855…" is the same number with the international call prefix.
   if (cleaned.startsWith("00")) return cleaned.slice(2);
   return /^0\d/.test(cleaned) ? `855${cleaned.slice(1)}` : cleaned;
@@ -148,9 +151,9 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Invalid amount" }, { status: 400 });
   }
 
-  // Absent / null / "" means "method unknown" and is stored as NULL; a
-  // non-empty value that isn't one of ours used to be silently dropped to
-  // NULL too, leaving a "paid" order with no method -- reject it instead.
+  // Absent / null / "" now defaults to KHQR (below); a non-empty value that
+  // isn't one of ours used to be silently dropped to NULL, leaving a "paid"
+  // order with no method -- reject it instead.
   const rawPaymentMethod = body.paymentMethod;
   if (
     rawPaymentMethod !== undefined &&
@@ -160,7 +163,9 @@ export async function POST(request: NextRequest) {
   ) {
     return NextResponse.json({ error: "Invalid paymentMethod" }, { status: 400 });
   }
-  const paymentMethod = rawPaymentMethod ? (rawPaymentMethod as PaymentMethod) : null;
+  // A website order that doesn't say how it was paid is a KHQR payment (the storefront's checkout),
+  // so it's saved as KHQR instead of NULL -- which Accountance would otherwise count as cash.
+  const paymentMethod: PaymentMethod = rawPaymentMethod ? (rawPaymentMethod as PaymentMethod) : "khqr";
 
   let deliveryAt: string | null = null;
   if (typeof body.deliveryAt === "string" && body.deliveryAt.trim()) {
@@ -254,6 +259,17 @@ export async function POST(request: NextRequest) {
     }
   } catch (e) {
     console.error("order-sync: couldn't set customer_since", e);
+  }
+
+  // The website's stock is shared by all of a product's variations, so the other variations'
+  // POS counts follow the one this order just decremented -- and, since a can pack takes its can
+  // count off in POS but only 1 on the website, POS's number is pushed back to the website too.
+  // Best effort, like the step above.
+  try {
+    const { data: lines } = await supabaseAdmin.from("order_items").select("product_id").eq("order_id", orderId);
+    await pushStockToSites((lines ?? []).map((l) => l.product_id));
+  } catch (e) {
+    console.error("order-sync: couldn't share stock across variations", e);
   }
 
   // Without this, a brand-new online order's stock decrement is correct in

@@ -67,6 +67,13 @@ const ACCOUNTANCE_LINKS = [
 ];
 const ACCOUNTANCE_ROLES = ["admin", "accountance"];
 
+// Pages under Stock, listed below it in the sidebar. They live under /stock, so they follow the
+// same access as Stock itself.
+const STOCK_LINKS = [
+  { href: "/stock/ledger", label: "Daily Ledger" },
+  { href: "/stock/invoices", label: "Supplier Invoices" },
+];
+
 // Remembered per browser so the sidebar stays how the staff member left it.
 const COLLAPSED_KEY = "nova:sidebar-collapsed";
 
@@ -101,6 +108,15 @@ export default function Sidebar({ role }: { role: string }) {
 
   const showAccountance = ACCOUNTANCE_ROLES.includes(role);
 
+  // Stock's sub-list opens the same way as Accountance's above.
+  const isOnStock = pathname.startsWith("/stock");
+  const [stockOpen, setStockOpen] = useState(isOnStock);
+  const [wasOnStock, setWasOnStock] = useState(isOnStock);
+  if (isOnStock !== wasOnStock) {
+    setWasOnStock(isOnStock);
+    if (isOnStock) setStockOpen(true);
+  }
+
   // Collapsed = icons only. Read from storage after mount (the server can't
   // know it), so a collapsed sidebar briefly renders open on a fresh load.
   const [collapsedPref, setCollapsed] = useState(false);
@@ -109,7 +125,11 @@ export default function Sidebar({ role }: { role: string }) {
     () => window.matchMedia(DESKTOP_QUERY).matches,
     () => true
   );
-  const collapsed = collapsedPref && isDesktop;
+  const collapsedBase = collapsedPref && isDesktop;
+  // Hovering the icon-only sidebar opens it (labels shown, the page moves over); the saved collapsed
+  // choice is unchanged.
+  const [hovered, setHovered] = useState(false);
+  const collapsed = collapsedBase && !hovered;
 
   // The slide-out menu (phones/tablets), opened by the TopBar's hamburger.
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -203,21 +223,23 @@ export default function Sidebar({ role }: { role: string }) {
       />
     )}
     <aside
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
       className={`print:hidden fixed inset-y-0 left-0 z-40 flex shrink-0 flex-col gap-8 overflow-y-auto border-r border-border bg-card transition-[width,transform] duration-200 lg:static lg:z-auto lg:min-h-screen lg:translate-x-0 lg:overflow-visible ${
         mobileOpen ? "translate-x-0 shadow-2xl" : "-translate-x-full"
       } ${collapsed ? "w-[4.75rem] px-3 py-6" : "w-64 p-6"}`}
     >
       {!collapsed && (
-        <div className="flex items-start justify-between">
-          <Link href="/" aria-label="NOVA POS" onClick={() => setMobileOpen(false)}>
+        <div className="relative flex items-center justify-center border-b border-border pb-6">
+          <Link href="/" aria-label="NOVA POS" onClick={() => setMobileOpen(false)} className="transition-transform hover:scale-105">
             {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src="/logos/nova-pos.png" alt="NOVA POS" width={300} height={247} className="h-20 w-auto" />
+            <img src="/logos/nova-pos.png" alt="NOVA POS" width={300} height={247} className="h-28 w-auto drop-shadow-sm" />
           </Link>
           <button
             type="button"
             onClick={() => setMobileOpen(false)}
             aria-label="Close menu"
-            className="rounded-lg p-1.5 text-muted-foreground hover:bg-muted lg:hidden"
+            className="absolute top-0 right-0 rounded-lg p-1.5 text-muted-foreground hover:bg-muted lg:hidden"
           >
             <X className="size-5" />
           </button>
@@ -233,6 +255,46 @@ export default function Sidebar({ role }: { role: string }) {
           .filter((item) => item.roles.includes(role))
           .map((item) => {
             const isActive = item.href === "/" ? pathname === "/" : pathname.startsWith(item.href);
+            if (item.href === "/stock") {
+              return (
+                <div key={item.href}>
+                  <div
+                    className={`flex items-center gap-3 rounded-lg text-sm font-medium transition-colors ${
+                      collapsed ? "justify-center px-3" : "pr-2 pl-3"
+                    } ${isActive ? NAV_ACTIVE : "text-muted-foreground hover:bg-muted"}`}
+                  >
+                    <Link
+                      href={item.href}
+                      title={collapsed ? item.label : undefined}
+                      className={`flex items-center gap-3 py-2.5 ${collapsed ? "" : "flex-1"}`}
+                    >
+                      <item.icon className="size-4" />
+                      {!collapsed && item.label}
+                    </Link>
+                    {!collapsed && (
+                      <button
+                        type="button"
+                        onClick={() => setStockOpen((open) => !open)}
+                        aria-expanded={stockOpen}
+                        aria-label={stockOpen ? "Collapse Stock" : "Expand Stock"}
+                        className={`rounded p-1 ${isActive ? "hover:bg-white/20" : "hover:bg-black/5 dark:hover:bg-white/10"}`}
+                      >
+                        <ChevronDown className={`size-4 transition-transform ${stockOpen ? "rotate-180" : ""}`} />
+                      </button>
+                    )}
+                  </div>
+                  {stockOpen && !collapsed && (
+                    <div className="mt-1 flex flex-col gap-0.5 border-l border-border pl-4">
+                      {STOCK_LINKS.map((l) => (
+                        <Link key={l.href} href={l.href} className={subLinkClass(pathname.startsWith(l.href))}>
+                          {l.label}
+                        </Link>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            }
             return (
               <Link
                 key={item.href}
@@ -365,14 +427,14 @@ export default function Sidebar({ role }: { role: string }) {
       <button
         type="button"
         onClick={toggleCollapsed}
-        aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+        aria-label={collapsedBase ? "Expand sidebar" : "Collapse sidebar"}
         title={collapsed ? "Expand sidebar" : undefined}
         className={`mt-auto hidden items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-muted-foreground transition-colors hover:bg-muted lg:flex ${
           collapsed ? "justify-center border border-border" : ""
         }`}
       >
-        {collapsed ? <PanelLeftOpen className="size-4" /> : <PanelLeftClose className="size-4" />}
-        {!collapsed && "Collapse"}
+        {collapsedBase ? <PanelLeftOpen className="size-4" /> : <PanelLeftClose className="size-4" />}
+        {!collapsed && (collapsedBase ? "Expand" : "Collapse")}
       </button>
     </aside>
     </>

@@ -1,22 +1,33 @@
 import { cache } from "react";
 import { supabaseAdmin } from "@/lib/supabase/server";
 import { catalogForBrandSlug, configuredCatalogs } from "@/lib/websiteProducts/catalogs";
-import { getWebsiteProduct, listWebsiteAddons, listWebsiteProducts } from "@/lib/websiteProducts/client";
+import { getWebsiteProduct, listWebsiteAddons, listWebsiteCategories, listWebsiteProducts } from "@/lib/websiteProducts/client";
 import { countLowStock } from "@/lib/websiteProducts/stock";
 import type { WebsiteCatalogId } from "@/lib/websiteProducts/types";
 import { formatInvoiceNumber, invoiceMonthStamp, invoiceMonthStartIso } from "@/lib/invoiceNumber";
-import { ppDayEnd, ppDayStart } from "@/lib/phnomPenhTime";
+import { ppDay, ppDayEnd, ppDayStart, ppToday } from "@/lib/phnomPenhTime";
 import { STOCK_TRACKING_START } from "@/lib/stockTracking";
+import { buildDailyLedger, daysOfMonth, LEDGER_OWN_PREFIX, type DailyLedgerRow, type LedgerDeletion, type LedgerSiteItem } from "@/lib/dailyLedger";
 import { COUNTED_FULFILLMENT_STATUSES } from "@/lib/orderStatus";
 import { orderForBrandShare } from "@/lib/orderBrandShare";
 import { ALL_PAYMENT_METHODS, type PaymentMethod } from "@/lib/paymentMethods";
-import { summarizeMarginLines, unitsSoldByCost, type MarginLine } from "@/lib/cogs";
+import {
+  computeGrossMargin,
+  resolveMarginLines,
+  SALE_TIME_COST_FROM,
+  splitByWeight,
+  summarizeCogsByDay,
+  summarizeMarginLines,
+  unitsSoldByCost,
+  type MarginLine,
+} from "@/lib/cogs";
 import { productWeightGrams } from "@/lib/costControl";
 import { readAllPages } from "@/lib/supabase/readAllPages";
 import {
   getEffectiveProductCost,
   getEffectiveProductCosts,
   getLinkedStockCost10pcts,
+  getLinkedStockOriginalCosts,
 } from "@/lib/websiteProducts/purchaseCosts";
 import type {
   Brand,
@@ -62,7 +73,25 @@ async function selectAll<T>(query: RowPage<T>): Promise<{ data: T[]; error: { me
   }
 }
 
-export async function getBrands(): Promise<Brand[]> {
+// Every page asks for the businesses first and they almost never change (nothing in
+// the app edits them), so the list is kept for a minute per server instance and
+// shared by loads that overlap.
+const BRANDS_TTL_MS = 60_000;
+let brandsCache: { at: number; value: Promise<Brand[]> } | null = null;
+
+export function getBrands(): Promise<Brand[]> {
+  if (brandsCache && Date.now() - brandsCache.at < BRANDS_TTL_MS) return brandsCache.value;
+  const value = loadBrands();
+  const entry = { at: Date.now(), value };
+  brandsCache = entry;
+  // A failed read isn't kept, so the next load tries again.
+  value.catch(() => {
+    if (brandsCache === entry) brandsCache = null;
+  });
+  return value;
+}
+
+async function loadBrands(): Promise<Brand[]> {
   const { data, error } = await supabaseAdmin.from("brands").select("*").order("name");
   if (error) throw error;
   const brands = data ?? [];
@@ -177,26 +206,29 @@ export async function getDailySales(
   // order_brands, migration 0058): only that business's share of the money.
   // "All businesses" reads the orders whole.
   const scoped = brandId !== ALL_BUSINESSES_ID;
-  let query = supabaseAdmin
-    .from("orders")
-    .select(scoped ? "*, order_brands!inner(brand_id, share)" : "*")
-    .eq("status", "paid")
-    .in("fulfillment_status", COUNTED_FULFILLMENT_STATUSES)
-    // Counted on the order's list day (migration 0062): the day a Pre-Order was
-    // changed to another status, else its own date.
-    .gte("list_at", ppDayStart(fromDate))
-    .lte("list_at", ppDayEnd(toDate))
-    .order("list_at", { ascending: false })
-    .order("id");
-  if (scoped) query = query.eq("order_brands.brand_id", brandId);
-  const { data, error } = await selectAll(query);
-
-  if (error) throw error;
+  // Only the columns the Accountance page and its CSV use (plus the money fields a
+  // business's share scales) -- a year of full order rows was ~3 MB, read and then
+  // sent to the browser. The pages are read in parallel (see readAllPages).
+  const columns = "id, subtotal, discount, tax, total, delivery_fee, payment_method, paid_at, list_at";
+  const rows = await readAllPages<Order & { order_brands?: { share: number }[] }>((withCount) => {
+    let query = supabaseAdmin
+      .from("orders")
+      .select(scoped ? `${columns}, order_brands!inner(brand_id, share)` : columns, {
+        count: withCount ? "exact" : undefined,
+      })
+      .eq("status", "paid")
+      .in("fulfillment_status", COUNTED_FULFILLMENT_STATUSES)
+      // Counted on the order's list day (migration 0062): the day a Pre-Order was
+      // changed to another status, else its own date.
+      .gte("list_at", ppDayStart(fromDate))
+      .lte("list_at", ppDayEnd(toDate));
+    if (scoped) query = query.eq("order_brands.brand_id", brandId);
+    return query.order("list_at", { ascending: false }).order("id");
+  });
   // paid_at is swapped for that same day, so the charts and CSV built from these
   // orders bucket them where their revenue is counted.
-  const orders = (data as unknown as (Order & { order_brands?: { share: number }[] })[]).map(
-    ({ order_brands, ...o }) =>
-      orderForBrandShare({ ...o, paid_at: o.list_at ?? o.paid_at } as Order, Number(order_brands?.[0]?.share ?? 1))
+  const orders = rows.map(({ order_brands, ...o }) =>
+    orderForBrandShare({ ...o, paid_at: o.list_at ?? o.paid_at } as Order, Number(order_brands?.[0]?.share ?? 1))
   );
   // A paid order with no payment_method recorded (create_online_order()
   // allows it, and it can be cleared via Edit) still got paid somehow --
@@ -272,7 +304,7 @@ export async function getRecentStockUpdates(brandId: string, days: number): Prom
 // taken off the site -- can be left out), and the subset of keys whose stock is actually counted
 // (add-ons and some products have no stock number, i.e. unlimited). null for a business with no
 // website or one that can't be reached -- the caller then falls back to the POS stock.
-async function websiteStock(
+export async function websiteStock(
   brandSlug: string
 ): Promise<{ units: number; keys: Set<string>; trackedKeys: Set<string> } | null> {
   const catalog = catalogForBrandSlug(brandSlug);
@@ -497,8 +529,9 @@ export async function getStockUnits(
   };
 }
 
-// Dashboard "Top Products" only counts items sold at a unit price above this ($).
-export const TOP_PRODUCT_MIN_PRICE = 20;
+// Dashboard "Top Products" counts items sold at a unit price above this ($): 0 = every product that was sold for
+// money, ranked by sales amount (it used to leave out anything priced $20 or less).
+export const TOP_PRODUCT_MIN_PRICE = 0;
 
 export type DashboardStats = {
   totalRevenue: number;
@@ -515,8 +548,8 @@ export type DashboardStats = {
     dailyRevenue: { date: string; total: number }[];
     dailyOrders: { date: string; total: number }[];
   }[];
-  // Best sellers in the selected range: branches ranked by revenue, top 10
-  // products ranked by units sold.
+  // Best sellers in the selected range: branches ranked by revenue, top 20
+  // products ranked by sales amount (dashboard_stats, migration 0101).
   topBranches: { name: string; revenue: number; orders: number }[];
   topProducts: { name: string; quantity: number; revenue: number }[];
   // Same [fromDate, toDate] scope as totalRevenue/orderCount -- see
@@ -629,11 +662,38 @@ type DashboardStatsRow = {
   expense_total: number;
 };
 
-export async function getDashboardStats(
+// The Dashboard's figures take ~1 s to work out (and its two filters can ask for the
+// same range again), so a result is kept for a short while per business and range,
+// and shared by loads that overlap. Per server instance only: a new order or
+// expense can take up to DASHBOARD_TTL_MS to show up here.
+const DASHBOARD_TTL_MS = 30_000;
+const DASHBOARD_CACHE_MAX = 40;
+const dashboardCache = new Map<string, { at: number; value: Promise<DashboardStats> }>();
+
+export function getDashboardStats(brandId: string, fromDate: string, toDate: string): Promise<DashboardStats> {
+  const key = `${brandId}|${fromDate}|${toDate}`;
+  const hit = dashboardCache.get(key);
+  if (hit && Date.now() - hit.at < DASHBOARD_TTL_MS) return hit.value;
+  const value = computeDashboardStats(brandId, fromDate, toDate);
+  const entry = { at: Date.now(), value };
+  dashboardCache.set(key, entry);
+  // A failed read isn't kept, and the oldest entries go first so the map stays small.
+  value.catch(() => {
+    if (dashboardCache.get(key) === entry) dashboardCache.delete(key);
+  });
+  while (dashboardCache.size > DASHBOARD_CACHE_MAX) dashboardCache.delete(dashboardCache.keys().next().value!);
+  return value;
+}
+
+async function computeDashboardStats(
   brandId: string,
   fromDate: string,
   toDate: string
 ): Promise<DashboardStats> {
+  // The Margin Report (used for Total COGS below) doesn't depend on the stats,
+  // so it starts now and runs alongside them instead of after.
+  const marginPromise = getMarginReport(brandId, fromDate, toDate).catch(() => null);
+
   // One database call: every figure below is summed in PostgreSQL (migration
   // 0071's dashboard_stats), so no orders / order lines / expenses reach Node.
   const { data, error } = await supabaseAdmin.rpc("dashboard_stats", {
@@ -686,19 +746,23 @@ export async function getDashboardStats(
     .map((b) => ({ ...b, revenue: round2(b.revenue) }))
     .sort((a, b) => b.revenue - a.revenue);
 
-  // Lines with no recorded cogs are priced from the product's current cost
-  // (one lookup per product); the rest was already summed in the database.
-  const uncosted = await sumCogsWithFallback(
-    stats.uncosted_lines.map((l) => ({ product_id: l.product_id, quantity: Number(l.quantity), cogs: null }))
-  );
-  let totalCogs = round2(Number(stats.known_cogs) + uncosted.totalCogs);
-  let hasUnknownCost = uncosted.hasUnknownCost;
   // Total COGS is the Margin Report's: the sum of the products that have a Total
   // COGS there (a product with no cost price adds nothing), so the two match.
-  const marginRows = await getMarginReport(brandId, fromDate, toDate).catch(() => null);
+  const marginRows = await marginPromise;
+  let totalCogs: number;
+  let hasUnknownCost: boolean;
   if (marginRows) {
     totalCogs = round2(marginRows.reduce((sum, r) => sum + (r.totalCogs ?? 0), 0));
     hasUnknownCost = marginRows.some((r) => r.totalCogs === null);
+  } else {
+    // Margin Report unavailable: lines with no recorded cogs are priced from the
+    // product's current cost (one lookup per product); the rest was already summed
+    // in the database.
+    const uncosted = await sumCogsWithFallback(
+      stats.uncosted_lines.map((l) => ({ product_id: l.product_id, quantity: Number(l.quantity), cogs: null }))
+    );
+    totalCogs = round2(Number(stats.known_cogs) + uncosted.totalCogs);
+    hasUnknownCost = uncosted.hasUnknownCost;
   }
   const topProducts = stats.top_products.map((p) => ({
     name: p.name ?? "—",
@@ -802,16 +866,26 @@ export type OrderListRow = {
   settledAt: string | null;
   // Flagged Unpaid from the list's row menu (migration 0059).
   isUnpaid: boolean;
+  // Placed by the customer on a storefront website (channel "online"), not at the POS.
+  isWebsite: boolean;
 };
 
 export type OrdersListParams = {
   status?: FulfillmentStatus;
+  // Only orders flagged Unpaid that aren't cancelled (nothing is owed on those).
+  unpaid?: boolean;
   brandId?: string;
+  // Where the order was placed: on a storefront website, or at the POS.
+  source?: "website" | "pos";
   q?: string;
   from?: string; // YYYY-MM-DD, Phnom Penh day
   to?: string; // YYYY-MM-DD, Phnom Penh day
   page?: number;
   limit?: number;
+  // Only the number of matches (`total`), no rows -- one head-only count query,
+  // without reading orders or working out invoice numbers. For the Orders page's
+  // summary cards.
+  countOnly?: boolean;
 };
 
 const DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -842,16 +916,25 @@ export async function getOrdersList(
   // just undefined until then).
   let query = supabaseAdmin
     .from("orders")
-    .select(brandId ? "*, brands!orders_brand_id_fkey(name), order_brands!inner(brand_id)" : "*, brands!orders_brand_id_fkey(name)", { count: "exact" })
-    .eq("status", "paid")
-    // By list_at, not paid_at: a Pre-Order that was changed to another status is
-    // filed under the day of that change (migration 0062) while the order keeps
-    // its own date and invoice number.
-    .order("list_at", { ascending: false })
-    .order("id")
-    .range(offset, offset + limit - 1);
+    .select(
+      params.countOnly
+        ? brandId
+          ? "id, order_brands!inner(brand_id)"
+          : "id"
+        : brandId
+          ? "*, brands!orders_brand_id_fkey(name), order_brands!inner(brand_id)"
+          : "*, brands!orders_brand_id_fkey(name)",
+      { count: "exact", head: params.countOnly }
+    )
+    .eq("status", "paid");
+  // By list_at, not paid_at: a Pre-Order that was changed to another status is
+  // filed under the day of that change (migration 0062) while the order keeps
+  // its own date and invoice number.
+  if (!params.countOnly) query = query.order("list_at", { ascending: false }).order("id").range(offset, offset + limit - 1);
 
   if (status) query = query.eq("fulfillment_status", status);
+  if (params.source) query = query.eq("channel", params.source === "website" ? "online" : "pos");
+  if (params.unpaid) query = query.eq("is_unpaid", true).neq("fulfillment_status", "cancelled");
   // An order shows under EVERY business it has products from (order_brands,
   // migration 0058), not just its main one.
   if (brandId) query = query.eq("order_brands.brand_id", brandId);
@@ -862,7 +945,16 @@ export async function getOrdersList(
     // A full invoice number (YYYYMM-N) is derived, not stored: resolve it to
     // the N-th paid order of that month.
     const invoice = /^(\d{4})(0[1-9]|1[0-2])-(\d+)$/.exec(q);
-    if (invoice) {
+    // A hand-typed number (migration 0087) is stored, so it matches directly.
+    const { data: custom } = await supabaseAdmin
+      .from("orders")
+      .select("id")
+      .eq("status", "paid")
+      .eq("custom_invoice_number", q)
+      .limit(1);
+    if (custom?.length) {
+      query = query.eq("id", custom[0].id);
+    } else if (invoice) {
       const { start, end } = invoiceMonthRange(invoice[1] + invoice[2]);
       const n = Number(invoice[3]);
       const { data: hit } = await supabaseAdmin
@@ -885,6 +977,7 @@ export async function getOrdersList(
 
   const { data, error, count } = await query;
   if (error) throw error;
+  if (params.countOnly) return { rows: [], total: count ?? 0 };
 
   type Row = {
     id: string;
@@ -898,12 +991,15 @@ export async function getOrdersList(
     settled_at?: string | null;
     list_at?: string | null;
     is_unpaid?: boolean;
+    channel?: string;
+    custom_invoice_number?: string | null;
     brands: { name: string } | null;
   };
 
   const rows: OrderListRow[] = ((data ?? []) as unknown as Row[]).map((o) => ({
     id: o.id,
-    invoiceNumber: null,
+    // A number typed in by hand wins over the YYYYMM-N one worked out below.
+    invoiceNumber: o.custom_invoice_number ?? null,
     brandId: o.brand_id,
     brandName: o.brands?.name ?? "—",
     customerName: o.customer_name,
@@ -915,6 +1011,7 @@ export async function getOrdersList(
     deliveryAt: o.delivery_at ?? null,
     settledAt: o.settled_at ?? null,
     isUnpaid: o.is_unpaid ?? false,
+    isWebsite: o.channel === "online",
   }));
 
   // Date-based invoice numbers (YYYYMM-N): an order's number is its position
@@ -930,7 +1027,7 @@ export async function getOrdersList(
     const seqById = seqs as unknown as Record<string, number>;
     for (const r of rows) {
       const n = seqById[r.id];
-      if (n) r.invoiceNumber = formatInvoiceNumber(r.paidAt, Number(n));
+      if (n && !r.invoiceNumber) r.invoiceNumber = formatInvoiceNumber(r.paidAt, Number(n));
     }
     return { rows, total: count ?? 0 };
   }
@@ -969,7 +1066,7 @@ export async function getOrdersList(
       const seq = new Map((span ?? []).map((o, i) => [o.id as string, (before ?? 0) + i + 1]));
       for (const r of group) {
         const n = seq.get(r.id);
-        if (n) r.invoiceNumber = formatInvoiceNumber(r.paidAt, n);
+        if (n && !r.invoiceNumber) r.invoiceNumber = formatInvoiceNumber(r.paidAt, n);
       }
     })
   );
@@ -1136,7 +1233,9 @@ export async function getInvoice(orderId: string): Promise<InvoiceData | null> {
   // Date-based invoice number: its position among that Phnom Penh month's
   // paid orders decides the -N suffix (1st of the month = YYYYMM-1).
   let invoiceNumber = `#${orderFields.id.slice(0, 8)}`;
-  if (orderFields.paid_at) {
+  if (orderFields.custom_invoice_number) {
+    invoiceNumber = orderFields.custom_invoice_number;
+  } else if (orderFields.paid_at) {
     const { count } = await supabaseAdmin
       .from("orders")
       .select("id", { count: "exact", head: true })
@@ -1439,9 +1538,14 @@ export async function getStockPickerItems(
   brandSlug: string,
   options?: { includeAddons?: boolean }
 ): Promise<StockPickerItem[]> {
-  const [{ products: posProducts }, catalog] = await Promise.all([
+  const catalog = catalogForBrandSlug(brandSlug);
+  // The POS products and the storefront's product and add-on lists are read at the same time (each is
+  // a separate round trip); a failed storefront read is null and falls back to POS-only below.
+  const settle = <T,>(p: Promise<T>) => p.then((value) => ({ value }), () => null);
+  const [{ products: posProducts }, sitePrefetch, addonPrefetch] = await Promise.all([
     getCatalogForBrand(brandId),
-    Promise.resolve(catalogForBrandSlug(brandSlug)),
+    catalog ? settle(listWebsiteProducts(catalog.id)) : null,
+    catalog && options?.includeAddons ? settle(listWebsiteAddons(catalog.id)) : null,
   ]);
 
   const items: StockPickerItem[] = [];
@@ -1449,7 +1553,8 @@ export async function getStockPickerItems(
 
   if (catalog) {
     try {
-      const siteProducts = await listWebsiteProducts(catalog.id);
+      if (!sitePrefetch) throw new Error("Storefront unreachable");
+      const siteProducts = sitePrefetch.value;
       for (const wp of siteProducts) {
         const isVariable =
           (wp.type === "variable" || wp.type === "variant") && (wp.variations?.length ?? 0) > 0;
@@ -1513,7 +1618,8 @@ export async function getStockPickerItems(
 
     if (options?.includeAddons) {
       try {
-        const addons = await listWebsiteAddons(catalog.id);
+        if (!addonPrefetch) throw new Error("Storefront unreachable");
+        const addons = addonPrefetch.value;
         for (const a of addons) {
           const addonKey = `${a.id}::`;
           const linked =
@@ -1560,12 +1666,24 @@ export async function getStockPickerItems(
 
 export type MarginReportRow = {
   productId: string;
+  // Every POS product behind the row, `productId` (the one with the most revenue) included. More than one when
+  // products have the same name -- same weight / size -- and are shown as one row; a different weight or size is
+  // its own row. Editing the row's cost or price edits all of them.
+  productIds: string[];
   name: string;
   // The product's picture (its POS copy, kept in step with the website's).
   imageUrl: string | null;
   categoryName: string | null;
   unitsSold: number;
+  // What customers paid for this product: the invoice Grand Total's share, i.e. the
+  // sold lines less the order-level discount plus the order's delivery fee (see
+  // getOrderAdjustmentsByProduct).
   revenue: number;
+  // The same without the discount, so a discounted row can show what it was.
+  revenueBeforeDiscount: number;
+  // This product's share of the order-level discounts / delivery fees in range.
+  discount: number;
+  deliveryFee: number;
   // The product's current cost (Stock's), the same for every date range; only
   // a product with no current cost falls back to the latest cost recorded in
   // range. null (not 0/undefined) when there's no cost at all -- never a
@@ -1591,6 +1709,90 @@ export type MarginReportRow = {
   hasUnknownCost: boolean;
 };
 
+// An order's delivery fee is stored on the order, not its lines, so it is spread over the
+// order's lines in proportion to their totals (in whole cents, so the shares add up to the
+// order's exact amount) and summed per product -- same orders, dates and business scoping as
+// the Margin Report. The order-level discount is deliberately not spread (see below).
+async function getOrderAdjustmentsByProduct(
+  brandId: string,
+  fromDate: string,
+  toDate: string
+): Promise<Map<string, { discount: number; deliveryFee: number }>> {
+  const { data, error } = await selectAll(
+    supabaseAdmin
+      .from("orders")
+      .select("id, discount, delivery_fee, order_items(product_id, line_total, products(brand_id))")
+      .eq("status", "paid")
+      .in("fulfillment_status", COUNTED_FULFILLMENT_STATUSES)
+      .gt("delivery_fee", 0)
+      .gte("list_at", ppDayStart(fromDate))
+      .lte("list_at", ppDayEnd(toDate))
+      .order("id")
+  );
+  if (error) throw new Error(error.message);
+  const byProduct = new Map<string, { discount: number; deliveryFee: number }>();
+  for (const o of data as unknown as {
+    discount: number;
+    delivery_fee: number | null;
+    order_items: { product_id: string; line_total: number; products: { brand_id: string } | null }[];
+  }[]) {
+    if (o.order_items.length === 0) continue;
+    const weights = o.order_items.map((i) => Number(i.line_total));
+    // An order-level discount is not any one product's: it is no longer spread over the lines, so
+    // each product keeps the price it sold at (the discount shows on the invoice / order totals).
+    const deliveryFees = splitByWeight(Number(o.delivery_fee ?? 0), weights);
+    o.order_items.forEach((i, n) => {
+      if (brandId !== ALL_BUSINESSES_ID && i.products?.brand_id !== brandId) return;
+      const e = byProduct.get(i.product_id) ?? { discount: 0, deliveryFee: 0 };
+      e.deliveryFee = round2(e.deliveryFee + deliveryFees[n]);
+      byProduct.set(i.product_id, e);
+    });
+  }
+  return byProduct;
+}
+
+// What the Margin Report's Grand Total row takes off the product rows' revenue (their sold lines plus
+// delivery): the order-level discounts in range, worked out per order as lines + delivery - the order's
+// saved total, so the Grand Total is the sum of the orders' totals -- the Dashboard's Total Revenue --
+// to the cent (an order whose lines add up a cent differently from its saved total included). Same
+// orders, dates and business scoping as the report: for one business only its products' share of each
+// order's amount (spread over the order's lines by their totals, as delivery fees are).
+export async function getMarginOrderDiscountTotal(
+  brandId: string,
+  fromDate: string,
+  toDate: string
+): Promise<number> {
+  const { data, error } = await selectAll(
+    supabaseAdmin
+      .from("orders")
+      .select("id, total, delivery_fee, order_items(line_total, products(brand_id))")
+      .eq("status", "paid")
+      .in("fulfillment_status", COUNTED_FULFILLMENT_STATUSES)
+      .gt("discount", 0)
+      .gte("list_at", ppDayStart(fromDate))
+      .lte("list_at", ppDayEnd(toDate))
+      .order("id")
+  );
+  if (error) throw new Error(error.message);
+  let total = 0;
+  for (const o of data as unknown as {
+    total: number;
+    delivery_fee: number | null;
+    order_items: { line_total: number; products: { brand_id: string } | null }[];
+  }[]) {
+    if (o.order_items.length === 0) continue;
+    const weights = o.order_items.map((i) => Number(i.line_total));
+    const lines = weights.reduce((sum, w) => sum + w, 0);
+    const taken = round2(lines + Number(o.delivery_fee ?? 0) - Number(o.total));
+    const shares = splitByWeight(taken, weights);
+    o.order_items.forEach((i, n) => {
+      if (brandId !== ALL_BUSINESSES_ID && i.products?.brand_id !== brandId) return;
+      total = round2(total + shares[n]);
+    });
+  }
+  return total;
+}
+
 // Per-product breakdown behind the COGS tab's Margin Report table (req #9) --
 // same brand/date-range scoping as getCogsSummary, grouped by product.
 export async function getMarginReport(
@@ -1610,13 +1812,18 @@ export async function getMarginReport(
 
   // Grouped in the database (migration 0075): each product comes back with its
   // lines already collapsed to one per recorded unit cost. If that isn't applied
-  // yet, read every sold line and group them here (slower) -- same numbers.
-  const { data: report, error: reportError } = await supabaseAdmin.rpc("margin_report", {
-    p_statuses: COUNTED_FULFILLMENT_STATUSES,
-    p_brand_id: brandId === ALL_BUSINESSES_ID ? null : brandId,
-    p_from: ppDayStart(fromDate),
-    p_to: ppDayEnd(toDate),
-  });
+  // yet, read every sold line and group them here (slower) -- same numbers. More
+  // than one day reads every line too, since Total COGS is costed day by day
+  // (summarizeCogsByDay) and the grouped lines no longer say which day each was.
+  const multiDay = fromDate !== toDate;
+  const { data: report, error: reportError } = multiDay
+    ? { data: null, error: null }
+    : await supabaseAdmin.rpc("margin_report", {
+        p_statuses: COUNTED_FULFILLMENT_STATUSES,
+        p_brand_id: brandId === ALL_BUSINESSES_ID ? null : brandId,
+        p_from: ppDayStart(fromDate),
+        p_to: ppDayEnd(toDate),
+      });
   if (!reportError && report) {
     const rows = report as unknown as {
       product_id: string;
@@ -1715,46 +1922,109 @@ export async function getMarginReport(
 
   // The grouped report doesn't carry pictures, so read them for the rows shown
   // (in chunks, like the product lookup above).
-  const imageIds = [...byProduct.keys()];
-  const imagePages = await Promise.all(
-    Array.from({ length: Math.ceil(imageIds.length / 150) }, (_, i) =>
-      supabaseAdmin
-        .from("products")
-        .select("id, image_url")
-        .in("id", imageIds.slice(i * 150, (i + 1) * 150))
-    )
-  );
-  const imageById = new Map<string, string | null>();
-  for (const { data } of imagePages) for (const p of data ?? []) imageById.set(p.id, p.image_url);
-
+  //
   // Unit Cost is each product's current cost (see getEffectiveProductCost), so
   // it reads the same whichever date range is viewed. Stock's "Total Cost 10%"
   // is what it is taken from when that's filled in.
-  const currentCostByProduct = await getEffectiveProductCosts([...byProduct.keys()]).catch(
-    () => new Map<string, number | null>()
-  );
+  //
+  // None of these four lookups needs another's result, so they run together.
+  const imageIds = [...byProduct.keys()];
+  const [imagePages, currentCostByProduct, cost10ByProduct, adjustmentsByProduct] = await Promise.all([
+    Promise.all(
+      Array.from({ length: Math.ceil(imageIds.length / 150) }, (_, i) =>
+        supabaseAdmin
+          .from("products")
+          .select("id, image_url, brand_id")
+          .in("id", imageIds.slice(i * 150, (i + 1) * 150))
+      )
+    ),
+    getEffectiveProductCosts([...byProduct.keys()]).catch(() => new Map<string, number | null>()),
+    getLinkedStockCost10pcts([...byProduct.keys()]).catch(() => new Map<string, number | null>()),
+    getOrderAdjustmentsByProduct(brandId, fromDate, toDate).catch(
+      () => new Map<string, { discount: number; deliveryFee: number }>()
+    ),
+  ]);
+  const imageById = new Map<string, string | null>();
+  const brandById = new Map<string, string>();
+  for (const { data } of imagePages) {
+    for (const p of data ?? []) {
+      imageById.set(p.id, p.image_url);
+      brandById.set(p.id, p.brand_id);
+    }
+  }
   // A product linked to a Stock listing takes its Unit Cost from Total Cost 10%
   // only (null when empty) -- not Stock's Total, a typed cost or a recorded sale.
-  const cost10ByProduct = await getLinkedStockCost10pcts([...byProduct.keys()]).catch(
-    () => new Map<string, number | null>()
-  );
   for (const [id, c] of cost10ByProduct) currentCostByProduct.set(id, c);
 
-  const rows = Array.from(byProduct.entries()).map(([productId, lines]) => {
+  // One row per product...
+  const singleRows = Array.from(byProduct.entries()).map(([productId, lines]) => {
     const product = productById.get(productId);
-    const summary = summarizeMarginLines(
-      lines,
-      currentCostByProduct.get(productId) ?? null,
-      cost10ByProduct.has(productId)
-    );
-    return {
+    const linked = cost10ByProduct.has(productId);
+    const currentCost = currentCostByProduct.get(productId) ?? null;
+    const summary = summarizeMarginLines(lines, currentCost, linked);
+    // Costed day by day and added up (the range as one costs a few cents differently).
+    const totalCogs = multiDay ? summarizeCogsByDay(lines, currentCost, linked) : summary.totalCogs;
+    const adjustment = adjustmentsByProduct.get(productId);
+    const discount = Math.min(round2(adjustment?.discount ?? 0), summary.revenue);
+    const deliveryFee = round2(adjustment?.deliveryFee ?? 0);
+    const revenue = round2(summary.revenue - discount + deliveryFee);
+    const row = {
       productId,
+      productIds: [productId],
       name: product?.name ?? "—",
       imageUrl: imageById.get(productId) ?? product?.image_url ?? null,
       categoryName: (product?.categories as { name: string } | null)?.name ?? null,
       ...summary,
+      totalCogs,
+      revenue,
+      revenueBeforeDiscount: round2(summary.revenue + deliveryFee),
+      discount,
+      deliveryFee,
+      ...computeGrossMargin(revenue, totalCogs),
       suggestedCost: null as number | null,
       sellingPrice: product?.price ?? round2(summary.revenue / summary.unitsSold),
+    };
+    return { row, lines, currentCost, linked };
+  });
+
+  // ...then products with the same name (the weight / size is part of it: "Salmon Roe Ikura (250g)") of the same
+  // business are one row, their sales added up; a different weight or size stays a row of its own.
+  const sameName = new Map<string, typeof singleRows>();
+  for (const s of singleRows) {
+    const named = productById.get(s.row.productId)?.name;
+    const key = named
+      ? `${brandById.get(s.row.productId) ?? ""}|${named.toLowerCase().replace(/\s+/g, " ").trim()}`
+      : `id|${s.row.productId}`;
+    sameName.set(key, [...(sameName.get(key) ?? []), s]);
+  }
+  const rows = [...sameName.values()].map((group) => {
+    if (group.length === 1) return group[0].row;
+    const ranked = [...group].sort((a, b) => b.row.revenue - a.row.revenue);
+    const primary = ranked[0];
+    // Every line at the cost it was sold with (a Stock-linked product's at its current cost), added up as one.
+    const resolved = group.map((s) => resolveMarginLines(s.lines, s.currentCost, s.linked));
+    const allLines = resolved.flatMap((r) => r.lines);
+    const costs = group.map((s, i) => (s.linked ? resolved[i].unitCost : s.currentCost));
+    // One Unit Cost when every product has the same; otherwise the biggest product's -- the "sold at" list
+    // underneath then shows what the others were sold at.
+    const unitCostNow = costs.every((c) => c !== null && c === costs[0]) ? costs[0] : primary.row.unitCost;
+    const summary = summarizeMarginLines(allLines, unitCostNow, false);
+    const totalCogs = multiDay ? summarizeCogsByDay(allLines, unitCostNow, false) : summary.totalCogs;
+    const revenue = round2(group.reduce((sum, s) => sum + s.row.revenue, 0));
+    const prices = group.map((s) => s.row.sellingPrice);
+    return {
+      ...primary.row,
+      productIds: ranked.map((s) => s.row.productId),
+      imageUrl: ranked.map((s) => s.row.imageUrl).find(Boolean) ?? null,
+      categoryName: ranked.map((s) => s.row.categoryName).find(Boolean) ?? null,
+      ...summary,
+      totalCogs,
+      revenue,
+      revenueBeforeDiscount: round2(group.reduce((sum, s) => sum + s.row.revenueBeforeDiscount, 0)),
+      discount: round2(group.reduce((sum, s) => sum + s.row.discount, 0)),
+      deliveryFee: round2(group.reduce((sum, s) => sum + s.row.deliveryFee, 0)),
+      ...computeGrossMargin(revenue, totalCogs),
+      sellingPrice: prices.every((p) => p === prices[0]) ? prices[0] : primary.row.sellingPrice,
     };
   });
 
@@ -1767,7 +2037,12 @@ export async function getMarginReport(
 
 export type ProductMarginDetail = {
   name: string;
+  // revenue / grossProfit / grossMarginPct follow the invoice Grand Total (see
+  // MarginReportRow.revenue).
   summary: ReturnType<typeof summarizeMarginLines>;
+  revenueBeforeDiscount: number;
+  discount: number;
+  deliveryFee: number;
   // Every cost the product was sold at in range, with its units -- the full
   // list behind the Margin Report row's short "N sold at $x" preview.
   costBreakdown: { unitCost: number; units: number; cogs: number; share: number }[];
@@ -1812,37 +2087,50 @@ export async function getProductMarginDetail(
 
   const cost10Map = await getLinkedStockCost10pcts([productId]).catch(() => new Map<string, number | null>());
   const linked = cost10Map.has(productId);
-  const cost10 = cost10Map.get(productId) ?? null;
+  // A cost typed into the report (on every line, all at one cost) wins over Total Cost 10%.
+  const recordedCosts = new Set(items.map((i) => (i.unit_cost === null ? null : round2(Number(i.unit_cost)))));
+  const typedCost =
+    items.length > 0 && items.every((i) => i.cost_source === "report") && recordedCosts.size === 1
+      ? [...recordedCosts][0]
+      : null;
+  const cost10 = typedCost ?? cost10Map.get(productId) ?? null;
+
+  const saleDate = (i: (typeof items)[number]) => {
+    const o = i.orders as unknown as { list_at: string | null; paid_at: string | null } | null;
+    return o?.list_at ?? o?.paid_at ?? null;
+  };
+  // A sale's cost and COGS as shown: recorded ones (new process), or a linked product's Total Cost 10% (old).
+  const saleCost = (i: (typeof items)[number], field: "unit" | "cogs"): number | null => {
+    const typed = i.cost_source === "report";
+    const paidAt = saleDate(i);
+    const oldProcess = paidAt !== null && ppDay(paidAt) < SALE_TIME_COST_FROM;
+    if (linked && !typed && (oldProcess || cost10 === null)) {
+      const c = cost10;
+      return c === null ? null : field === "unit" ? c : round2(c * Number(i.quantity));
+    }
+    if (field === "unit")
+      return i.unit_cost === null ? (i.cogs === null ? null : round2(Number(i.cogs) / Number(i.quantity))) : Number(i.unit_cost);
+    return i.cogs === null ? null : Number(i.cogs);
+  };
 
   const sales = items
     .map((i) => ({
-      costOverridden: i.cost_source === "report",
       orderId: i.order_id,
       paidAt: (i.orders as unknown as { list_at: string | null; paid_at: string | null } | null)?.list_at ?? (i.orders as unknown as { paid_at: string | null } | null)?.paid_at ?? null,
       quantity: Number(i.quantity),
       unitPrice: Number(i.unit_price),
-      // Each sale keeps the cost it was recorded at; a linked product's sale with none is
-      // costed at its Total Cost 10% (see summarizeMarginLines).
-      unitCost:
-        i.unit_cost === null
-          ? i.cogs === null
-            ? linked
-              ? cost10
-              : null
-            : round2(Number(i.cogs) / Number(i.quantity))
-          : Number(i.unit_cost),
+      // From SALE_TIME_COST_FROM each sale keeps the cost it was sold with; before it, a linked product's sales are
+      // costed at its Total Cost 10% (or the cost typed into the report) -- see summarizeMarginLines.
+      costOverridden: i.cost_source === "report",
+      unitCost: saleCost(i, "unit"),
       lineTotal: Number(i.line_total),
-      cogs:
-        i.cogs === null
-          ? linked && i.unit_cost === null && cost10 !== null
-            ? round2(cost10 * Number(i.quantity))
-            : null
-          : Number(i.cogs),
+      cogs: saleCost(i, "cogs"),
     }))
     .sort((a, b) => (b.paidAt ?? "").localeCompare(a.paidAt ?? ""));
 
   const lines: MarginLine[] = sales.map((s) => ({
     quantity: s.quantity,
+    unitPrice: s.unitPrice,
     lineTotal: s.lineTotal,
     cogs: s.cogs,
     unitCost: s.unitCost,
@@ -1852,7 +2140,23 @@ export async function getProductMarginDetail(
   const currentCost = linked
     ? cost10
     : await getEffectiveProductCost(productId).catch(() => null);
-  const summary = summarizeMarginLines(lines, currentCost, linked);
+  const rangeSummary = summarizeMarginLines(lines, currentCost, linked);
+  // Costed day by day and added up, like the Margin Report row it opens from.
+  const baseSummary =
+    fromDate === toDate ? rangeSummary : { ...rangeSummary, totalCogs: summarizeCogsByDay(lines, currentCost, linked) };
+  const adjustment = (
+    await getOrderAdjustmentsByProduct(brandId, fromDate, toDate).catch(
+      () => new Map<string, { discount: number; deliveryFee: number }>()
+    )
+  ).get(productId);
+  const discount = Math.min(round2(adjustment?.discount ?? 0), baseSummary.revenue);
+  const deliveryFee = round2(adjustment?.deliveryFee ?? 0);
+  const netRevenue = round2(baseSummary.revenue - discount + deliveryFee);
+  const summary = {
+    ...baseSummary,
+    revenue: netRevenue,
+    ...computeGrossMargin(netRevenue, baseSummary.totalCogs),
+  };
   const totalUnits = lines.reduce((s, l) => s + l.quantity, 0);
   const costBreakdown = unitsSoldByCost(lines).map((c) => ({
     ...c,
@@ -1860,7 +2164,66 @@ export async function getProductMarginDetail(
     share: totalUnits === 0 ? 0 : round2((c.units / totalUnits) * 100),
   }));
 
-  return { name: product.name, summary, costBreakdown, sales };
+  return { name: product.name, summary, revenueBeforeDiscount: round2(baseSummary.revenue + deliveryFee), discount, deliveryFee, costBreakdown, sales };
+}
+
+// A Margin Report row that is several same-named products (see MarginReportRow.productIds) opened up: each
+// product's detail added together -- every sale, the cost breakdown and the totals.
+export async function getMergedProductMarginDetail(
+  productIds: string[],
+  brandId: string,
+  fromDate: string,
+  toDate: string
+): Promise<ProductMarginDetail | null> {
+  const parts = (await Promise.all(productIds.map((id) => getProductMarginDetail(id, brandId, fromDate, toDate)))).filter(
+    (p): p is ProductMarginDetail => p !== null
+  );
+  if (parts.length <= 1) return parts[0] ?? null;
+  const primary = [...parts].sort((a, b) => b.summary.revenue - a.summary.revenue)[0];
+
+  const byCost = new Map<number, { units: number; cogs: number }>();
+  for (const p of parts) {
+    for (const c of p.costBreakdown) {
+      const e = byCost.get(c.unitCost) ?? { units: 0, cogs: 0 };
+      e.units += c.units;
+      e.cogs += c.cogs;
+      byCost.set(c.unitCost, e);
+    }
+  }
+  const totalUnits = [...byCost.values()].reduce((s, e) => s + e.units, 0);
+  const costBreakdown = [...byCost]
+    .map(([unitCost, e]) => ({
+      unitCost,
+      units: round2(e.units),
+      cogs: round2(e.cogs),
+      share: totalUnits === 0 ? 0 : round2((e.units / totalUnits) * 100),
+    }))
+    .sort((a, b) => b.units - a.units);
+
+  const revenue = round2(parts.reduce((s, p) => s + p.summary.revenue, 0));
+  const totalCogs = parts.some((p) => p.summary.totalCogs === null)
+    ? null
+    : round2(parts.reduce((s, p) => s + (p.summary.totalCogs ?? 0), 0));
+  const costs = parts.map((p) => p.summary.unitCost);
+  const summary = {
+    ...primary.summary,
+    unitsSold: round2(parts.reduce((s, p) => s + p.summary.unitsSold, 0)),
+    revenue,
+    unitCost: costs.every((c) => c !== null && c === costs[0]) ? costs[0] : primary.summary.unitCost,
+    soldAt: [],
+    totalCogs,
+    ...computeGrossMargin(revenue, totalCogs),
+    hasUnknownCost: parts.some((p) => p.summary.hasUnknownCost),
+  };
+  return {
+    name: primary.name,
+    summary,
+    revenueBeforeDiscount: round2(parts.reduce((s, p) => s + p.revenueBeforeDiscount, 0)),
+    discount: round2(parts.reduce((s, p) => s + p.discount, 0)),
+    deliveryFee: round2(parts.reduce((s, p) => s + p.deliveryFee, 0)),
+    costBreakdown,
+    sales: parts.flatMap((p) => p.sales).sort((a, b) => (b.paidAt ?? "").localeCompare(a.paidAt ?? "")),
+  };
 }
 
 export async function getExpensesForDateRange(
@@ -1879,4 +2242,505 @@ export async function getExpensesForDateRange(
 
   if (error) throw error;
   return data ?? [];
+}
+
+// The Expense Ads typed in the Margin Report for a month (migration 0102), by product id.
+export async function getProductAdsExpenses(month: string): Promise<Record<string, number>> {
+  const { data, error } = await supabaseAdmin
+    .from("product_ads_expenses")
+    .select("product_id, amount")
+    .eq("month", month);
+  if (error) throw error;
+  return Object.fromEntries((data ?? []).map((r) => [r.product_id, Number(r.amount)]));
+}
+
+type OwnLedgerRow = {
+  id: string;
+  name: string;
+  unit: string;
+  unit_price: number;
+  category?: string | null;
+  first_month?: string | null;
+  stock_product_id?: string | null;
+};
+
+// The names of the Stock products some ledger products are linked to.
+async function stockLinkNames(rows: OwnLedgerRow[]): Promise<Map<string, string>> {
+  const linkIds = [...new Set(rows.map((o) => o.stock_product_id).filter((id): id is string => !!id))];
+  const linkNames = new Map<string, string>();
+  const pages = await Promise.all(
+    Array.from({ length: Math.ceil(linkIds.length / 100) }, (_, i) =>
+      supabaseAdmin.from("products").select("id, name").in("id", linkIds.slice(i * 100, (i + 1) * 100))
+    )
+  );
+  for (const { data } of pages) for (const p of data ?? []) linkNames.set(p.id, p.name);
+  return linkNames;
+}
+
+// The ledger products and typed values in the shape buildDailyLedger takes.
+function shapeOwnLedger(rows: OwnLedgerRow[], linkNames: Map<string, string>, typed: { product_id: string; field: string; value: string }[]) {
+  return {
+    products: rows.map((o) => ({
+      id: `${LEDGER_OWN_PREFIX}${o.id}`,
+      sku: null,
+      fullName: o.name,
+      name: o.name,
+      size: "",
+      deletion: { kind: "own" } as const,
+      ...(o.stock_product_id && linkNames.has(o.stock_product_id)
+        ? { stockLink: { id: o.stock_product_id, name: linkNames.get(o.stock_product_id)! } }
+        : {}),
+      unit: o.unit,
+      categoryName: o.category?.trim() || "Added in ledger",
+      price: Number(o.unit_price),
+      originalCost: null,
+      cost10: null,
+      quantityNow: 0,
+      cost: null,
+    })),
+    entries: typed.map((e) => ({
+      productId: `${LEDGER_OWN_PREFIX}${e.product_id}`,
+      field: e.field,
+      value: e.value,
+    })),
+  };
+}
+
+// Products added from the ledger itself (migrations 0091 / 0092) and what was typed into them, in the
+// shape buildDailyLedger takes. Before migration 0091 is applied there are none.
+async function getOwnLedgerProducts(brandId: string, month: string) {
+  const ownQuery = (columns: string) =>
+    supabaseAdmin.from("daily_ledger_products").select(columns).eq("brand_id", brandId).order("created_at");
+  // category is migration 0092 and first_month 0093; without them the products still show, under
+  // "Added in ledger" and in every month.
+  // stock_product_id is migration 0100 (the link to a Stock product); without it nothing is linked.
+  let res = await ownQuery("id, name, unit, unit_price, category, first_month, stock_product_id");
+  if (res.error && /stock_product_id/.test(res.error.message)) res = await ownQuery("id, name, unit, unit_price, category, first_month");
+  if (res.error && /first_month/.test(res.error.message)) res = await ownQuery("id, name, unit, unit_price, category");
+  if (res.error && /category/.test(res.error.message)) res = await ownQuery("id, name, unit, unit_price");
+  if (res.error && !/daily_ledger_products/.test(res.error.message)) throw res.error;
+  const rows = ((res.error ? [] : (res.data ?? [])) as unknown as OwnLedgerRow[]).filter(
+    (o) => !o.first_month || o.first_month <= month
+  );
+  const linkNames = await stockLinkNames(rows);
+  // Joined to the products (not .in(ids)): hundreds of ids would overflow the request URL.
+  const typedRes = rows.length
+    ? await selectAll(
+        supabaseAdmin
+          .from("daily_ledger_product_entries")
+          .select("product_id, field, value, daily_ledger_products!inner(brand_id)")
+          .eq("daily_ledger_products.brand_id", brandId)
+          .eq("month", month)
+          .order("product_id")
+          .order("field")
+      )
+    : null;
+  if (typedRes?.error) throw typedRes.error;
+  return shapeOwnLedger(rows, linkNames, (typedRes?.data ?? []) as unknown as { product_id: string; field: string; value: string }[]);
+}
+
+export const LEDGER_PAGE_SIZES = [25, 50, 100, 200];
+
+export type DailyLedgerPage = {
+  rows: DailyLedgerRow[];
+  // How many products match the search (all pages), and which page this is.
+  total: number;
+  page: number;
+  pageCount: number;
+  // Every category of the business, for the Add product popup (the rows are only one page of it).
+  categories: string[];
+};
+
+// One page of the Daily Ledger: only `limit` products (by category, then name) -- the ones matching `q` in
+// their name, category or SKU -- and only their typed values for the month. The ledger holds hundreds of
+// products with thousands of values per month, so reading and drawing them all made the page slow.
+// Falls back to the whole ledger when the columns it pages on (migrations 0092 / 0093) are missing.
+export async function getDailyLedgerPage(
+  brandId: string,
+  month: string,
+  opts: { q: string; page: number; limit: number }
+): Promise<DailyLedgerPage> {
+  const term = opts.q.replace(/[,()%*\\]/g, " ").trim();
+  const limit = LEDGER_PAGE_SIZES.includes(opts.limit) ? opts.limit : 50;
+
+  // The SKU is a typed value of the month, so a search for it goes through those.
+  let skuIds: string[] = [];
+  if (term) {
+    const { data } = await supabaseAdmin
+      .from("daily_ledger_product_entries")
+      .select("product_id, daily_ledger_products!inner(brand_id)")
+      .eq("daily_ledger_products.brand_id", brandId)
+      .eq("month", month)
+      .eq("field", "sku")
+      .ilike("value", `%${term}%`)
+      .limit(1000);
+    skuIds = [...new Set((data ?? []).map((e) => e.product_id as string))];
+  }
+
+  const productPage = (columns: string, page: number) => {
+    let query = supabaseAdmin
+      .from("daily_ledger_products")
+      .select(columns, { count: "exact" })
+      .eq("brand_id", brandId)
+      .or(`first_month.is.null,first_month.lte.${month}`);
+    if (term) {
+      query = query.or(
+        [`name.ilike.%${term}%`, `category.ilike.%${term}%`, ...(skuIds.length ? [`id.in.(${skuIds.join(",")})`] : [])].join(",")
+      );
+    }
+    return query
+      .order("category", { ascending: true, nullsFirst: false })
+      .order("name")
+      .order("id")
+      .range((page - 1) * limit, page * limit - 1);
+  };
+  const withLink = "id, name, unit, unit_price, category, first_month, stock_product_id";
+  const withoutLink = "id, name, unit, unit_price, category, first_month";
+  const fetchPage = async (page: number) => {
+    const first = await productPage(withLink, page);
+    return first.error && /stock_product_id/.test(first.error.message) ? productPage(withoutLink, page) : first;
+  };
+  const categoriesPromise = Promise.resolve(
+    supabaseAdmin.from("daily_ledger_products").select("category").eq("brand_id", brandId).limit(5000)
+  ).then(({ data }) =>
+    [...new Set((data ?? []).map((r) => (r.category ?? "").trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b))
+  );
+
+  let page = Math.max(1, Math.floor(opts.page) || 1);
+  let res = await fetchPage(page);
+  if (res.error) {
+    // An older database (no category / first_month to page on): the whole ledger, as before.
+    const all = await getDailyLedger(brandId, month);
+    return { rows: all, total: all.length, page: 1, pageCount: 1, categories: await categoriesPromise.catch(() => [] as string[]) };
+  }
+  const total = res.count ?? 0;
+  const pageCount = Math.max(1, Math.ceil(total / limit));
+  if (page > pageCount) {
+    // A page past the end (a search narrowed the list): the last one instead of nothing.
+    page = pageCount;
+    res = await fetchPage(page);
+    if (res.error) throw res.error;
+  }
+  const rows = (res.data ?? []) as unknown as OwnLedgerRow[];
+
+  const ids = rows.map((r) => r.id);
+  const [linkNames, typed, categories] = await Promise.all([
+    stockLinkNames(rows),
+    ids.length
+      ? supabaseAdmin
+          .from("daily_ledger_product_entries")
+          .select("product_id, field, value")
+          .in("product_id", ids)
+          .eq("month", month)
+          .limit(ids.length * 200)
+      : Promise.resolve({ data: [], error: null }),
+    categoriesPromise.catch(() => [] as string[]),
+  ]);
+  if (typed.error) throw typed.error;
+  const own = shapeOwnLedger(rows, linkNames, (typed.data ?? []) as { product_id: string; field: string; value: string }[]);
+  return {
+    rows: buildDailyLedger({
+      month,
+      today: ppToday(),
+      products: own.products,
+      movements: [],
+      movementsAfter: [],
+      purchases: [],
+      sold: [],
+      other: [],
+      entries: own.entries,
+    }),
+    total,
+    page,
+    pageCount,
+    categories,
+  };
+}
+
+// The Daily Ledger lists only the products added to it (from the import or "Add product"), not Stock's.
+// Set to true to list the business's Stock products in it as well.
+const LEDGER_INCLUDES_STOCK = false;
+
+// The Daily Ledger's data (see lib/dailyLedger.ts): one business, one month ("YYYY-MM").
+export async function getDailyLedger(brandId: string, month: string): Promise<DailyLedgerRow[]> {
+  if (!LEDGER_INCLUDES_STOCK) {
+    const own = await getOwnLedgerProducts(brandId, month);
+    return buildDailyLedger({
+      month,
+      today: ppToday(),
+      products: own.products,
+      movements: [],
+      movementsAfter: [],
+      purchases: [],
+      sold: [],
+      other: [],
+      entries: own.entries,
+    });
+  }
+  const days = daysOfMonth(month);
+  const fromDay = days[0];
+  const toDay = days[days.length - 1];
+  const from = ppDayStart(fromDay);
+  const to = ppDayEnd(toDay);
+
+  const [products, movements, movementsAfter, adjustments, soldLines] = await Promise.all([
+    selectAll(
+      supabaseAdmin
+        .from("products")
+        .select("id, sku, name, unit, price, pos_only, is_active, categories(name), stock_levels(quantity), product_site_links(site_product_id, variation_id)")
+        .eq("brand_id", brandId)
+        .order("id")
+    ),
+    selectAll(
+      supabaseAdmin
+        .from("stock_movements")
+        .select("product_id, delta, created_at, products!inner(brand_id)")
+        .eq("products.brand_id", brandId)
+        .gte("created_at", from)
+        .lte("created_at", to)
+        .order("id")
+    ),
+    selectAll(
+      supabaseAdmin
+        .from("stock_movements")
+        .select("product_id, delta, products!inner(brand_id)")
+        .eq("products.brand_id", brandId)
+        .gt("created_at", to)
+        .order("id")
+    ),
+    selectAll(
+      supabaseAdmin
+        .from("stock_adjustments")
+        .select("product_id, delta, reason, created_at, products!inner(brand_id)")
+        .eq("products.brand_id", brandId)
+        .gte("created_at", from)
+        .lte("created_at", to)
+        .order("id")
+    ),
+    selectAll(
+      supabaseAdmin
+        .from("order_items")
+        .select(
+          "product_id, quantity, products!inner(brand_id, stock_units_per_sale), orders!inner(status, list_at)"
+        )
+        .eq("products.brand_id", brandId)
+        .eq("orders.status", "paid")
+        .in("orders.fulfillment_status", COUNTED_FULFILLMENT_STATUSES)
+        .gte("orders.list_at", from)
+        .lte("orders.list_at", to)
+        .order("id")
+    ),
+  ]);
+  for (const r of [products, movements, movementsAfter, adjustments, soldLines]) if (r.error) throw r.error;
+
+  // What staff typed into the ledger for this month (migration 0089). Before that migration is
+  // applied the ledger just shows the worked-out numbers.
+  const typed = await selectAll(
+    supabaseAdmin
+      .from("daily_ledger_entries")
+      .select("product_id, field, value, products!inner(brand_id)")
+      .eq("products.brand_id", brandId)
+      .eq("month", month)
+      .order("product_id")
+      .order("field")
+  );
+  if (typed.error && !/daily_ledger_entries/.test(typed.error.message)) throw typed.error;
+
+  // Removed products dropped from the ledger with its Delete button (migration 0090; before it is
+  // applied nothing is hidden).
+  const hiddenRes = await selectAll(supabaseAdmin.from("daily_ledger_hidden").select("product_id").order("product_id"));
+  if (hiddenRes.error && !/daily_ledger_hidden/.test(hiddenRes.error.message)) throw hiddenRes.error;
+  const hiddenIds = new Set<string>((hiddenRes.error ? [] : hiddenRes.data).map((h) => h.product_id as string));
+
+  type ProductRow = {
+    id: string;
+    sku: string | null;
+    name: string;
+    unit: string;
+    price: number;
+    pos_only: boolean;
+    is_active: boolean;
+    categories: { name: string } | null;
+    stock_levels: { quantity: number } | { quantity: number }[] | null;
+    product_site_links: { site_product_id: string; variation_id: string }[];
+  };
+  const allProductRows = products.data as unknown as ProductRow[];
+
+  // The same list Stock shows: the business's website products (one row per size/flavor) and add-ons,
+  // plus its POS-only products -- named and grouped the way Stock names and groups them. A product the
+  // website no longer lists is not in Stock, so it is not here. If the website can't be reached the
+  // ledger falls back to every active POS product.
+  const { data: brandRow } = await supabaseAdmin.from("brands").select("slug").eq("id", brandId).single();
+  const catalog = brandRow ? catalogForBrandSlug(brandRow.slug) : null;
+  type StockViewItem = { name: string; size: string; category: string; site: LedgerSiteItem; deletion: LedgerDeletion };
+  const stockView = new Map<string, StockViewItem>();
+  let websiteLoaded = false;
+  if (catalog) {
+    try {
+      const [siteProducts, addons, siteCategories] = await Promise.all([
+        listWebsiteProducts(catalog.id),
+        listWebsiteAddons(catalog.id).catch(() => []),
+        listWebsiteCategories(catalog.id).catch(() => []),
+      ]);
+      const categoryName = new Map(siteCategories.map((c) => [c.id, c.name]));
+      for (const wp of siteProducts) {
+        const category = (wp.category_id && categoryName.get(wp.category_id)) || "Uncategorized";
+        const entries = (wp.type === "variable" || wp.type === "variant") && (wp.variations?.length ?? 0) > 0
+          ? wp.variations!.map((v) => ({ id: v.id, size: v.weight || v.flavor || "", price: v.price, stock: v.stock, image: v.image_url ?? wp.image_url }))
+          : [{ id: "", size: wp.weight ?? "", price: wp.price, stock: wp.stock, image: wp.image_url }];
+        for (const s of entries) {
+          const title = [wp.title, s.id ? s.size : ""].filter(Boolean).join(" ");
+          stockView.set(`${wp.id}::${s.id}`, {
+            name: wp.title,
+            size: s.size,
+            category,
+            site: { catalogId: catalog.id, siteProductId: wp.id, variationId: s.id, title, price: s.price, imageUrl: s.image, stock: s.stock },
+            // Deleting the only size deletes the whole product, as it does in Stock.
+            deletion:
+              s.id && entries.length > 1
+                ? { kind: "size", catalogId: catalog.id, productId: wp.id, variationId: s.id, sizeLabel: s.size }
+                : { kind: "product", catalogId: catalog.id, productId: wp.id },
+          });
+        }
+      }
+      for (const a of addons) {
+        stockView.set(`${a.id}::`, {
+          name: a.title,
+          size: "",
+          category: "Add-ons",
+          site: { catalogId: catalog.id, siteProductId: a.id, variationId: "", title: a.title, price: a.price, imageUrl: a.image_url, stock: a.stock },
+          deletion: { kind: "addon", catalogId: catalog.id, addonId: a.id },
+        });
+      }
+      websiteLoaded = true;
+    } catch {
+      // Storefront unreachable: keep every active POS product, as named in POS.
+    }
+  }
+  const stockInfo = (p: ProductRow) => {
+    for (const l of p.product_site_links) {
+      const hit = stockView.get(`${l.site_product_id}::${l.variation_id || ""}`);
+      if (hit) return hit;
+    }
+    return null;
+  };
+  const inStock = (p: ProductRow) => p.is_active && (!websiteLoaded || p.pos_only || !!stockInfo(p));
+  // A product taken out of Stock (deleted on the website, or hidden) stays in the ledger, under its own
+  // group. A deleted POS-only product, or one that was linked to a website listing, is always kept; any
+  // other leftover only while it has stock or anything happened to it in the month (the old imported
+  // products would otherwise flood the list). One still on the website under another record is shown by
+  // that record instead, and a nameless draft is never shown.
+  const onWebsite = (p: ProductRow) => p.product_site_links.some((l) => stockView.has(`${l.site_product_id}::${l.variation_id || ""}`));
+  // A "Set" (a bundle sold as one product, e.g. "Fresh Salmon Set (250g)") has no stock of its own, so it
+  // is not in the ledger.
+  // Besides the name, any product a Cost Control Set is linked to (sets.linked_product_id) is a set.
+  const setRes = await supabaseAdmin.from("sets").select("linked_product_id").eq("brand_id", brandId).not("linked_product_id", "is", null);
+  if (setRes.error) throw setRes.error;
+  const setProductIds = new Set<string>((setRes.data ?? []).map((s) => s.linked_product_id as string));
+  const setSiteKeys = new Set(
+    allProductRows.filter((p) => setProductIds.has(p.id)).flatMap((p) => p.product_site_links.map((l) => `${l.site_product_id}::${l.variation_id || ""}`))
+  );
+  const isSet = (name: string) => /\bset\b/i.test(name);
+  const productRows = allProductRows.filter(
+    (p) =>
+      !setProductIds.has(p.id) &&
+      !isSet(stockInfo(p)?.name ?? p.name) &&
+      (inStock(p) || (!onWebsite(p) && p.name.trim() !== "" && !hiddenIds.has(p.id)))
+  );
+  const productIds = productRows.map((p) => p.id);
+  const originalCosts = await getLinkedStockOriginalCosts(productIds).catch(() => new Map<string, number | null>());
+
+  // Stock added by hand is a purchase; stock taken out by hand is "other out". The adjustments an
+  // order's own cancel/delete writes ("Order ...") are not either -- the order is the sale.
+  const purchases: { productId: string; day: string; qty: number }[] = [];
+  const other: { productId: string; day: string; qty: number }[] = [];
+  for (const a of adjustments.data as unknown as { product_id: string; delta: number; reason: string | null; created_at: string }[]) {
+    if ((a.reason ?? "").startsWith("Order ")) continue;
+    const day = ppDay(a.created_at);
+    const delta = Number(a.delta);
+    if (delta > 0) purchases.push({ productId: a.product_id, day, qty: delta });
+    else if (delta < 0) other.push({ productId: a.product_id, day, qty: -delta });
+  }
+
+  // Website products with no POS product yet still belong in the list (Stock shows them). They get a
+  // placeholder id and carry what is needed to create their POS product when something is first typed in.
+  const linkedKeys = new Set(productRows.filter(inStock).flatMap((p) => p.product_site_links.map((l) => `${l.site_product_id}::${l.variation_id || ""}`)));
+  const unlinked = [...stockView.entries()]
+    .filter(([key, v]) => !linkedKeys.has(key) && !setSiteKeys.has(key) && !isSet(v.name))
+    .map(([key, v]) => ({
+      id: `site:${key}`,
+      sku: null,
+      fullName: v.name,
+      name: v.name,
+      size: v.size,
+      unit: "pcs",
+      categoryName: v.category,
+      price: v.site.price,
+      originalCost: null,
+      cost10: null,
+      quantityNow: Math.max(0, v.site.stock ?? 0),
+      cost: null,
+      site: v.site,
+      deletion: v.deletion,
+    }));
+
+  const own = await getOwnLedgerProducts(brandId, month);
+
+  return buildDailyLedger({
+    month,
+    today: ppToday(),
+    products: [...own.products, ...productRows.map((p) => {
+      const level = Array.isArray(p.stock_levels) ? p.stock_levels[0] : p.stock_levels;
+      return {
+        id: p.id,
+        sku: p.sku,
+        fullName: p.name,
+        ...(inStock(p) && stockInfo(p) ? { name: stockInfo(p)!.name, size: stockInfo(p)!.size } : {}),
+        deletion: !inStock(p) ? ({ kind: "ledger" } as const) : p.pos_only ? ({ kind: "pos" } as const) : (stockInfo(p)?.deletion ?? ({ kind: "pos" } as const)),
+        ...(inStock(p) || p.pos_only || p.product_site_links.length > 0 ? {} : { hideWhenEmpty: true }),
+        unit: p.unit,
+        categoryName: !inStock(p)
+          ? "Removed from Stock"
+          : websiteLoaded
+            ? (stockInfo(p)?.category ?? "POS only")
+            : (p.categories?.name ?? "Uncategorized"),
+        price: Number(p.price),
+        originalCost: originalCosts.get(p.id) ?? null,
+        // Like Total Cost, TC+10% is the ledger's own column: typed in, never taken from Stock.
+        cost10: null,
+        quantityNow: Number(level?.quantity ?? 0),
+        // The ledger's Total Cost is its own column: it starts empty and is typed in, never taken from Stock's Total.
+        cost: null,
+      };
+    }), ...unlinked],
+    movements: (movements.data as unknown as { product_id: string; delta: number; created_at: string }[]).map((m) => ({
+      productId: m.product_id,
+      day: ppDay(m.created_at),
+      qty: Number(m.delta),
+    })),
+    movementsAfter: (movementsAfter.data as unknown as { product_id: string; delta: number }[]).map((m) => ({
+      productId: m.product_id,
+      qty: Number(m.delta),
+    })),
+    purchases,
+    sold: (
+      soldLines.data as unknown as {
+        product_id: string;
+        quantity: number;
+        products: { stock_units_per_sale: number } | null;
+        orders: { list_at: string | null } | null;
+      }[]
+    )
+      .filter((l) => l.orders?.list_at)
+      .map((l) => ({
+        productId: l.product_id,
+        day: ppDay(l.orders!.list_at),
+        qty: Number(l.quantity) * (Number(l.products?.stock_units_per_sale) || 1),
+      })),
+    other,
+    entries: [
+      ...(typed.error ? [] : typed.data).map((e) => ({ productId: e.product_id, field: e.field, value: e.value })),
+      ...own.entries,
+    ],
+  });
 }

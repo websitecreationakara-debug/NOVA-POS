@@ -1,8 +1,11 @@
 import Link from "next/link";
+import BackLink from "@/components/BackLink";
 import { notFound } from "next/navigation";
 import { getBrands, getInvoice } from "@/lib/supabase/queries";
+import { supabaseAdmin } from "@/lib/supabase/server";
 import OrderStatusControl from "@/components/OrderStatusControl";
 import OrderEditor from "@/components/OrderEditor";
+import InvoiceNumberEditor from "@/components/InvoiceNumberEditor";
 import DeleteOrderButton from "@/components/DeleteOrderButton";
 
 export default async function OrderDetailPage({
@@ -28,6 +31,26 @@ export default async function OrderDetailPage({
 
   const { order, invoiceNumber, customerAddress, items } = invoice;
 
+  // Who created / last edited the invoice: one name when it is the same person, else both.
+  const staffIds = [...new Set([order.created_by, order.updated_by].filter((id): id is string => !!id))];
+  const { data: staffRows } = staffIds.length
+    ? await supabaseAdmin.from("profiles").select("id, full_name").in("id", staffIds)
+    : { data: [] };
+  const staffName = (id: string | null | undefined) =>
+    id ? ((staffRows ?? []).find((s) => s.id === id)?.full_name ?? "Unknown staff") : null;
+  const createdBy = staffName(order.created_by) ?? (order.channel === "online" ? "Website" : null);
+  const updatedBy = staffName(order.updated_by);
+  const trackLabel =
+    createdBy && updatedBy
+      ? createdBy === updatedBy
+        ? `Created & updated by ${createdBy}`
+        : `Created by ${createdBy} · Updated by ${updatedBy}`
+      : createdBy
+        ? `Created by ${createdBy}`
+        : updatedBy
+          ? `Updated by ${updatedBy}`
+          : null;
+
   const deliveryLabel = order.delivery_at
     ? new Date(order.delivery_at).toLocaleString("en-US", {
         // Phnom Penh time, whatever time zone the server runs in (UTC when live).
@@ -45,9 +68,9 @@ export default async function OrderDetailPage({
   return (
     <main className="mx-auto max-w-3xl p-6">
       <div className="mb-4 flex items-center justify-between">
-        <Link href={backHref} className="text-sm text-muted-foreground hover:underline">
+        <BackLink href={backHref} className="text-sm text-muted-foreground hover:underline">
           {backToMargin ? "← Back to Margin Report" : backToDashboard ? "← Back to Dashboard" : "← Back to Orders"}
-        </Link>
+        </BackLink>
         <div className="flex items-center gap-4">
           <Link href={`/invoice/${order.id}`} className="text-sm text-brand hover:underline">
             View printable invoice →
@@ -59,12 +82,15 @@ export default async function OrderDetailPage({
       <div className="rounded-2xl border border-border bg-card p-6">
         <div className="flex items-start justify-between gap-4 border-b border-border pb-4">
           <div>
-            <h1 className="text-xl font-semibold">
-              {invoiceNumber}
-            </h1>
+            <InvoiceNumberEditor
+              orderId={order.id}
+              invoiceNumber={invoiceNumber}
+              isCustom={!!order.custom_invoice_number}
+            />
             <p className="mt-1 text-sm text-muted-foreground">
               {order.paid_at ? new Date(order.paid_at).toLocaleString("en-US", { timeZone: "Asia/Phnom_Penh" }) : "—"}
             </p>
+            {trackLabel && <p className="mt-0.5 text-xs text-muted-foreground">{trackLabel}</p>}
           </div>
           <OrderStatusControl orderId={order.id} status={order.fulfillment_status} />
         </div>

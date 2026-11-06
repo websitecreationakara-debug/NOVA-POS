@@ -142,6 +142,29 @@ export async function getEffectiveProductCost(productId: string): Promise<number
   return total ?? product.cost_price;
 }
 
+// The cost a sale is recorded at (order_items.unit_cost): a product linked to a Stock listing sells at that
+// listing's Total Cost 10% -- the same Unit Cost the Margin Report shows -- else its effective cost. The
+// database's effective_product_cost() does the same for new orders (migration 0103).
+export async function getSaleUnitCost(productId: string): Promise<number | null> {
+  const cost10 = (await getLinkedStockCost10pcts([productId]).catch(() => new Map<string, number | null>())).get(productId);
+  if (cost10 !== undefined && cost10 !== null) return cost10;
+  const effective = await getEffectiveProductCost(productId);
+  if (effective !== null) return effective;
+  // Nothing in Stock gives a cost: use the one last typed into the Margin Report (migration 0104).
+  const { data } = await supabaseAdmin
+    .from("order_items")
+    .select("unit_cost, orders!inner(paid_at)")
+    .eq("product_id", productId)
+    .eq("cost_source", "report")
+    .not("unit_cost", "is", null);
+  let latest: { paidAt: string; cost: number } | null = null;
+  for (const row of (data ?? []) as unknown as { unit_cost: number; orders: { paid_at: string | null } }[]) {
+    const paidAt = row.orders?.paid_at ?? "";
+    if (!latest || paidAt > latest.paidAt) latest = { paidAt, cost: Number(row.unit_cost) };
+  }
+  return latest?.cost ?? null;
+}
+
 // getEffectiveProductCost for many products at once -- the same rules, but a
 // handful of queries in total instead of up to four PER product (a year of sales
 // touches hundreds of products). Keep the two in step: a Set listing's own Total
@@ -261,6 +284,19 @@ export async function getEffectiveProductCosts(productIds: string[]): Promise<Ma
 // report matches the Total Cost 10% column; absent products keep the usual
 // fallback (getEffectiveProductCosts).
 export async function getLinkedStockCost10pcts(productIds: string[]): Promise<Map<string, number | null>> {
+  return getLinkedStockCostColumn(productIds, "total_cost_10pct");
+}
+
+// Stock's "Original Cost" for every product linked to a website listing, the same way (null when that
+// box is empty; a product with no website listing is absent from the map).
+export async function getLinkedStockOriginalCosts(productIds: string[]): Promise<Map<string, number | null>> {
+  return getLinkedStockCostColumn(productIds, "original_cost");
+}
+
+async function getLinkedStockCostColumn(
+  productIds: string[],
+  column: "total_cost_10pct" | "original_cost"
+): Promise<Map<string, number | null>> {
   const out = new Map<string, number | null>();
   const ids = [...new Set(productIds)];
   const CHUNK = 150;
@@ -274,18 +310,20 @@ export async function getLinkedStockCost10pcts(productIds: string[]): Promise<Ma
     for (const l of data ?? []) if (!linkByProduct.has(l.product_id)) linkByProduct.set(l.product_id, l);
   }
   const spIds = [...new Set([...linkByProduct.values()].map((l) => l.site_product_id))];
-  const cost10 = new Map<string, number>();
+  const costs = new Map<string, number>();
   for (let i = 0; i < spIds.length; i += CHUNK) {
     const { data, error } = await supabaseAdmin
       .from("website_product_purchase_costs")
-      .select("site, site_product_id, variation_id, total_cost_10pct")
+      .select(`site, site_product_id, variation_id, ${column}`)
       .in("site_product_id", spIds.slice(i, i + CHUNK))
-      .not("total_cost_10pct", "is", null);
+      .not(column, "is", null);
     if (error) throw error;
-    for (const r of data ?? []) cost10.set(`${r.site}|${r.site_product_id}|${r.variation_id}`, r.total_cost_10pct as number);
+    for (const r of (data ?? []) as unknown as Record<string, string | number | null>[]) {
+      costs.set(`${r.site}|${r.site_product_id}|${r.variation_id}`, Number(r[column]));
+    }
   }
   for (const [id, l] of linkByProduct) {
-    out.set(id, cost10.get(`${l.site}|${l.site_product_id}|${l.variation_id}`) ?? null);
+    out.set(id, costs.get(`${l.site}|${l.site_product_id}|${l.variation_id}`) ?? null);
   }
   return out;
 }

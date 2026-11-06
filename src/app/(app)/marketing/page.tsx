@@ -19,7 +19,13 @@ import ProductMonthlyClient from "./ProductMonthlyClient";
 import { parseInsightRange } from "@/lib/productInsight";
 import CostControlClient from "./CostControlClient";
 import { catalogForBrandSlug } from "@/lib/websiteProducts/catalogs";
-import { addonToWebsiteProduct, listWebsiteAddons, listWebsiteProducts } from "@/lib/websiteProducts/client";
+import {
+  addonToWebsiteProduct,
+  listWebsiteAddons,
+  listWebsiteProducts,
+  markWebsiteSynced,
+  websiteSyncDue,
+} from "@/lib/websiteProducts/client";
 import { syncWebsiteToPos } from "@/lib/websiteProducts/syncFromWebsite";
 
 export default async function MarketingPage({
@@ -139,13 +145,15 @@ export default async function MarketingPage({
     // Opening a set: copy the website's current names, pictures and weights onto the POS products
     // first, so its lines match Stock even if a product was changed on the storefront directly.
     // Best-effort and capped at 3s -- a slow or down storefront never holds the page up.
+    // Only repeated every few minutes (the same gate as the Stock page): the copy re-reads
+    // every POS product, and nothing has usually changed since the last one.
     if (setParam) {
       const catalog = catalogForBrandSlug(currentBrand.slug);
-      if (catalog) {
+      if (catalog && websiteSyncDue(catalog.id)) {
         await Promise.race([
-          Promise.all([listWebsiteProducts(catalog.id), listWebsiteAddons(catalog.id).catch(() => [])]).then(
-            ([p, addons]) => syncWebsiteToPos(currentBrand.slug, [...p, ...addons.map(addonToWebsiteProduct)])
-          ),
+          Promise.all([listWebsiteProducts(catalog.id), listWebsiteAddons(catalog.id).catch(() => [])])
+            .then(([p, addons]) => syncWebsiteToPos(currentBrand.slug, [...p, ...addons.map(addonToWebsiteProduct)]))
+            .then(() => markWebsiteSynced(catalog.id)),
           new Promise((resolve) => setTimeout(resolve, 3000)),
         ]).catch((e) => console.error("cost control: couldn't sync website products to the POS", e));
       }

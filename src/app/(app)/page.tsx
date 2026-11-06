@@ -23,7 +23,6 @@ import {
   getDashboardStats,
   getLowStockCount,
   getOrdersList,
-  TOP_PRODUCT_MIN_PRICE,
   getWebsiteProductTotal,
 } from "@/lib/supabase/queries";
 import { rangeLabel, resolveRange } from "@/lib/dateRange";
@@ -338,7 +337,9 @@ export default async function Home({
   return (
     <main className="mx-auto w-full max-w-7xl space-y-6 p-4 sm:space-y-8 sm:p-8">
       <header>
-        <h1 className="font-display text-3xl font-bold">NOVA POS</h1>
+        <h1 className="font-display bg-gradient-to-r from-[#2879bd] to-[#3f9fd0] bg-clip-text text-4xl font-extrabold tracking-tight text-transparent drop-shadow-sm sm:text-5xl">
+          NOVA POS
+        </h1>
         <DashboardRangeBar
           brands={brandsOrdered}
           brandId={currentBrandId}
@@ -444,7 +445,7 @@ export default async function Home({
         <section className="rounded-2xl border border-border bg-card p-6">
           <h2 className="font-display font-bold">Top Products ({topPeriod})</h2>
           <p className="mt-1 text-xs text-muted-foreground">
-            Ranked by sales amount · items priced above {formatMoney(TOP_PRODUCT_MIN_PRICE)}
+            Ranked by sales amount, highest first
           </p>
           {topStats.topProducts.length === 0 ? (
             <p className="mt-4 text-sm text-muted-foreground">No sales in this period.</p>

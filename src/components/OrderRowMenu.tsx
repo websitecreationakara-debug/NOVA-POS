@@ -93,6 +93,8 @@ export default function OrderRowMenu({ orderId, isUnpaid }: { orderId: string; i
           </Link>
           <Link
             href={`/invoice/${orderId}`}
+            target="_blank"
+            rel="noopener noreferrer"
             role="menuitem"
             className={`${itemClass} text-foreground`}
           >

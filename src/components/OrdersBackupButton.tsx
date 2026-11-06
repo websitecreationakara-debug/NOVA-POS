@@ -8,8 +8,9 @@ type Format = "xlsx" | "csv";
 
 // Downloads a backup of every order (all statuses, one row per item) -- the whole
 // history, not just the page of the table that is on screen. Excel is the one to
-// read; CSV is the flat technical copy.
-export default function OrdersBackupButton() {
+// read; CSV is the flat technical copy, of the orders in the From / To dates picked on the page
+// (every order when no dates are picked, i.e. "All time").
+export default function OrdersBackupButton({ from = "", to = "" }: { from?: string; to?: string }) {
   const [busy, setBusy] = useState<Format | null>(null);
   const [message, setMessage] = useState<{ text: string; error: boolean } | null>(null);
 
@@ -17,7 +18,7 @@ export default function OrdersBackupButton() {
     setBusy(format);
     setMessage(null);
     try {
-      const { filename, mime, base64, orderCount } = await exportOrdersBackupAction(format);
+      const { filename, mime, base64, orderCount } = await exportOrdersBackupAction(format, format === "csv" && (from || to) ? { from, to } : undefined);
       const bytes = Uint8Array.from(atob(base64), (c) => c.charCodeAt(0));
       const url = URL.createObjectURL(new Blob([bytes], { type: mime }));
       const a = document.createElement("a");
@@ -57,7 +58,11 @@ export default function OrdersBackupButton() {
         type="button"
         onClick={() => backup("csv")}
         disabled={busy !== null}
-        title="Download every order as a CSV file (all columns on every row, for other tools)"
+        title={
+          from || to
+            ? `Download the orders from ${from || "the start"} to ${to || "today"} as a CSV file (one row per order)`
+            : "Download every order as a CSV file (one row per order)"
+        }
         className={buttonClass}
       >
         {busy === "csv" ? <Loader2 className="size-4 animate-spin" /> : <Download className="size-4" />}

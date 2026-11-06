@@ -12,6 +12,8 @@ import {
   listWebsiteCategories,
 } from "@/lib/websiteProducts/client";
 import type { WebsiteCatalogId, WebsiteProduct } from "@/lib/websiteProducts/types";
+import { listPosOnlyAsWebsiteProducts } from "@/lib/posOnlyProducts";
+import { POS_ONLY_CATEGORY_ID } from "@/lib/posOnlyEntry";
 import SalesClient, { type EditOrderSeed } from "./SalesClient";
 
 export type SalesWebsiteCatalog = {
@@ -39,9 +41,9 @@ export default async function SalesPage({
   // that order so the checkout can open with its cart, customer and totals
   // already filled in, and charge back an update instead of a new sale.
   const editInvoice = editOrderId ? await getInvoice(editOrderId) : null;
-  // When editing, the order's own brand wins over any ?brand= in the URL --
-  // the catalog has to match the products already on the order.
-  const effectiveBrandId = editInvoice?.order.brand_id ?? brandIdParam;
+  // When editing, the order's own brand is the starting catalog; ?brand= lets
+  // staff browse another business's catalog to add its products.
+  const effectiveBrandId = brandIdParam ?? editInvoice?.order.brand_id;
 
   // Start the (expensive, catalogs run into the hundreds of products) catalog
   // fetch immediately instead of waiting for getBrands() to resolve first --
@@ -70,8 +72,14 @@ export default async function SalesPage({
     // added/renamed/removed on the live site.
     const liveCategoriesPromise = catalog ? listWebsiteCategories(catalog.id).catch(() => []) : Promise.resolve([]);
     return catalog
-      ? Promise.all([listSellableWebsiteProducts(catalog.id), liveCategoriesPromise])
-          .then(([{ products, addonCount }, liveCategories]) => {
+      ? Promise.all([
+          listSellableWebsiteProducts(catalog.id),
+          liveCategoriesPromise,
+          listPosOnlyAsWebsiteProducts(catalog.brandSlug),
+        ])
+          .then(([{ products: siteProducts, addonCount }, liveCategories, posOnly]) => {
+            // Products sold only at the POS ride along as their own "POS only" chip.
+            const products = [...siteProducts, ...posOnly];
             const baseCategories =
               liveCategories.length > 0
                 ? liveCategories.map((c) => ({ id: c.id, label: c.name }))
@@ -81,10 +89,11 @@ export default async function SalesPage({
               label: catalog.label,
               products,
               error: null,
-              categories:
-                addonCount > 0
-                  ? [...baseCategories, { id: ADDON_CATEGORY_ID, label: "Addon" }]
-                  : baseCategories,
+              categories: [
+                ...baseCategories,
+                ...(addonCount > 0 ? [{ id: ADDON_CATEGORY_ID, label: "Addon" }] : []),
+                ...(posOnly.length > 0 ? [{ id: POS_ONLY_CATEGORY_ID, label: "POS only" }] : []),
+              ],
             };
           })
           .catch((e) => ({
@@ -142,6 +151,7 @@ export default async function SalesPage({
     ? {
         orderId: editInvoice.order.id,
         invoiceNumber: editInvoice.invoiceNumber,
+        brandId: editInvoice.order.brand_id,
         customerId: editInvoice.order.customer_id,
         customerName: editInvoice.order.customer_name ?? "",
         customerPhone: editInvoice.order.customer_phone ?? "",

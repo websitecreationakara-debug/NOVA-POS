@@ -600,6 +600,7 @@ export async function updateCustomerAction(
     label?: string;
     source?: string;
     state?: string;
+    age?: string;
     gender?: string;
     nationality?: string;
     dob?: string;
@@ -615,13 +616,16 @@ export async function updateCustomerAction(
     .update({
       name: input.name.trim(),
       phone: input.phone?.trim() || null,
-      second_phone: input.secondPhone?.trim() || null,
+      // Second phone / label / source are only changed when given, so an edit
+      // form without them leaves what's stored alone.
+      ...(input.secondPhone !== undefined && { second_phone: input.secondPhone.trim() || null }),
       page_uid: input.pageUid?.trim() || null,
       email: input.email?.trim() || null,
       address: input.address?.trim() || null,
-      label: input.label?.trim() || null,
-      source: input.source?.trim() || null,
+      ...(input.label !== undefined && { label: input.label.trim() || null }),
+      ...(input.source !== undefined && { source: input.source.trim() || null }),
       state: input.state?.trim() || null,
+      age: input.age?.trim() || null,
       gender: input.gender?.trim() || null,
       nationality: input.nationality?.trim() || null,
       dob: input.dob || null,
@@ -696,7 +700,7 @@ export async function getCustomerPurchaseHistoryAction(
 
   const { data: orders, error: ordersErr } = await supabaseAdmin
     .from("orders")
-    .select("id, created_at, paid_at, status, total")
+    .select("*")
     .or(filters.join(","))
     .neq("fulfillment_status", "cancelled")
     .neq("status", "voided")
@@ -707,6 +711,8 @@ export async function getCustomerPurchaseHistoryAction(
   // N is the order's position among that month's paid orders.
   const invoiceNumbers = await Promise.all(
     (orders ?? []).map(async (o) => {
+      // A number typed in by hand (migration 0087) wins over the worked-out one.
+      if (o.custom_invoice_number) return o.custom_invoice_number as string;
       if (o.status !== "paid" || !o.paid_at) return null;
       const { count } = await supabaseAdmin
         .from("orders")

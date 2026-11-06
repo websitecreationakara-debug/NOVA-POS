@@ -1,9 +1,9 @@
-import Link from "next/link";
 import { getBrands, getOrdersList, getOrdersSummary } from "@/lib/supabase/queries";
 import { FULFILLMENT_STATUSES } from "@/lib/orderStatus";
 import OrderStatusFilter from "@/components/OrderStatusFilter";
 import OrdersTable from "@/components/OrdersTable";
 import OrdersBackupButton from "@/components/OrdersBackupButton";
+import OrdersSummaryCards from "@/components/OrdersSummaryCards";
 import { getSessionUser } from "@/lib/supabase/auth-server";
 import { ppToday } from "@/lib/phnomPenhTime";
 import type { FulfillmentStatus } from "@/types/database";
@@ -23,6 +23,8 @@ export default async function OrdersPage({
     from?: string;
     to?: string;
     range?: string;
+    unpaid?: string;
+    source?: string;
   }>;
 }) {
   const {
@@ -34,11 +36,16 @@ export default async function OrdersPage({
     from: fromParam = "",
     to: toParam = "",
     range = "",
+    unpaid: unpaidParam = "",
+    source: sourceParam = "",
   } = await searchParams;
+  const source = sourceParam === "website" || sourceParam === "pos" ? sourceParam : undefined;
+  const unpaidOnly = unpaidParam === "1";
   // With no date range and no search, show only the current Cambodia month;
   // other months appear by picking a month/dates, or "All time" (?range=all).
   // A search still looks across all months.
-  const allTime = range === "all";
+  // The Unpaid filter looks across all months too, so no unpaid order is hidden.
+  const allTime = range === "all" || (unpaidOnly && !fromParam && !toParam);
   const defaultRange = !fromParam && !toParam && !q.trim() && !allTime;
   let from = fromParam;
   let to = toParam;
@@ -60,22 +67,25 @@ export default async function OrdersPage({
   // business / date / search filters as the list (but not the status tab), so
   // each shows how many orders in that status are in view.
   const countFor = (s: FulfillmentStatus) =>
-    getOrdersList({ status: s, brandId: brand, q, from, to, page: 1, limit: 1 });
+    getOrdersList({ status: s, brandId: brand, source, q, from, to, countOnly: true });
   const [
     { rows: orders, total },
     { total: completeCount },
     { total: newOrderCount },
     { total: deliveredCount },
     { total: cancelCount },
+    { total: unpaidCount },
     counts,
     brands,
     user,
   ] = await Promise.all([
-    getOrdersList({ status, brandId: brand, q, from, to, page, limit }),
+    getOrdersList({ status, unpaid: unpaidOnly, brandId: brand, source, q, from, to, page, limit }),
     countFor("complete"),
     countFor("new_order"),
     countFor("delivered"),
     countFor("cancelled"),
+    // Every unpaid order of the chosen business, whatever the month.
+    getOrdersList({ unpaid: true, brandId: brand, source, countOnly: true }),
     getOrdersSummary(),
     getBrands(),
     getSessionUser(),
@@ -83,7 +93,7 @@ export default async function OrdersPage({
   // The CSV backup holds customer details -- Administration and Cooperate Admin only.
   const canBackup = user?.role === "admin" || user?.role === "accountance";
 
-  const summary: { label: string; value: number; href: string }[] = [
+  const summary: { label: string; value: number; href: string; active?: boolean }[] = [
     { label: "New today", value: counts.newToday, href: "/orders?status=new_order" },
     { label: "Pre-Order", value: counts.preOrders, href: "/orders?status=pre_order" },
     { label: "New Order", value: newOrderCount, href: "/orders?status=new_order" },
@@ -91,6 +101,8 @@ export default async function OrdersPage({
     { label: "Delivered", value: deliveredCount, href: "/orders?status=delivered" },
     { label: "Cancel", value: cancelCount, href: "/orders?status=cancelled" },
     { label: "Complete", value: completeCount, href: "/orders?status=complete" },
+    // Clicking again turns the Unpaid filter back off.
+    { label: "Unpaid", value: unpaidCount, href: unpaidOnly ? "/orders" : "/orders?unpaid=1", active: unpaidOnly },
   ];
 
   return (
@@ -105,25 +117,12 @@ export default async function OrdersPage({
         </span>
         {canBackup && (
           <div className="ml-auto">
-            <OrdersBackupButton />
+            <OrdersBackupButton from={from} to={to} />
           </div>
         )}
       </header>
 
-      <div className="grid grid-cols-2 gap-2 px-3 pt-4 sm:gap-3 sm:px-6 lg:grid-cols-4">
-        {summary.map((s) => (
-          <Link
-            key={s.label}
-            href={s.href}
-            className="rounded-xl border border-border bg-card px-3 py-2.5 transition-colors hover:border-foreground/20 sm:px-4 sm:py-3"
-          >
-            <p className="text-[11px] leading-tight font-medium tracking-wide text-muted-foreground uppercase sm:text-xs">
-              {s.label}
-            </p>
-            <p className="font-display mt-0.5 text-2xl font-bold tabular-nums">{formatCount(s.value)}</p>
-          </Link>
-        ))}
-      </div>
+      <OrdersSummaryCards cards={summary} />
 
       <OrderStatusFilter active={status ?? null} />
 
@@ -132,7 +131,7 @@ export default async function OrdersPage({
         total={total}
         page={page}
         limit={limit}
-        filters={{ q, brandId: brand, from, to }}
+        filters={{ q, brandId: brand, source: source ?? "", from, to }}
         defaultRange={defaultRange}
         allTime={allTime}
         currentMonth={ppToday().slice(0, 7)}

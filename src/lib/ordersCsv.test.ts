@@ -80,12 +80,47 @@ describe("buildOrdersCsv", () => {
     expect(rows[1]).toContain("Pink");
   });
 
+  it("writes one row per order, with no product columns, when asked for orders only", () => {
+    const rows = parse(
+      buildOrdersCsv(
+        [order({})],
+        [item({}), item({ product_id: "p2", products: { name: "Salmon Roe Ikura (250g)" } })],
+        undefined,
+        false
+      )
+    );
+    expect(rows).toHaveLength(2);
+    expect(rows[0]).not.toContain("product_name");
+    expect(rows[1]).not.toContain("Fresh Sea Urchin");
+    expect(rows[1].split(",")[0]).toBe("o1");
+  });
+
   it("shows the date-based invoice number and the time in Cambodia", () => {
     const rows = parse(buildOrdersCsv([order({})], [item({})]));
     // 06:09:59 UTC = 13:09:59 in Phnom Penh; first paid order of Oct 2026
     expect(rows[1]).toContain("202610-1");
     expect(rows[1]).toContain("2026-10-02 13:09:59");
-    expect(rows[1]).toContain("INV-000001");
+    expect(rows[0]).not.toContain("old_invoice_number");
+    expect(rows[1]).not.toContain("INV-000001");
+  });
+
+  it("lists rows in invoice-number order and prefers a hand-typed number", () => {
+    const paid = (n: number) => `2026-10-${String(n).padStart(2, "0")}T01:00:00Z`;
+    const rows = parse(
+      buildOrdersCsv(
+        [
+          // created last but paid first -> invoice 1 must still come first
+          order({ id: "b", paid_at: paid(2), created_at: paid(9), invoice_number: null }),
+          order({ id: "c", paid_at: paid(3), created_at: paid(3), invoice_number: null }),
+          order({ id: "a", paid_at: paid(1), created_at: paid(1), invoice_number: null, custom_invoice_number: "202610-10" }),
+        ],
+        [],
+        undefined,
+        false
+      )
+    ).slice(1);
+    // a is typed as 202610-10, so it sorts after 202610-2 and 202610-3 (numeric, not text, order)
+    expect(rows.map((r) => r.split(",")[1])).toEqual(["202610-2", "202610-3", "202610-10"]);
   });
 
   it("numbers invoices oldest-first within each Cambodia month", () => {
@@ -118,9 +153,14 @@ describe("buildOrdersCsv", () => {
     expect(rows[1]).toContain('"He said ""ok"""');
   });
 
+  it("writes a digits-only phone as text so Excel doesn't turn it into 8.55965E+11", () => {
+    const rows = parse(buildOrdersCsv([order({ customer_phone: "85596500000" })], []));
+    expect(rows[1]).toContain('"=""85596500000"""');
+  });
+
   it("does not invent an invoice number for an unpaid order", () => {
     const rows = parse(buildOrdersCsv([order({ status: "cancelled", paid_at: null, invoice_number: "INV-000009" })], []));
     expect(rows[1].split(",")[1]).toBe("");
-    expect(rows[1]).toContain("INV-000009");
+    expect(rows[1]).not.toContain("INV-000009");
   });
 });

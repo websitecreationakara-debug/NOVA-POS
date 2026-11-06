@@ -1,10 +1,12 @@
 import Link from "next/link";
+import BackLink from "@/components/BackLink";
 import { notFound } from "next/navigation";
-import { ALL_BUSINESSES_ID, getBrands, getProductMarginDetail } from "@/lib/supabase/queries";
+import { ALL_BUSINESSES_ID, getBrands, getMergedProductMarginDetail, getProductMarginDetail } from "@/lib/supabase/queries";
 import { ppToday } from "@/lib/phnomPenhTime";
 import { formatUsd } from "@/lib/formatNumber";
 
 const DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const SALES_SHOWN = 200;
 
 function formatMoney(n: number) {
@@ -22,33 +24,52 @@ export default async function ProductMarginPage({
   searchParams,
 }: {
   params: Promise<{ productId: string }>;
-  searchParams: Promise<{ brand?: string; from?: string; to?: string; back?: string }>;
+  searchParams: Promise<{ brand?: string; from?: string; to?: string; back?: string; ids?: string }>;
 }) {
   const { productId } = await params;
-  const { brand = ALL_BUSINESSES_ID, from, to, back } = await searchParams;
+  const { brand = ALL_BUSINESSES_ID, from, to, back, ids } = await searchParams;
+  // A row that is several same-named products opens them together (?ids=a,b,c, the row's own id first).
+  const productIds = [...new Set([productId, ...(ids ?? "").split(",").filter((id) => UUID_RE.test(id))])].slice(0, 50);
   const today = ppToday();
   const fromDate = from && DAY_RE.test(from) ? from : today;
   const toDate = to && DAY_RE.test(to) ? to : fromDate;
 
   const [detail, brands] = await Promise.all([
-    getProductMarginDetail(productId, brand, fromDate, toDate),
+    productIds.length > 1
+      ? getMergedProductMarginDetail(productIds, brand, fromDate, toDate)
+      : getProductMarginDetail(productId, brand, fromDate, toDate),
     getBrands(),
   ]);
   if (!detail) notFound();
 
-  const { name, summary, costBreakdown, sales } = detail;
+  const { name, summary, revenueBeforeDiscount, discount, deliveryFee, costBreakdown, sales } = detail;
   const brandName = brands.find((b) => b.id === brand)?.name ?? "All Businesses";
   const rangeLabel = fromDate === toDate ? fromDate : `${fromDate} → ${toDate}`;
   // Only ever go back to the Accounting page (the link came from a query string).
   const backHref = back?.startsWith("/accountance") && !back.startsWith("//") ? back : "/accountance?tab=cogs";
 
   // This page's own address, so an order opened from here can come back to it.
-  const thisPage = `/accountance/margin/${productId}?${new URLSearchParams({ brand, from: fromDate, to: toDate, back: backHref })}`;
+  const thisPage = `/accountance/margin/${productId}?${new URLSearchParams({
+    brand,
+    from: fromDate,
+    to: toDate,
+    back: backHref,
+    ...(productIds.length > 1 ? { ids: productIds.join(",") } : {}),
+  })}`;
 
   const stats = [
     { label: "Units sold", value: String(summary.unitsSold) },
-    { label: "Revenue", value: formatMoney(summary.revenue) },
-    { label: "Unit cost (current)", value: summary.unitCost === null ? "—" : formatMoney(summary.unitCost) },
+    {
+      label: "Revenue",
+      value: formatMoney(summary.revenue),
+      note: [
+        discount > 0 ? `Discount -${formatMoney(discount)} (was ${formatMoney(revenueBeforeDiscount)})` : null,
+        deliveryFee > 0 ? `Incl. ${formatMoney(deliveryFee)} delivery` : null,
+      ]
+        .filter(Boolean)
+        .join(" · "),
+    },
+    { label: "Unit cost", value: summary.unitCost === null ? "—" : formatMoney(summary.unitCost) },
     { label: "Total COGS", value: summary.totalCogs === null ? "No cost price" : formatMoney(summary.totalCogs) },
     { label: "Gross profit", value: summary.grossProfit === null ? "—" : formatMoney(summary.grossProfit) },
     { label: "Gross margin", value: summary.grossMarginPct === null ? "—" : `${summary.grossMarginPct.toFixed(1)}%` },
@@ -56,9 +77,9 @@ export default async function ProductMarginPage({
 
   return (
     <main className="mx-auto max-w-5xl space-y-6 p-6">
-      <Link href={backHref} className="text-sm text-muted-foreground hover:underline">
+      <BackLink href={backHref} className="text-sm text-muted-foreground hover:underline">
         ← Back to Margin Report
-      </Link>
+      </BackLink>
 
       <header>
         <h1 className="text-xl font-semibold">{name}</h1>
@@ -72,6 +93,7 @@ export default async function ProductMarginPage({
           <div key={s.label} className="rounded-xl border border-border bg-card p-3">
             <p className="text-[11px] font-medium tracking-wide text-muted-foreground uppercase">{s.label}</p>
             <p className="font-display mt-1 text-lg font-bold tabular-nums">{s.value}</p>
+            {s.note && <p className="mt-0.5 text-[11px] font-medium text-amber-700 dark:text-amber-300">{s.note}</p>}
           </div>
         ))}
       </div>

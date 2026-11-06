@@ -91,6 +91,19 @@ export type Product = {
   // "review me" on Stock; cleared when staff rename it. Its stock isn't
   // deducted by sales while flagged.
   auto_created: boolean;
+  // Sold only at the POS, never listed on the website (migration 0083). Shown in
+  // the Sales grid under "POS only".
+  pos_only: boolean;
+  // POS products whose stock this POS-only product follows (migration 0084), and the name shown
+  // for them. null = it keeps its own stock.
+  stock_source_ids: string[] | null;
+  stock_source_name: string | null;
+  // The POS-only product follows a website product with no stock number (migration 0085): it has
+  // no stock of its own to show or run out of.
+  stock_untracked: boolean;
+  // How many stock units one sold unit uses (migration 0088) -- 24 for a "24can" pack, so selling
+  // one takes 24 cans off the shared stock. 1 for everything else.
+  stock_units_per_sale: number;
 };
 
 export type RecipeItem = {
@@ -203,6 +216,8 @@ export type ProductSet = {
   labor_cost: number | null;
   competitor_name: string | null;
   competitor_base_price: number | null;
+  // Free-text note, edited from the note icon in the Cost Control list (migration 0094).
+  note: string | null;
   // The `products` row this Set is sellable as once Active -- see
   // activateSetListing in costControlActions.ts. null until first activated.
   linked_product_id: string | null;
@@ -239,6 +254,47 @@ export type StockAdjustment = {
   cost_impact: number | null;
 };
 
+// One logged change of a product's stock quantity (migration 0074): written by a trigger on
+// stock_levels, never by the app.
+export type StockMovement = {
+  id: number;
+  product_id: string;
+  delta: number;
+  quantity_after: number;
+  kind: "baseline" | "change";
+  created_at: string;
+};
+
+// A value typed into the Stock > Daily Ledger (migration 0089), shown in place of the worked-out number.
+export type DailyLedgerHidden = {
+  product_id: string;
+  hidden_at: string;
+};
+
+export type DailyLedgerEntry = {
+  product_id: string;
+  month: string;
+  field: string;
+  value: string;
+  updated_at: string;
+};
+
+// A product added from the Daily Ledger itself (migration 0091): in the ledger only, not in Stock.
+export type DailyLedgerProduct = {
+  id: string;
+  brand_id: string;
+  name: string;
+  unit: string;
+  unit_price: number;
+  // Migration 0092; null = "Added in ledger".
+  category: string | null;
+  // Migration 0093: not listed in months before this one; null = every month.
+  first_month: string | null;
+  // Migration 0100: the Stock product this is the same as (named differently); null = not linked.
+  stock_product_id: string | null;
+  created_at: string;
+};
+
 export type Promotion = {
   id: string;
   brand_id: string | null;
@@ -266,6 +322,8 @@ export type Order = {
   payment_method: PaymentMethod | null;
   payment_reference: string | null;
   created_by: string | null;
+  // Who last edited the invoice (migration 0105).
+  updated_by?: string | null;
   created_at: string;
   paid_at: string | null;
   // When a Pre-Order was moved to Delivered / Complete / Cancelled (migration 0055).
@@ -277,6 +335,8 @@ export type Order = {
   // Customer-requested delivery date & time (ISO); null = ASAP / same day.
   delivery_at: string | null;
   invoice_number: string | null;
+  // Invoice number typed in by hand; shown instead of the automatic YYYYMM-N one (migration 0087).
+  custom_invoice_number?: string | null;
   customer_name: string | null;
   customer_phone: string | null;
   customer_email: string | null;
@@ -293,8 +353,8 @@ export type Order = {
   channel: string;
   site: string | null;
   site_order_id: string | null;
-  // How a "pos" order was placed -- in_store, telegram, or meta (migration
-  // 0037). Not meaningful for "online" orders (those show their site instead).
+  // How a "pos" order was placed -- in_store, telegram, meta, tiktok or pickup (migrations
+  // 0037, 0095). Not meaningful for "online" orders (those show their site instead).
   order_source: OrderSource;
 };
 
@@ -336,6 +396,14 @@ export type Expense = {
   created_at: string;
 };
 
+// Expense Ads typed against a product for one month in the Margin Report (migration 0102).
+export type ProductAdsExpense = {
+  product_id: string;
+  month: string;
+  amount: number;
+  updated_at: string;
+};
+
 export type CashReconciliation = {
   id: string;
   brand_id: string;
@@ -347,6 +415,39 @@ export type CashReconciliation = {
   notes: string | null;
   created_by: string | null;
   created_at: string;
+};
+
+// Stock > Supplier Invoices (migration 0096).
+export type SupplierInvoice = {
+  id: string;
+  brand_id: string;
+  supplier_name: string;
+  invoice_number: string | null;
+  invoice_date: string;
+  total: number;
+  paid: boolean;
+  note: string | null;
+  // Riel per $1 as printed on the invoice (migration 0097).
+  exchange_rate: number | null;
+  created_by: string | null;
+  created_at: string;
+};
+
+export type SupplierInvoiceItem = {
+  id: string;
+  invoice_id: string;
+  // null for a line that is not a product of the business: only `description` is kept (migration 0098).
+  product_id: string | null;
+  quantity: number;
+  unit_cost: number;
+  // As printed on the invoice line (migration 0097).
+  sku: string | null;
+  packing: string | null;
+  unit: string | null;
+  description: string | null;
+  // The product's cost before the invoice set it; only meaningful when cost_recorded (migration 0099).
+  previous_cost: number | null;
+  cost_recorded: boolean;
 };
 
 type Table<Row, Insert, Relationships extends readonly unknown[] = []> = {
@@ -376,8 +477,8 @@ export type Database = {
       >;
       products: Table<
         Product,
-        Omit<Product, "id" | "created_at" | "updated_at" | "cost_price" | "is_ingredient" | "weight_grams" | "auto_created" | "name_km" | "unit_km"> &
-          Partial<Pick<Product, "id" | "cost_price" | "is_ingredient" | "weight_grams" | "auto_created" | "name_km" | "unit_km">>,
+        Omit<Product, "id" | "created_at" | "updated_at" | "cost_price" | "is_ingredient" | "weight_grams" | "auto_created" | "name_km" | "unit_km" | "pos_only" | "stock_source_ids" | "stock_source_name" | "stock_untracked" | "stock_units_per_sale"> &
+          Partial<Pick<Product, "id" | "cost_price" | "is_ingredient" | "weight_grams" | "auto_created" | "name_km" | "unit_km" | "pos_only" | "stock_source_ids" | "stock_source_name" | "stock_untracked" | "stock_units_per_sale">>,
         [
           {
             foreignKeyName: "products_brand_id_fkey";
@@ -421,6 +522,122 @@ export type Database = {
         [
           {
             foreignKeyName: "stock_adjustments_product_id_fkey";
+            columns: ["product_id"];
+            isOneToOne: false;
+            referencedRelation: "products";
+            referencedColumns: ["id"];
+          },
+        ]
+      >;
+      daily_ledger_entries: Table<
+        DailyLedgerEntry,
+        Omit<DailyLedgerEntry, "updated_at"> & Partial<Pick<DailyLedgerEntry, "updated_at">>,
+        [
+          {
+            foreignKeyName: "daily_ledger_entries_product_id_fkey";
+            columns: ["product_id"];
+            isOneToOne: false;
+            referencedRelation: "products";
+            referencedColumns: ["id"];
+          },
+        ]
+      >;
+      daily_ledger_products: Table<
+        DailyLedgerProduct,
+        Omit<DailyLedgerProduct, "id" | "created_at" | "unit" | "unit_price" | "category" | "first_month" | "stock_product_id"> &
+          Partial<Pick<DailyLedgerProduct, "id" | "created_at" | "unit" | "unit_price" | "category" | "first_month" | "stock_product_id">>,
+        [
+          {
+            foreignKeyName: "daily_ledger_products_brand_id_fkey";
+            columns: ["brand_id"];
+            isOneToOne: false;
+            referencedRelation: "brands";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "daily_ledger_products_stock_product_id_fkey";
+            columns: ["stock_product_id"];
+            isOneToOne: false;
+            referencedRelation: "products";
+            referencedColumns: ["id"];
+          },
+        ]
+      >;
+      daily_ledger_product_entries: Table<
+        DailyLedgerEntry,
+        Omit<DailyLedgerEntry, "updated_at"> & Partial<Pick<DailyLedgerEntry, "updated_at">>,
+        [
+          {
+            foreignKeyName: "daily_ledger_product_entries_product_id_fkey";
+            columns: ["product_id"];
+            isOneToOne: false;
+            referencedRelation: "daily_ledger_products";
+            referencedColumns: ["id"];
+          },
+        ]
+      >;
+      daily_ledger_hidden: Table<
+        DailyLedgerHidden,
+        Omit<DailyLedgerHidden, "hidden_at"> & Partial<Pick<DailyLedgerHidden, "hidden_at">>,
+        [
+          {
+            foreignKeyName: "daily_ledger_hidden_product_id_fkey";
+            columns: ["product_id"];
+            isOneToOne: true;
+            referencedRelation: "products";
+            referencedColumns: ["id"];
+          },
+        ]
+      >;
+      supplier_invoices: Table<
+        SupplierInvoice,
+        Omit<
+          SupplierInvoice,
+          "id" | "created_at" | "invoice_date" | "total" | "paid" | "note" | "invoice_number" | "created_by" | "exchange_rate"
+        > &
+          Partial<
+            Pick<
+              SupplierInvoice,
+              "id" | "created_at" | "invoice_date" | "total" | "paid" | "note" | "invoice_number" | "created_by" | "exchange_rate"
+            >
+          >,
+        [
+          {
+            foreignKeyName: "supplier_invoices_brand_id_fkey";
+            columns: ["brand_id"];
+            isOneToOne: false;
+            referencedRelation: "brands";
+            referencedColumns: ["id"];
+          },
+        ]
+      >;
+      supplier_invoice_items: Table<
+        SupplierInvoiceItem,
+        Omit<SupplierInvoiceItem, "id" | "sku" | "packing" | "unit" | "description" | "previous_cost" | "cost_recorded"> &
+          Partial<Pick<SupplierInvoiceItem, "id" | "sku" | "packing" | "unit" | "description" | "previous_cost" | "cost_recorded">>,
+        [
+          {
+            foreignKeyName: "supplier_invoice_items_invoice_id_fkey";
+            columns: ["invoice_id"];
+            isOneToOne: false;
+            referencedRelation: "supplier_invoices";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "supplier_invoice_items_product_id_fkey";
+            columns: ["product_id"];
+            isOneToOne: false;
+            referencedRelation: "products";
+            referencedColumns: ["id"];
+          },
+        ]
+      >;
+      stock_movements: Table<
+        StockMovement,
+        Omit<StockMovement, "id" | "created_at" | "kind"> & Partial<Pick<StockMovement, "id" | "created_at" | "kind">>,
+        [
+          {
+            foreignKeyName: "stock_movements_product_id_fkey";
             columns: ["product_id"];
             isOneToOne: false;
             referencedRelation: "products";
@@ -500,6 +717,7 @@ export type Database = {
           | "labor_cost"
           | "competitor_name"
           | "competitor_base_price"
+          | "note"
           | "linked_product_id"
         > &
           Partial<
@@ -514,6 +732,7 @@ export type Database = {
               | "labor_cost"
               | "competitor_name"
               | "competitor_base_price"
+              | "note"
               | "linked_product_id"
             >
           >,
@@ -604,6 +823,7 @@ export type Database = {
         Expense,
         Omit<Expense, "id" | "created_at"> & Partial<Pick<Expense, "id" | "expense_date">>
       >;
+      product_ads_expenses: Table<ProductAdsExpense, Omit<ProductAdsExpense, "updated_at"> & Partial<Pick<ProductAdsExpense, "updated_at">>>;
       cash_reconciliations: Table<
         CashReconciliation,
         Omit<CashReconciliation, "id" | "created_at"> & Partial<Pick<CashReconciliation, "id">>
@@ -701,6 +921,16 @@ export type Database = {
       invoice_sequence: {
         Args: { p_order_ids: string[] };
         Returns: Json;
+      };
+      // A POS-only product starts following other products' stock (migration 0084); returns its new stock.
+      link_pos_only_stock: {
+        Args: { p_product_id: string; p_source_ids: string[]; p_name: string };
+        Returns: number;
+      };
+      // A POS-only product follows a product with no stock number: it is not counted either (migration 0086).
+      set_pos_only_untracked: {
+        Args: { p_product_id: string; p_name: string };
+        Returns: undefined;
       };
       // Units on hand at the start and end of a range, from the stock history (migration 0074).
       stock_units_between: {

@@ -1,7 +1,8 @@
 import { formatInvoiceNumber, invoiceMonthStamp } from "./invoiceNumber";
+import { ppDay } from "./phnomPenhTime";
 import type { XlsxCell, XlsxColumn } from "./xlsxWriter";
 
-// Builds the Orders backup CSV: one row per order LINE (an order with several
+// Builds the Orders backup CSV: normally one row per order LINE (an order with several
 // products repeats its order columns on each row, and an order with no lines
 // still gets one row), so the file opens as a flat table in Excel and every
 // field of an order survives -- including the order id, to match rows back up
@@ -10,7 +11,11 @@ import type { XlsxCell, XlsxColumn } from "./xlsxWriter";
 export type BackupOrder = {
   id: string;
   invoice_number: string | null;
+  // A number typed in by hand (migration 0087); shown instead of the YYYYMM-N one.
+  custom_invoice_number?: string | null;
   paid_at: string | null;
+  // The date the Orders list shows and filters by (a Pre-Order keeps its own date).
+  list_at?: string | null;
   created_at: string;
   status: string;
   fulfillment_status: string;
@@ -51,10 +56,8 @@ export type BackupItem = {
 const HEADERS = [
   "order_id",
   "invoice_number",
-  "old_invoice_number",
-  "paid_at_utc",
   "paid_at_cambodia",
-  "created_at_utc",
+  "invoice_date",
   "status",
   "fulfillment_status",
   "business",
@@ -75,6 +78,9 @@ const HEADERS = [
   "total",
   "delivery_at_cambodia",
   "note",
+] as const;
+
+const ITEM_HEADERS = [
   "product_id",
   "product_name",
   "size",
@@ -91,14 +97,24 @@ export function csvCell(value: unknown): string {
   return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 }
 
-// "2026-10-02 13:09:59" -- an instant as Phnom Penh wall-clock time (UTC+7,
-// no daylight saving). "" for a missing/invalid timestamp.
-function cambodiaTime(iso: string | null): string {
+// A phone made only of digits (optionally a leading +) is written as ="855..." so Excel keeps it as
+// text: otherwise it shows long numbers as 8.55965E+11 and drops leading zeros.
+function csvPhone(phone: string | null): string {
+  const p = (phone ?? "").trim();
+  return /^\+?\d+$/.test(p) ? `="${p}"` : p;
+}
+
+// "2026-10-02 13:09:59" -- an instant as wall-clock time at a UTC offset in hours
+// (Phnom Penh is +7 all year, no daylight saving). "" for a missing/invalid
+// timestamp. Excel reads this as a date and shows it in the computer's own date style.
+function wallTime(iso: string | null, offsetHours: number): string {
   if (!iso) return "";
   const ms = Date.parse(iso);
   if (Number.isNaN(ms)) return "";
-  return new Date(ms + 7 * 60 * 60 * 1000).toISOString().slice(0, 19).replace("T", " ");
+  return new Date(ms + offsetHours * 60 * 60 * 1000).toISOString().slice(0, 19).replace("T", " ");
 }
+
+const cambodiaTime = (iso: string | null) => wallTime(iso, 7);
 
 // The date-based invoice numbers (YYYYMM-N, see invoiceNumber.ts): an order's N
 // is its position among all paid orders of its Phnom Penh month, oldest first.
@@ -117,7 +133,48 @@ function invoiceNumbers(orders: BackupOrder[]): Map<string, string> {
   return out;
 }
 
-export function buildOrdersCsv(orders: BackupOrder[], items: BackupItem[]): string {
+// The invoice number as shown in the file (a hand-typed one wins over the YYYYMM-N one).
+function shownNumber(o: BackupOrder, numbers: Map<string, string>): string {
+  return o.custom_invoice_number || (numbers.get(o.id) ?? "");
+}
+
+// Rows in invoice-number order: YYYYMM-N orders by month, then N (so -9 comes before -10).
+// Orders with no such number (unpaid, or a hand-typed number in another format) follow,
+// newest first.
+function byInvoiceNumber(orders: BackupOrder[], numbers: Map<string, string>): BackupOrder[] {
+  const key = (o: BackupOrder) => {
+    const m = /^(\d{6})-(\d+)$/.exec(shownNumber(o, numbers));
+    return m ? ([Number(m[1]), Number(m[2])] as const) : null;
+  };
+  return [...orders].sort((a, b) => {
+    const ka = key(a);
+    const kb = key(b);
+    if (ka && kb) return ka[0] - kb[0] || ka[1] - kb[1];
+    if (ka) return -1;
+    if (kb) return 1;
+    return a.created_at < b.created_at ? 1 : -1;
+  });
+}
+
+// Only the orders whose Orders-list date (Phnom Penh day) falls in [from, to]; either end may be
+// left out. Invoice numbers are worked out first, from every order, since an order's number is its
+// place in its whole month -- a partial month would number it wrongly.
+export type OrdersRange = { from?: string; to?: string };
+
+export function inRange(o: BackupOrder, range?: OrdersRange): boolean {
+  if (!range?.from && !range?.to) return true;
+  const day = ppDay(o.list_at ?? o.paid_at ?? o.created_at);
+  return (!range.from || day >= range.from) && (!range.to || day <= range.to);
+}
+
+// One row per order LINE by default; `withItems: false` gives one row per ORDER with no product
+// columns (what the Orders page's CSV button exports).
+export function buildOrdersCsv(
+  orders: BackupOrder[],
+  items: BackupItem[],
+  range?: OrdersRange,
+  withItems = true
+): string {
   const itemsByOrder = new Map<string, BackupItem[]>();
   for (const it of items) {
     const list = itemsByOrder.get(it.order_id) ?? [];
@@ -126,16 +183,13 @@ export function buildOrdersCsv(orders: BackupOrder[], items: BackupItem[]): stri
   }
   const numbers = invoiceNumbers(orders);
 
-  const lines: string[] = [HEADERS.join(",")];
-  const newestFirst = [...orders].sort((a, b) => (a.created_at < b.created_at ? 1 : -1));
-  for (const o of newestFirst) {
+  const lines: string[] = [(withItems ? [...HEADERS, ...ITEM_HEADERS] : HEADERS).join(",")];
+  for (const o of byInvoiceNumber(orders.filter((o) => inRange(o, range)), numbers)) {
     const orderCells = [
       o.id,
-      numbers.get(o.id) ?? "",
-      o.invoice_number ?? "",
-      o.paid_at ?? "",
+      shownNumber(o, numbers),
       cambodiaTime(o.paid_at),
-      o.created_at,
+      cambodiaTime(o.created_at),
       o.status,
       o.fulfillment_status,
       o.brands?.name ?? "",
@@ -144,7 +198,7 @@ export function buildOrdersCsv(orders: BackupOrder[], items: BackupItem[]): stri
       o.site_order_id ?? "",
       o.order_source ?? "",
       o.customer_name ?? "",
-      o.customer_phone ?? "",
+      csvPhone(o.customer_phone),
       o.customer_email ?? "",
       o.customers?.address ?? "",
       o.payment_method ?? "",
@@ -157,6 +211,10 @@ export function buildOrdersCsv(orders: BackupOrder[], items: BackupItem[]): stri
       cambodiaTime(o.delivery_at),
       o.note ?? "",
     ];
+    if (!withItems) {
+      lines.push(orderCells.map(csvCell).join(","));
+      continue;
+    }
     const orderItems = itemsByOrder.get(o.id) ?? [];
     const rows = orderItems.length
       ? orderItems.map((it) => [
@@ -189,13 +247,14 @@ function cambodiaSerial(iso: string | null): number | null {
 }
 
 // The readable version of the backup, for the Excel (.xlsx) file: the columns a
-// person looks at first, in plain English, then the technical ones (ids, UTC times,
+// person looks at first, in plain English, then the technical ones (ids,
 // website references) at the end. An order's money (subtotal, discount, delivery,
 // total) is written on the FIRST row of that order only, so adding up a column
 // doesn't count an order once per product; the CSV keeps every column on every row.
 export function buildOrdersSheet(
   orders: BackupOrder[],
-  items: BackupItem[]
+  items: BackupItem[],
+  range?: OrdersRange
 ): { columns: XlsxColumn[]; rows: XlsxCell[][] } {
   const columns: XlsxColumn[] = [
     { header: "Invoice", width: 12, kind: "text" },
@@ -223,9 +282,7 @@ export function buildOrdersSheet(
     { header: "Order total", width: 12, kind: "money" },
     // ---- technical, at the end ----
     { header: "Order ID", width: 38, kind: "text" },
-    { header: "Old invoice no.", width: 14, kind: "text" },
-    { header: "Paid at (UTC)", width: 30, kind: "text" },
-    { header: "Created at (UTC)", width: 30, kind: "text" },
+    { header: "Created at (Cambodia)", width: 20, kind: "datetime" },
     { header: "Customer email", width: 24, kind: "text" },
     { header: "Payment reference", width: 20, kind: "text" },
     { header: "Website", width: 16, kind: "text" },
@@ -244,15 +301,14 @@ export function buildOrdersSheet(
   const numbers = invoiceNumbers(orders);
 
   const rows: XlsxCell[][] = [];
-  const newestFirst = [...orders].sort((a, b) => (a.created_at < b.created_at ? 1 : -1));
-  for (const o of newestFirst) {
+  for (const o of byInvoiceNumber(orders.filter((o) => inRange(o, range)), numbers)) {
     const orderedVia = o.channel === "online" ? `Website ${o.site ?? ""}`.trim() : (o.order_source ?? "");
     const lines = itemsByOrder.get(o.id) ?? [];
     const lineRows: (BackupItem | null)[] = lines.length ? lines : [null];
     lineRows.forEach((it, index) => {
       const first = index === 0;
       rows.push([
-        numbers.get(o.id) ?? "",
+        shownNumber(o, numbers),
         cambodiaSerial(o.paid_at),
         o.brands?.name ?? "",
         o.customer_name ?? "",
@@ -276,9 +332,7 @@ export function buildOrdersSheet(
         first ? o.delivery_fee : null,
         first ? o.total : null,
         o.id,
-        o.invoice_number ?? "",
-        o.paid_at ?? "",
-        o.created_at,
+        cambodiaSerial(o.created_at),
         o.customer_email ?? "",
         o.payment_reference ?? "",
         o.site ?? "",

@@ -17,6 +17,7 @@ import {
 import type { ProductWithStock } from "@/lib/supabase/queries";
 import Dropdown from "@/components/Dropdown";
 import WebsiteAddonsTable from "@/components/WebsiteAddonsTable";
+import { PosOnlyProductsTable } from "./PosOnlyProductsDialog";
 import { ENGLISH_SCALES, KHMER_SCALES } from "@/lib/khmerScales";
 import { getCatalog } from "@/lib/websiteProducts/catalogs";
 import {
@@ -33,6 +34,8 @@ import type {
   WebsiteProductVariation,
   WebsiteProductWrite,
 } from "@/lib/websiteProducts/types";
+import { SHARED_VARIATION_STOCK_CATALOG } from "@/lib/websiteProducts/stock";
+import { stockGroupKey } from "@/lib/websiteProducts/stockGroups";
 import {
   createWebsiteCategoryAction,
   createWebsiteProductAction,
@@ -75,6 +78,9 @@ const PAGE_SIZE_OPTIONS = [10, 25, 50];
 // Sentinel `categoryFilter` value for the "Addons" chip -- picked so it can
 // never collide with a real category_id (those are UUIDs).
 const ADDONS_FILTER_ID = "__addons__";
+// Same idea for the "POS only" chip: products sold at the POS only (migration 0083),
+// listed from the POS products rather than the storefront's.
+const POS_ONLY_FILTER_ID = "__pos_only__";
 
 const fieldInputClass =
   "rounded border border-black/[.15] bg-transparent px-2.5 py-1.5 text-sm outline-none focus:border-black/40 dark:border-white/[.2] dark:focus:border-white/50";
@@ -160,6 +166,7 @@ function toEntries(list: WebsiteProduct[]): Entry[] {
 
 export default function WebsiteProductsPanel({
   catalogId,
+  brandId,
   moveTargets = [],
   initialProducts,
   initialError,
@@ -170,6 +177,8 @@ export default function WebsiteProductsPanel({
   recentStockUpdates,
 }: {
   catalogId: WebsiteCatalogId;
+  // The POS business this storefront belongs to -- for the "+ POS-only product" dialog.
+  brandId: string;
   // Other businesses a product can be moved to; none = no Move button.
   moveTargets?: { id: WebsiteCatalogId; label: string }[];
   initialProducts: WebsiteProduct[] | null;
@@ -198,6 +207,14 @@ export default function WebsiteProductsPanel({
   recentStockUpdates?: Record<string, string>;
 }) {
   const router = useRouter();
+  // Newest first: a product just added sits at the top.
+  const posOnlyProducts = useMemo(
+    () =>
+      posProducts
+        .filter((p) => p.pos_only && p.is_active)
+        .sort((a, b) => (b.created_at ?? "").localeCompare(a.created_at ?? "")),
+    [posProducts]
+  );
   const searchParams = useSearchParams();
   const [products, setProducts] = useState<WebsiteProduct[] | null>(initialProducts);
   const [loadError, setLoadError] = useState<string | null>(initialError);
@@ -351,6 +368,92 @@ export default function WebsiteProductsPanel({
     }
     return map;
   }, [posProducts]);
+
+  // Every website product of this business with its stock: a size shows its own stock, a
+  // "variable" product shows its sizes added together. Stock is POS's count where the item is
+  // linked (the number the Stock column shows), else the website's; null = not tracked.
+  // `source` says which website product/size a POS-only product would follow.
+  const stockChoices = useMemo(() => {
+    const out: {
+      name: string;
+      nameKm: string | null;
+      url: string | null;
+      stock: number | null;
+      source: { siteProductId: string; variationId: string | null };
+      // One size of a product with sizes: its picture is offered, but the stock list shows the
+      // product once, with its sizes added together.
+      size?: boolean;
+    }[] = [];
+    const khmerOf = (siteProductId: string, variationId: string) =>
+      posByEntryKey.get(posEntryKey(siteProductId, variationId))?.name_km ?? null;
+    const stockOf = (siteProductId: string, variationId: string, siteStock: number | null | undefined) => {
+      const tracked = siteStock === null || siteStock === undefined ? null : siteStock;
+      if (tracked === null) return null;
+      return posByEntryKey.get(posEntryKey(siteProductId, variationId))?.stock_quantity ?? tracked;
+    };
+    for (const p of products ?? []) {
+      const sizes = p.variations ?? [];
+      const isVariable = (p.type === "variable" || p.type === "variant") && sizes.length > 0;
+      if (isVariable) {
+        const sizeStocks = sizes.map((v) => stockOf(p.id, v.id, v.stock));
+        const tracked = sizeStocks.filter((n): n is number => n !== null);
+        out.push({
+          name: p.title,
+          nameKm: sizes.map((v) => khmerOf(p.id, v.id)).find((k) => !!k) ?? null,
+          url: p.image_url,
+          // Sizes of one stock group (Drink & Snack: same flavor / ml-L size) show the same one
+          // count -- it is counted once per group, then the groups are added up.
+          stock:
+            tracked.length === 0
+              ? null
+              : catalogId === SHARED_VARIATION_STOCK_CATALOG
+                ? [...new Set(sizes.map(stockGroupKey))]
+                    .map((key) => sizeStocks[sizes.findIndex((v) => stockGroupKey(v) === key)])
+                    .filter((n): n is number => n !== null)
+                    .reduce((sum, n) => sum + n, 0)
+                : tracked.reduce((sum, n) => sum + n, 0),
+          source: { siteProductId: p.id, variationId: null },
+        });
+        sizes.forEach((v, i) =>
+          out.push({
+            name: v.weight ? `${p.title} (${v.weight})` : p.title,
+            nameKm: khmerOf(p.id, v.id),
+            url: v.image_url ?? p.image_url,
+            stock: sizeStocks[i],
+            source: { siteProductId: p.id, variationId: v.id },
+            size: true,
+          })
+        );
+      } else {
+        out.push({
+          name: p.title,
+          nameKm: khmerOf(p.id, ""),
+          url: p.image_url,
+          stock: stockOf(p.id, "", p.stock),
+          source: { siteProductId: p.id, variationId: null },
+        });
+      }
+    }
+    return out.sort((a, b) => a.name.localeCompare(b.name));
+  }, [products, posByEntryKey]);
+
+  // Every picture the products of this business already have, once each -- what a POS-only
+  // product can borrow a picture from.
+  const imageChoices = useMemo(() => {
+    const seen = new Set<string>();
+    const out: { name: string; nameKm: string | null; url: string | null; stock: number | null }[] = [];
+    // A product with no picture is offered too (once per name), so searching its name finds it.
+    const add = (name: string, nameKm: string | null, url: string | null | undefined, stock: number | null) => {
+      const key = url || `no-image:${name}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        out.push({ name, nameKm, url: url || null, stock });
+      }
+    };
+    for (const c of stockChoices) add(c.name, c.nameKm, c.url, c.stock);
+    for (const p of posProducts) if (!p.pos_only) add(p.name, p.name_km, p.image_url, p.stock_quantity);
+    return out.sort((a, b) => a.name.localeCompare(b.name));
+  }, [stockChoices, posProducts]);
 
   // Options for the "Category" picker in the add-product form, and the source
   // for the filter chips below. Prefers the storefront's own live category
@@ -1049,6 +1152,13 @@ export default function WebsiteProductsPanel({
   // addon only worked after switching to the Addons chip.
   const showAddonMatches =
     !categoryFilter && !!q && !outOfStockOnly && !lowStockOnly && !recentOnly && filteredAddons.length > 0;
+  // Same for POS-only products: they aren't website products, so a search on the
+  // "All" chip lists the matching ones too (and the POS only chip honors the search).
+  const filteredPosOnly = q
+    ? posOnlyProducts.filter((p) => p.name.toLowerCase().includes(q) || (p.name_km ?? "").toLowerCase().includes(q))
+    : posOnlyProducts;
+  const showPosOnlyMatches =
+    !categoryFilter && !!q && !outOfStockOnly && !lowStockOnly && !recentOnly && filteredPosOnly.length > 0;
   // Linked POS product's cost_price per addon -- the Total box's fallback -- and
   // its Khmer name / scale, for the addon Edit box.
   const addonFallbackCosts: Record<string, number> = {};
@@ -1195,21 +1305,21 @@ export default function WebsiteProductsPanel({
           placeholder="Search products…"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          className="min-w-[12rem] flex-1 rounded border border-black/[.15] bg-transparent px-3 py-1.5 text-sm dark:border-white/[.2]"
+          className="min-w-[12rem] flex-1 rounded-full border border-border bg-card px-4 py-2 text-sm shadow-sm transition-shadow outline-none focus:border-brand/50 focus:shadow-md focus:shadow-brand/10"
         />
         <button
           onClick={() => setShowForm((v) => !v)}
-          className={`shrink-0 rounded px-3 py-1.5 text-sm font-medium ${
+          className={`shrink-0 rounded-full px-4 py-2 text-sm font-semibold transition-all ${
             showForm
-              ? "border border-black/[.15] dark:border-white/[.2]"
-              : "bg-brand text-white hover:brightness-95"
+              ? "border border-border bg-card shadow-sm hover:shadow-md"
+              : "bg-gradient-to-r from-[#2879bd] to-[#3f9fd0] text-white shadow-md shadow-brand/30 hover:-translate-y-px hover:shadow-lg"
           }`}
         >
           {showForm ? "Cancel" : "+ Add product"}
         </button>
         <button
           onClick={exportCsv}
-          className="flex shrink-0 items-center gap-1.5 rounded border border-black/[.15] px-3 py-1.5 text-sm dark:border-white/[.2]"
+          className="flex shrink-0 items-center gap-1.5 rounded-full border border-border bg-card px-4 py-2 text-sm font-medium shadow-sm transition-all hover:-translate-y-px hover:shadow-md"
         >
           <Download className="size-3.5" />
           Export CSV
@@ -1217,7 +1327,7 @@ export default function WebsiteProductsPanel({
         <button
           onClick={load}
           disabled={refreshing}
-          className="flex shrink-0 items-center gap-1.5 rounded border border-black/[.15] px-3 py-1.5 text-sm disabled:opacity-60 dark:border-white/[.2]"
+          className="flex shrink-0 items-center gap-1.5 rounded-full border border-border bg-card px-4 py-2 text-sm font-medium shadow-sm transition-all hover:-translate-y-px hover:shadow-md disabled:opacity-60"
         >
           <RefreshCw className={`size-3.5 ${refreshing ? "animate-spin" : ""}`} />
           {refreshing ? "Refreshing…" : "Refresh"}
@@ -1227,10 +1337,10 @@ export default function WebsiteProductsPanel({
             setLowStockOnly((v) => !v);
             setOutOfStockOnly(false);
           }}
-          className={`flex shrink-0 items-center gap-1.5 rounded-full border px-3 py-1.5 text-sm ${
+          className={`flex shrink-0 items-center gap-1.5 rounded-full border px-4 py-2 text-sm font-medium transition-all ${
             lowStockOnly
-              ? "border-amber-500 bg-amber-500 text-white"
-              : "border-black/[.15] dark:border-white/[.2]"
+              ? "border-amber-500 bg-amber-500 text-white shadow-md shadow-amber-500/30"
+              : "border-border bg-card shadow-sm hover:-translate-y-px hover:shadow-md"
           }`}
         >
           Low stock
@@ -1247,10 +1357,10 @@ export default function WebsiteProductsPanel({
             setOutOfStockOnly((v) => !v);
             setLowStockOnly(false);
           }}
-          className={`flex shrink-0 items-center gap-1.5 rounded-full border px-3 py-1.5 text-sm ${
+          className={`flex shrink-0 items-center gap-1.5 rounded-full border px-4 py-2 text-sm font-medium transition-all ${
             outOfStockOnly
-              ? "border-red-500 bg-red-500 text-white"
-              : "border-black/[.15] dark:border-white/[.2]"
+              ? "border-red-500 bg-red-500 text-white shadow-md shadow-red-500/30"
+              : "border-border bg-card shadow-sm hover:-translate-y-px hover:shadow-md"
           }`}
         >
           Out of stock
@@ -1265,10 +1375,10 @@ export default function WebsiteProductsPanel({
         <button
           onClick={() => setRecentOnly((v) => !v)}
           title="Products whose stock was changed in the last 7 days, newest first"
-          className={`flex shrink-0 items-center gap-1.5 rounded-full border px-3 py-1.5 text-sm ${
+          className={`flex shrink-0 items-center gap-1.5 rounded-full border px-4 py-2 text-sm font-medium transition-all ${
             recentOnly
-              ? "border-brand bg-brand text-white"
-              : "border-black/[.15] dark:border-white/[.2]"
+              ? "border-transparent bg-gradient-to-r from-[#2879bd] to-[#3f9fd0] text-white shadow-md shadow-brand/30"
+              : "border-border bg-card shadow-sm hover:-translate-y-px hover:shadow-md"
           }`}
         >
           Recently updated
@@ -1287,10 +1397,10 @@ export default function WebsiteProductsPanel({
         <button
           type="button"
           onClick={() => setCategoryFilter("")}
-          className={`rounded-full border px-3 py-1 text-xs ${
+          className={`rounded-full border px-3.5 py-1.5 text-xs font-medium transition-all ${
             categoryFilter === ""
-              ? "border-brand bg-brand text-white"
-              : "border-black/[.15] dark:border-white/[.2]"
+              ? "border-transparent bg-gradient-to-r from-[#2879bd] to-[#3f9fd0] text-white shadow-md shadow-brand/30"
+              : "border-border bg-card text-muted-foreground hover:-translate-y-px hover:border-brand/40 hover:text-foreground hover:shadow-sm"
           }`}
         >
           All
@@ -1300,10 +1410,10 @@ export default function WebsiteProductsPanel({
             key={c.id}
             type="button"
             onClick={() => setCategoryFilter(c.id)}
-            className={`rounded-full border px-3 py-1 text-xs ${
+            className={`rounded-full border px-3.5 py-1.5 text-xs font-medium transition-all ${
               categoryFilter === c.id
-                ? "border-brand bg-brand text-white"
-                : "border-black/[.15] dark:border-white/[.2]"
+                ? "border-transparent bg-gradient-to-r from-[#2879bd] to-[#3f9fd0] text-white shadow-md shadow-brand/30"
+                : "border-border bg-card text-muted-foreground hover:-translate-y-px hover:border-brand/40 hover:text-foreground hover:shadow-sm"
             }`}
           >
             {c.label}
@@ -1312,10 +1422,10 @@ export default function WebsiteProductsPanel({
         <button
           type="button"
           onClick={() => setCategoryFilter("__none__")}
-          className={`rounded-full border px-3 py-1 text-xs ${
+          className={`rounded-full border px-3.5 py-1.5 text-xs font-medium transition-all ${
             categoryFilter === "__none__"
-              ? "border-brand bg-brand text-white"
-              : "border-black/[.15] dark:border-white/[.2]"
+              ? "border-transparent bg-gradient-to-r from-[#2879bd] to-[#3f9fd0] text-white shadow-md shadow-brand/30"
+              : "border-border bg-card text-muted-foreground hover:-translate-y-px hover:border-brand/40 hover:text-foreground hover:shadow-sm"
           }`}
         >
           Uncategorized
@@ -1324,15 +1434,27 @@ export default function WebsiteProductsPanel({
           <button
             type="button"
             onClick={() => setCategoryFilter(ADDONS_FILTER_ID)}
-            className={`rounded-full border px-3 py-1 text-xs ${
+            className={`rounded-full border px-3.5 py-1.5 text-xs font-medium transition-all ${
               categoryFilter === ADDONS_FILTER_ID
-                ? "border-brand bg-brand text-white"
-                : "border-black/[.15] dark:border-white/[.2]"
+                ? "border-transparent bg-gradient-to-r from-[#2879bd] to-[#3f9fd0] text-white shadow-md shadow-brand/30"
+                : "border-border bg-card text-muted-foreground hover:-translate-y-px hover:border-brand/40 hover:text-foreground hover:shadow-sm"
             }`}
           >
             Addons ({addons.length})
           </button>
         )}
+        <button
+          type="button"
+          onClick={() => setCategoryFilter(POS_ONLY_FILTER_ID)}
+          title="Products sold at the POS only, not on the website"
+          className={`rounded-full border px-3.5 py-1.5 text-xs font-medium transition-all ${
+            categoryFilter === POS_ONLY_FILTER_ID
+              ? "border-transparent bg-gradient-to-r from-[#2879bd] to-[#3f9fd0] text-white shadow-md shadow-brand/30"
+              : "border-border bg-card text-muted-foreground hover:-translate-y-px hover:border-brand/40 hover:text-foreground hover:shadow-sm"
+          }`}
+        >
+          POS only ({posOnlyProducts.length})
+        </button>
       </div>
 
       {selected.size > 0 && (
@@ -1563,7 +1685,21 @@ export default function WebsiteProductsPanel({
       )}
 
       <div className="overflow-x-auto lg:flex-1 lg:overflow-auto">
-        {categoryFilter === ADDONS_FILTER_ID ? (
+        {categoryFilter === POS_ONLY_FILTER_ID ? (
+          <div className="space-y-3 px-3 py-4 sm:px-6">
+            <p className="text-xs text-muted-foreground">
+              Sold at the POS only — not shown on the website. They appear in Sales under “POS only”.
+            </p>
+            <PosOnlyProductsTable
+              brandId={brandId}
+              products={filteredPosOnly}
+              purchaseCosts={purchaseCosts}
+              imageChoices={imageChoices}
+              stockChoices={stockChoices}
+              catalogId={catalogId}
+            />
+          </div>
+        ) : categoryFilter === ADDONS_FILTER_ID ? (
           <WebsiteAddonsTable
             catalogId={catalogId}
             addons={filteredAddons}
@@ -2125,7 +2261,7 @@ export default function WebsiteProductsPanel({
                   </tr>
                 );
               })}
-              {filtered.length === 0 && !(showAddonMatches) && (
+              {filtered.length === 0 && !showAddonMatches && !showPosOnlyMatches && (
                 <tr>
                   <td colSpan={13} className="px-6 py-8 text-center text-sm text-zinc-500">
                     {q ? "No products match your search." : "No website products yet."}
@@ -2147,11 +2283,24 @@ export default function WebsiteProductsPanel({
           />
           </div>
         )}
+        {showPosOnlyMatches && (
+          <div className="space-y-2 border-t border-black/[.08] px-3 py-3 sm:px-6 dark:border-white/[.145]">
+            <p className="text-xs text-muted-foreground">POS only</p>
+            <PosOnlyProductsTable
+              brandId={brandId}
+              products={filteredPosOnly}
+              purchaseCosts={purchaseCosts}
+              imageChoices={imageChoices}
+              stockChoices={stockChoices}
+              catalogId={catalogId}
+            />
+          </div>
+        )}
         </>
         )}
       </div>
 
-      {categoryFilter !== ADDONS_FILTER_ID && products && filtered.length > 0 && (
+      {categoryFilter !== ADDONS_FILTER_ID && categoryFilter !== POS_ONLY_FILTER_ID && products && filtered.length > 0 && (
         <div className="flex flex-wrap items-center justify-between gap-3 border-t border-black/[.08] px-3 py-3 text-sm sm:px-6 dark:border-white/[.145]">
           <label className="flex items-center gap-2 text-xs text-zinc-500">
             Items per page

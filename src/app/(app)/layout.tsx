@@ -1,4 +1,5 @@
 import Sidebar from "@/components/Sidebar";
+import ScrollRestorer from "@/components/ScrollRestorer";
 import TopBar from "@/components/TopBar";
 import { getSessionUser } from "@/lib/supabase/auth-server";
 import { supabaseAdmin } from "@/lib/supabase/server";
@@ -30,6 +31,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
     // clip a taller-than-viewport descendant, so without this the window
     // itself grows a second, outer scrollbar alongside that container's own.
     <div className="flex h-full overflow-hidden print:block print:h-auto print:overflow-visible">
+      <ScrollRestorer />
       <Sidebar role={user?.role ?? ""} />
       <div className="flex min-h-0 min-w-0 flex-1 flex-col print:block print:min-h-0">
         <TopBar fullName={user?.fullName ?? ""} role={user?.role ?? ""} avatarUrl={avatarUrl} />

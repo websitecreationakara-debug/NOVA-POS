@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { supabaseAdmin } from "@/lib/supabase/server";
 import { ensurePosProductForSiteProduct } from "@/app/(app)/sales/websiteActions";
 import { getCatalog } from "@/lib/websiteProducts/catalogs";
+import { listPosOnlyAsWebsiteProducts } from "@/lib/posOnlyProducts";
 import {
   createWebsiteAddon,
   createWebsiteCategory,
@@ -14,6 +15,7 @@ import {
   listSellableWebsiteProducts,
   listWebsiteCategories,
   listWebsiteProducts,
+  setWebsiteVariationStock,
   updateWebsiteAddon,
   getWebsiteProduct,
   updateWebsiteProduct,
@@ -134,7 +136,8 @@ export async function listSellableWebsiteProductsAction(
 ): Promise<WebsiteProduct[]> {
   await requireStockAccess();
   const { products } = await listSellableWebsiteProducts(catalogId);
-  return products;
+  // The POS-only products ride along, so a refresh doesn't drop them from the grid.
+  return [...products, ...(await listPosOnlyAsWebsiteProducts(getCatalog(catalogId).brandSlug))];
 }
 
 export async function createWebsiteAddonAction(
@@ -367,9 +370,7 @@ export async function setVariationStockAction(input: {
     }
     // That push skips an untracked ("—") size, so write the typed number to it directly.
     if (untracked) {
-      await updateWebsiteProductVariation(input.catalogId, input.siteProductId, input.variationId, {
-        stock: input.stock,
-      });
+      await setWebsiteVariationStock(input.catalogId, input.siteProductId, input.variationId, input.stock);
     }
     return;
   }
@@ -380,9 +381,7 @@ export async function setVariationStockAction(input: {
   if (input.alreadyLinked && input.stock === null) {
     await clearPosStockForUnlimited(linked.id, input);
   }
-  await updateWebsiteProductVariation(input.catalogId, input.siteProductId, input.variationId, {
-    stock: input.stock,
-  });
+  await setWebsiteVariationStock(input.catalogId, input.siteProductId, input.variationId, input.stock);
 }
 
 // Same as setVariationPriceAction/setVariationStockAction but for a simple

@@ -40,11 +40,11 @@ if (!dryRun && (!GOOGLE_DRIVE_BACKUP_URL || !GOOGLE_DRIVE_BACKUP_SECRET)) {
 // ---------- read a whole table, a page at a time ----------
 const PAGE = 1000;
 
-async function readTable(table) {
+async function readTable(table, orderBy = "id") {
   const rows = [];
   let total = null;
   for (let from = 0; ; from += PAGE) {
-    const res = await fetch(`${SUPABASE_URL}/rest/v1/${table}?select=*&order=id.asc`, {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/${table}?select=*&order=${orderBy}.asc`, {
       headers: {
         apikey: SUPABASE_SERVICE_ROLE_KEY,
         Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
@@ -157,6 +157,27 @@ const items = await readTable("order_items");
 let customers = [];
 if (includeCustomers) customers = await readTable("customers");
 
+// What the COGS & Margin Tracking tab and Cost Control are built from, beyond the orders themselves (order_items
+// already carries each sale's unit_cost / cogs): the products with their cost_price and selling
+// price, stock on hand, recipes, waste/promotion adjustments, and Stock's purchase-cost table.
+const cogsTables = [
+  { table: "categories" },
+  { table: "products" },
+  { table: "stock_levels", orderBy: "product_id" },
+  { table: "recipe_items" },
+  { table: "stock_adjustments" },
+  { table: "website_product_purchase_costs" },
+  // Marketing > Cost Control: the Sets (target markup, labor, base price, ...) and their items.
+  { table: "brands" },
+  { table: "sets" },
+  { table: "set_items" },
+  { table: "product_site_links" },
+];
+const cogsFiles = [];
+for (const { table, orderBy } of cogsTables) {
+  cogsFiles.push({ name: `${table}-${day}.csv`, data: toCsv(await readTable(table, orderBy)) });
+}
+
 if (!includeCustomers) {
   // Customer details stay out of the file unless asked for: the Drive folder is shared.
   for (const o of orders) {
@@ -169,13 +190,14 @@ if (!includeCustomers) {
 const files = [
   { name: `orders-${day}.csv`, data: toCsv(orders) },
   { name: `order_items-${day}.csv`, data: toCsv(items) },
+  ...cogsFiles,
 ];
 if (includeCustomers) files.push({ name: `customers-${day}.csv`, data: toCsv(customers) });
 
 const archive = zip(files);
 const filename = `nova-pos-orders-backup-${day}${includeCustomers ? "" : "-no-customer"}.zip`;
 console.log(
-  `Built ${filename}: ${orders.length} orders, ${items.length} order lines, ` +
+  `Built ${filename}: ${orders.length} orders, ${items.length} order lines, ${cogsFiles.length} product/COGS tables, ` +
     `${includeCustomers ? `${customers.length} customers` : "customers left out"}, ` +
     `${(archive.length / 1048576).toFixed(2)} MB zipped`
 );

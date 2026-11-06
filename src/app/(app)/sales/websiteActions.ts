@@ -5,6 +5,7 @@ import { supabaseAdmin } from "@/lib/supabase/server";
 import { getSessionUser } from "@/lib/supabase/auth-server";
 import { getCatalog } from "@/lib/websiteProducts/catalogs";
 import type { WebsiteCatalogId } from "@/lib/websiteProducts/types";
+import { canPackSizeFromName } from "@/lib/websiteProducts/stockUnits";
 import type { ProductSiteLink } from "@/types/database";
 
 export type LinkedPosProduct = {
@@ -90,6 +91,8 @@ export async function ensurePosProductForSiteProduct(input: {
       unit: "pcs",
       image_url: imageUrl,
       is_active: true,
+      // A Drink & Snack can pack takes its can count off the shared stock (migration 0088).
+      ...(site === "bosba-drink-snack" && variationId ? { stock_units_per_sale: canPackSizeFromName(name) } : {}),
     })
     .select("id, name, price, unit")
     .single();

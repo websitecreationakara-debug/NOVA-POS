@@ -4,8 +4,30 @@
 // Kept side-effect free and DB-free so it's unit-testable without a live
 // Postgres instance -- see cogs.test.ts.
 
+import { ppDay } from "./phnomPenhTime";
+
 function round2(n: number): number {
   return Math.round(n * 100) / 100;
+}
+
+// Splits an amount (in dollars) across lines in proportion to `weights`, in whole
+// cents, so the shares always add up to exactly that amount (the leftover cents go
+// to the largest remainders). Rounding each share on its own can drift by a cent
+// per line. All-zero weights split evenly.
+export function splitByWeight(amount: number, weights: number[]): number[] {
+  if (weights.length === 0) return [];
+  const totalCents = Math.round(amount * 100);
+  const sum = weights.reduce((a, b) => a + b, 0);
+  const exact = weights.map((w) => (sum > 0 ? (totalCents * w) / sum : totalCents / weights.length));
+  const cents = exact.map(Math.floor);
+  let left = totalCents - cents.reduce((a, b) => a + b, 0);
+  const byRemainder = exact.map((e, i) => ({ i, r: e - Math.floor(e) })).sort((a, b) => b.r - a.r);
+  for (const { i } of byRemainder) {
+    if (left <= 0) break;
+    cents[i] += 1;
+    left -= 1;
+  }
+  return cents.map((c) => c / 100);
 }
 
 // A recipe's total unit cost = sum(ingredient quantity * ingredient cost).
@@ -111,22 +133,28 @@ export function unitsSoldByCost(lines: MarginLine[]): { unitCost: number; units:
   return [...unitsByCost].map(([cost, units]) => ({ unitCost: cost, units: round2(units) }));
 }
 
-// `currentOnly` is for a product linked to a Stock listing, whose current Unit Cost
-// is Stock's Total Cost 10%: a sold line with no cost recorded is costed at it. A
-// line that has a recorded cost keeps it -- each sale keeps the cost it was made at,
-// so a later cost change doesn't rewrite earlier sales (and a cost typed into the
-// report, costOverridden, stays in the report and never changes Stock).
+// `currentOnly` is passed for a product linked to a Stock listing. Its Unit Cost is Stock's current Total
+// Cost 10% (or a cost typed into the report), but every sold line keeps the cost it was sold with; Stock's
+// cost is only the fallback for a line with no recorded cost. With no Stock cost at all there is no Unit
+// Cost and no COGS either, so the row reads "Add cost price".
 export function summarizeMarginLines(lines: MarginLine[], currentCost: number | null = null, currentOnly = false) {
+  // A cost typed into the report (on every sold line, all at one cost) is shown as
+  // the Unit Cost instead of Stock's current cost -- that edit never touches Stock.
+  const typedSoldAt = unitsSoldByCost(lines);
+  const typedCost =
+    lines.length > 0 && lines.every((l) => l.costOverridden) && typedSoldAt.length === 1
+      ? typedSoldAt[0].unitCost
+      : null;
   if (currentOnly) {
-    lines = lines.map((l) =>
-      l.costOverridden || l.unitCost !== null || l.cogs !== null
-        ? l
-        : {
-            ...l,
-            unitCost: currentCost,
-            cogs: currentCost === null ? null : round2(currentCost * l.quantity),
-          }
-    );
+    currentCost = typedCost ?? currentCost;
+    // Each sold line is costed at Total Cost 10%, except a line whose cost was typed into the
+    // report: that one keeps the cost typed for it (so a month's COGS is the same whether it is
+    // read day by day or all at once).
+    const stockCost = currentCost;
+    lines = lines.map((l) => {
+      const cost = linkedLineCost(l, stockCost);
+      return { ...l, unitCost: cost, cogs: cost === null ? null : round2(cost * l.quantity) };
+    });
   }
   const unitsSold = lines.reduce((s, l) => s + l.quantity, 0);
   const revenue = lines.reduce((s, l) => s + l.lineTotal, 0);
@@ -134,14 +162,13 @@ export function summarizeMarginLines(lines: MarginLine[], currentCost: number | 
   const { grossProfit, grossMarginPct } = computeGrossMargin(revenue, totalCogs);
 
   const soldAt = unitsSoldByCost(lines);
-  // A cost typed into the report (on every sold line, all at one cost) is shown as
-  // the Unit Cost instead of Stock's current cost -- that edit never touches Stock.
-  const typedCost =
-    lines.length > 0 && lines.every((l) => l.costOverridden) && soldAt.length === 1 ? soldAt[0].unitCost : null;
-  const unitCost =
-    typedCost ??
-    currentCost ??
-    (totalCogs === null ? null : (soldAt[0]?.unitCost ?? round2(totalCogs / unitsSold)));
+  const unitCost = currentOnly
+    ? currentCost
+    : (typedCost ??
+      // From the cutoff on, the cost of the most recent sale (newest first), not the current cost.
+      unitsSoldByCost(lines.filter(usesSaleTimeCost))[0]?.unitCost ??
+      currentCost ??
+      (totalCogs === null ? null : (soldAt[0]?.unitCost ?? round2(totalCogs / unitsSold))));
   const anyDifferent = unitCost !== null && soldAt.some((s) => s.unitCost !== round2(unitCost));
 
   return {
@@ -154,6 +181,86 @@ export function summarizeMarginLines(lines: MarginLine[], currentCost: number | 
     grossMarginPct,
     hasUnknownCost,
   };
+}
+
+// Costing changed on this day (Phnom Penh), the first with the new process: from it on, a sale keeps the
+// cost it was recorded with (a linked product's is its Stock Total Cost 10% at the time of the order);
+// before it, the old process stands -- a linked product's sales are all costed at its current Total Cost
+// 10%, and an unlinked product's Unit Cost is its current cost.
+export const SALE_TIME_COST_FROM = "2026-11-01";
+
+export function usesSaleTimeCost(l: MarginLine): boolean {
+  return l.paidAt === null || ppDay(l.paidAt) >= SALE_TIME_COST_FROM;
+}
+
+// A sold line of a product linked to a Stock listing. From SALE_TIME_COST_FROM it keeps the cost it was sold
+// with (a cost typed into the report included), so changing Stock's cost later doesn't re-cost it; Stock's
+// current cost is only the fallback for a line with no recorded cost. Earlier lines are costed at Stock's
+// current cost (the old process), except a cost typed into the report. With no current cost at all there is
+// no COGS (the row reads "Add cost price").
+function linkedLineCost(l: MarginLine, stockCost: number | null): number | null {
+  const typed = l.costOverridden && l.unitCost !== null ? l.unitCost : null;
+  if (!usesSaleTimeCost(l)) return typed ?? stockCost;
+  if (stockCost === null) return typed;
+  return l.unitCost ?? stockCost;
+}
+
+// One product's sold lines costed the way summarizeMarginLines costs them -- a product linked to a Stock listing
+// (`currentOnly`) has every line at its current / typed cost -- plus the Unit Cost that results. The lines of
+// several products can then be added up as one Margin Report row (see getMarginReport).
+export function resolveMarginLines(
+  lines: MarginLine[],
+  currentCost: number | null,
+  currentOnly: boolean
+): { lines: MarginLine[]; unitCost: number | null } {
+  if (!currentOnly) return { lines, unitCost: currentCost };
+  const typedSoldAt = unitsSoldByCost(lines);
+  const typedCost =
+    lines.length > 0 && lines.every((l) => l.costOverridden) && typedSoldAt.length === 1 ? typedSoldAt[0].unitCost : null;
+  const stockCost = typedCost ?? currentCost;
+  return {
+    lines: lines.map((l) => {
+      const cost = linkedLineCost(l, stockCost);
+      return { ...l, unitCost: cost, cogs: cost === null ? null : round2(cost * l.quantity) };
+    }),
+    unitCost: stockCost,
+  };
+}
+
+// A product's Total COGS with every day costed on its own and the days added up -- the same figure as
+// adding the daily totals by hand. Costing the whole range at once rounds each cost group once, so it
+// can land a few cents off that sum. Within a day, sales at the same price and cost are one line (as
+// margin_report groups them), so a day reads the same here as when that day alone is viewed.
+export function summarizeCogsByDay(
+  lines: MarginLine[],
+  currentCost: number | null = null,
+  currentOnly = false
+): number | null {
+  const byDay = new Map<string, Map<string, MarginLine>>();
+  for (const l of lines) {
+    const day = ppDay(l.paidAt);
+    const cost = l.unitCost ?? (l.cogs !== null && l.quantity ? l.cogs / l.quantity : null);
+    const unitCost = cost === null ? null : round2(cost);
+    const key = [l.unitPrice ?? "", unitCost ?? "", l.cogs === null, l.costOverridden === true].join("|");
+    const groups = byDay.get(day) ?? new Map<string, MarginLine>();
+    const g = groups.get(key);
+    if (g) {
+      g.quantity += l.quantity;
+      g.lineTotal += l.lineTotal;
+      g.cogs = g.cogs === null || l.cogs === null ? null : g.cogs + l.cogs;
+      if (l.paidAt && (!g.paidAt || l.paidAt > g.paidAt)) g.paidAt = l.paidAt;
+    } else {
+      groups.set(key, { ...l, unitCost });
+    }
+    byDay.set(day, groups);
+  }
+  let total = 0;
+  for (const groups of byDay.values()) {
+    const dayCogs = summarizeMarginLines([...groups.values()], currentCost, currentOnly).totalCogs;
+    if (dayCogs === null) return null;
+    total += dayCogs;
+  }
+  return round2(total);
 }
 
 // For one product's own row in the Margin Report: any sold line with an

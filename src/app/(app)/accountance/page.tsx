@@ -4,6 +4,8 @@ import {
   getCogsSummary,
   getDailySales,
   getExpensesForDateRange,
+  getProductAdsExpenses,
+  getMarginOrderDiscountTotal,
   getMarginReport,
   getReconciliation,
   getStockUnits,
@@ -114,12 +116,12 @@ function reconciliationFor(brandId: string, fromDate: string, toDate: string) {
   return getReconciliation(brandId, fromDate);
 }
 
-// The Margin Report (one row per product sold, each priced from its current cost) is
-// only shown on the COGS tab, and building it is by far the heaviest query here --
-// so the other tabs skip it.
-function marginReportFor(tab: AccountanceTab, brandId: string, fromDate: string, toDate: string) {
-  if (tab !== "cogs") return Promise.resolve<Awaited<ReturnType<typeof getMarginReport>>>([]);
-  return getMarginReport(brandId, fromDate, toDate);
+// The Margin Report (one row per product sold, each priced from its current cost). Total COGS on
+// every tab is its total -- the same number the Dashboard shows -- so it is built for every tab
+// (it is the heaviest query here). Empty if it could not be built: the page then falls back to
+// the COGS summary's own total.
+function marginReportFor(_tab: AccountanceTab, brandId: string, fromDate: string, toDate: string) {
+  return getMarginReport(brandId, fromDate, toDate).catch(() => []);
 }
 
 export default async function AccountancePage({
@@ -139,7 +141,7 @@ export default async function AccountancePage({
   }>;
 }) {
   const {
-    brand: brandIdParam,
+    brand: brandParam,
     from: fromParam,
     to: toParam,
     date: dateParam,
@@ -150,6 +152,8 @@ export default async function AccountancePage({
     year: yearParam,
     tab: tabParam,
   } = await searchParams;
+  // No business picked (the sidebar link carries none) means every business together.
+  const brandIdParam = brandParam || ALL_BUSINESSES_ID;
   const today = todayIso();
   const mode =
     modeParam === "week" || modeParam === "month" || modeParam === "quarter" || modeParam === "year"
@@ -209,7 +213,7 @@ export default async function AccountancePage({
   const selectedBrand =
     brandIdParam === ALL_BUSINESSES_ID
       ? ALL_BUSINESSES_BRAND
-      : (brands.find((b) => b.id === brandIdParam) ?? brands[0]);
+      : (brands.find((b) => b.id === brandIdParam) ?? ALL_BUSINESSES_BRAND);
   const currentBrand = tab === "expenses" ? ALL_BUSINESSES_BRAND : selectedBrand;
 
   // Only the COGS tab needs the waste log -- skip the extra query for every other
@@ -230,6 +234,14 @@ export default async function AccountancePage({
   // The stock-unit boxes only exist on the COGS tab.
   const stockUnitsPromise =
     tab === "cogs" ? getStockUnits(currentBrand.id, fromDate, toDate) : Promise.resolve(null);
+  // Expense Ads typed per product exist only in the COGS tab's Month view.
+  const productAdsPromise: Promise<Record<string, number>> =
+    tab === "cogs" && mode === "month" ? getProductAdsExpenses(month) : Promise.resolve({});
+  // The Margin Report's Grand Total takes the order-level discounts off the product rows' revenue.
+  const orderDiscountPromise =
+    tab === "cogs"
+      ? getMarginOrderDiscountTotal(currentBrand.id, fromDate, toDate).catch(() => 0)
+      : Promise.resolve(0);
   const previousPeriodPromise = Promise.all([
     getDailySales(currentBrand.id, prevFromDate, prevToDate),
     getExpensesForDateRange(currentBrand.id, prevFromDate, prevToDate),
@@ -238,14 +250,36 @@ export default async function AccountancePage({
 
   // All three at once (the previous period used to wait for the current one).
   const [
-    [{ summary, orders }, reconciliation, expenses, cogsSummary, marginReport],
+    [{ summary, orders }, reconciliation, expenses, cogsSummaryBase, marginReport],
     wasteLog,
-    [{ summary: prevSummary }, prevExpenses, prevCogsSummary],
+    [{ summary: prevSummary, orders: prevOrders }, prevExpenses, prevCogsSummary],
     stockUnits,
-  ] = await Promise.all([currentDataPromise, wasteLogPromise, previousPeriodPromise, stockUnitsPromise]);
+    productAds,
+    orderDiscountTotal,
+  ] = await Promise.all([
+    currentDataPromise,
+    wasteLogPromise,
+    previousPeriodPromise,
+    stockUnitsPromise,
+    productAdsPromise,
+    orderDiscountPromise,
+  ]);
+
+  // Total COGS is the Margin Report's: the sum of the products that have a Total COGS there (a
+  // product with no cost price adds nothing) -- what the Dashboard shows, so the two screens match.
+  const cogsSummary =
+    marginReport.length > 0
+      ? {
+          ...cogsSummaryBase,
+          totalCogs: Math.round(marginReport.reduce((sum, r) => sum + (r.totalCogs ?? 0), 0) * 100) / 100,
+          hasUnknownCost: marginReport.some((r) => r.totalCogs === null),
+        }
+      : cogsSummaryBase;
 
   const prevExpenseTotal = prevExpenses.reduce((sum, e) => sum + e.amount, 0);
-  const prevGrossProfit = prevSummary.total - prevCogsSummary.totalCogs;
+  // Same gross profit as the page itself: revenue less delivery fees less COGS.
+  const prevDeliveryFees = prevOrders.reduce((sum, o) => sum + Number(o.delivery_fee ?? 0), 0);
+  const prevGrossProfit = prevSummary.total - prevDeliveryFees - prevCogsSummary.totalCogs;
   // Net profit summary card = total revenue - total expenses.
   const prevNetProfit = prevSummary.total - prevExpenseTotal;
   const previousPeriod = {
@@ -280,6 +314,8 @@ export default async function AccountancePage({
       marginReport={marginReport}
       wasteLog={wasteLog}
       stockUnits={stockUnits}
+      productAds={productAds}
+      orderDiscountTotal={orderDiscountTotal}
       previousPeriod={previousPeriod}
     />
   );

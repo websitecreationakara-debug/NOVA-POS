@@ -9,6 +9,28 @@ export default function PrintButton({ filename }: { filename?: string }) {
   const [exporting, setExporting] = useState(false);
   // "Saving 12 of 54" while a PNG batch runs -- a big batch takes a while.
   const [imageProgress, setImageProgress] = useState<string | null>(null);
+  // Print opens the invoice as a PDF (both copies, 2 pages) in a new tab, where the
+  // browser's viewer has its own print button. The tab has to be opened right here,
+  // inside the click -- a popup blocker refuses it once the PDF has taken a while to build.
+  async function handlePrint() {
+    const tab = window.open("", "_blank");
+    if (tab) {
+      tab.document.title = "Preparing invoice…";
+      tab.document.body.style.cssText = "font-family:sans-serif;padding:2rem;color:#555";
+      tab.document.body.textContent = "Preparing invoice PDF…";
+    }
+    setExporting(true);
+    try {
+      await exportInvoicePdf(filename || "Invoice", { allCopies: true, tab });
+    } catch (error) {
+      tab?.close();
+      console.error("Print failed", error);
+      alert("Couldn't generate the PDF to print. Try Save as PDF instead.");
+    } finally {
+      setExporting(false);
+    }
+  }
+
   async function handleSaveAsPdf() {
     setExporting(true);
     try {
@@ -45,7 +67,7 @@ export default function PrintButton({ filename }: { filename?: string }) {
   return (
     <div className="print:hidden flex flex-wrap items-center justify-center gap-2">
       <button
-        onClick={() => window.print()}
+        onClick={handlePrint}
         className="inline-flex items-center gap-1.5 rounded-full border border-border px-4 py-2 text-sm font-medium whitespace-nowrap hover:bg-black/[.04] dark:hover:bg-white/[.06]"
       >
         <Printer className="size-4" />

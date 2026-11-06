@@ -5,9 +5,9 @@ import { supabaseAdmin } from "@/lib/supabase/server";
 import { pushOrderDeleteToSite, pushOrderStatusToSite, pushStockToSites } from "@/lib/site-sync";
 import { getCategoriesFingerprintAction } from "@/app/(app)/stock/actions";
 import { computeLineCogs, computeRecipeUnitCost } from "@/lib/cogs";
-import { getEffectiveProductCost } from "@/lib/websiteProducts/purchaseCosts";
+import { getSaleUnitCost } from "@/lib/websiteProducts/purchaseCosts";
 import { getSessionUser } from "@/lib/supabase/auth-server";
-import { buildOrdersCsv, buildOrdersSheet } from "@/lib/ordersCsv";
+import { buildOrdersCsv, buildOrdersSheet, inRange, type OrdersRange } from "@/lib/ordersCsv";
 import { fetchOrdersBackupData } from "@/lib/ordersBackupData";
 import { buildXlsx } from "@/lib/xlsxWriter";
 import { ppToday } from "@/lib/phnomPenhTime";
@@ -36,8 +36,8 @@ export type DueDelivery = {
 // per item -- see lib/ordersCsv.ts. Two formats:
 //   "xlsx" -- an Excel workbook laid out to be read (plain-English columns first,
 //             phones kept as text, dates as real dates, Khmer intact);
-//   "csv"  -- the flat technical file with every column on every row, for other
-//             tools or restoring.
+//   "csv"  -- the flat technical file for other tools: one row per ORDER (no
+//             product lines -- the Excel file has those).
 // The file holds customer names, phones and addresses, so it is limited to
 // Administration and Cooperate Admin. Read in pages of 1000 (the database caps a
 // single query), so a long history is complete rather than silently cut off.
@@ -46,30 +46,39 @@ export type DueDelivery = {
 const BACKUP_ROLES = new Set(["admin", "accountance"]);
 
 export async function exportOrdersBackupAction(
-  format: "xlsx" | "csv"
+  format: "xlsx" | "csv",
+  // Only the orders dated in this range (Orders list dates); left out = every order.
+  range?: OrdersRange
 ): Promise<{ filename: string; mime: string; base64: string; orderCount: number }> {
   const user = await getSessionUser();
   if (!user || !BACKUP_ROLES.has(user.role)) {
     throw new Error("Only Administration and Cooperate Admin can back up orders");
   }
 
-  const { orders, items } = await fetchOrdersBackupData();
+  const day = /^\d{4}-\d{2}-\d{2}$/;
+  const from = range?.from && day.test(range.from) ? range.from : undefined;
+  const to = range?.to && day.test(range.to) ? range.to : undefined;
+  const picked = from || to ? { from, to } : undefined;
+  const { orders, items } = await fetchOrdersBackupData(picked, format === "xlsx");
 
-  const stem = `nova-pos-orders-backup-${ppToday()}`;
+  const orderCount = orders.filter((o) => inRange(o, picked)).length;
+  const stem = picked
+    ? `nova-pos-orders-${from ?? "start"}-to-${to ?? ppToday()}`
+    : `nova-pos-orders-backup-${ppToday()}`;
   if (format === "xlsx") {
-    const { columns, rows } = buildOrdersSheet(orders, items);
+    const { columns, rows } = buildOrdersSheet(orders, items, picked);
     return {
       filename: `${stem}.xlsx`,
       mime: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
       base64: buildXlsx("Orders", columns, rows).toString("base64"),
-      orderCount: orders.length,
+      orderCount,
     };
   }
   return {
     filename: `${stem}.csv`,
     mime: "text/csv;charset=utf-8",
-    base64: Buffer.from(buildOrdersCsv(orders, items), "utf8").toString("base64"),
-    orderCount: orders.length,
+    base64: Buffer.from(buildOrdersCsv(orders, items, picked, false), "utf8").toString("base64"),
+    orderCount,
   };
 }
 
@@ -167,6 +176,9 @@ export type OrderEditInput = {
   customerName: string;
   customerPhone: string;
   customerAddress: string;
+  // Set when staff picked an existing customer from the suggestions: the order
+  // moves onto that customer. undefined keeps the order's current customer.
+  customerId?: string;
   brandId: string;
   items: OrderItemInput[];
   // Staff enter a % and a flat "minus" separately; both fold into the
@@ -233,7 +245,7 @@ export async function updateOrderAction(
 
   // Price each new line the same way charge_order() does: from the
   // product's Stock Total at this moment ("direct" -- see
-  // getEffectiveProductCost), or, if it has a recipe, from summing the
+  // getSaleUnitCost), or, if it has a recipe, from summing the
   // recipe's ingredient costs ("recipe") -- and work out what that recipe now
   // needs to consume. A product that was ALREADY on this order keeps the cost
   // recorded when it was sold: editing an order (a quantity, the customer, a
@@ -265,10 +277,15 @@ export async function updateOrderAction(
 
   const directCostProductIds = productIds.filter((id) => !recipesByProduct.has(id));
   // The cost already recorded on this order for a product, if any.
-  const recordedCostByProduct = new Map<string, number>();
+  // A cost typed into the Margin Report (cost_source "report") is kept too, and stays marked as typed.
+  const recordedCostByProduct = new Map<string, { cost: number; source: "direct" | "report" }>();
   for (const row of existing ?? []) {
-    if (row.cost_source === "direct" && row.unit_cost !== null && !recordedCostByProduct.has(row.product_id)) {
-      recordedCostByProduct.set(row.product_id, Number(row.unit_cost));
+    if (
+      (row.cost_source === "direct" || row.cost_source === "report") &&
+      row.unit_cost !== null &&
+      !recordedCostByProduct.has(row.product_id)
+    ) {
+      recordedCostByProduct.set(row.product_id, { cost: Number(row.unit_cost), source: row.cost_source });
     }
   }
   const directCostByProduct = new Map<string, number | null>();
@@ -276,7 +293,7 @@ export async function updateOrderAction(
     directCostProductIds.map(async (id) => {
       directCostByProduct.set(
         id,
-        recordedCostByProduct.get(id) ?? (await getEffectiveProductCost(id).catch(() => null))
+        recordedCostByProduct.get(id)?.cost ?? (await getSaleUnitCost(id).catch(() => null))
       );
     })
   );
@@ -305,7 +322,7 @@ export async function updateOrderAction(
       ...it,
       unitCost,
       cogs: computeLineCogs(unitCost, it.quantity),
-      costSource: "direct" as const,
+      costSource: (recordedCostByProduct.get(it.productId)?.source ?? "direct") as "direct" | "report",
       ingredients: [] as { ingredientProductId: string; quantity: number; unitCost: number | null }[],
     };
   });
@@ -315,8 +332,15 @@ export async function updateOrderAction(
   // minus what the new lines consume. Positive => hand stock back; negative
   // => take more.
   const delta = new Map<string, number>();
+  // A can pack takes its can count off the stock per sold unit (migration 0088).
+  const { data: unitRows, error: unitErr } = await supabaseAdmin
+    .from("products")
+    .select("id, stock_units_per_sale")
+    .in("id", [...new Set([...(existing ?? []).map((r) => r.product_id), ...pricedItems.map((i) => i.productId)])]);
+  if (unitErr) throw unitErr;
+  const unitsOf = new Map((unitRows ?? []).map((r) => [r.id, Number(r.stock_units_per_sale) || 1]));
   for (const row of existing ?? []) {
-    delta.set(row.product_id, (delta.get(row.product_id) ?? 0) + Number(row.quantity));
+    delta.set(row.product_id, (delta.get(row.product_id) ?? 0) + Number(row.quantity) * (unitsOf.get(row.product_id) ?? 1));
   }
   for (const row of existingIngredients ?? []) {
     delta.set(
@@ -325,7 +349,7 @@ export async function updateOrderAction(
     );
   }
   for (const it of pricedItems) {
-    delta.set(it.productId, (delta.get(it.productId) ?? 0) - it.quantity);
+    delta.set(it.productId, (delta.get(it.productId) ?? 0) - it.quantity * (unitsOf.get(it.productId) ?? 1));
     for (const ing of it.ingredients) {
       delta.set(ing.ingredientProductId, (delta.get(ing.ingredientProductId) ?? 0) - ing.quantity);
     }
@@ -398,6 +422,7 @@ export async function updateOrderAction(
       brand_id: input.brandId,
       customer_phone: phone || null,
       customer_name: name || null,
+      ...(input.customerId ? { customer_id: input.customerId } : {}),
       subtotal,
       discount,
       delivery_fee: deliveryFee,
@@ -412,18 +437,20 @@ export async function updateOrderAction(
   // has to be written there. Keep the customer's phone in step too, but only
   // when no other customer already owns that number (customers.phone is
   // unique -- migration 0011).
-  if (order.customer_id) {
+  const customerId = input.customerId ?? order.customer_id;
+  if (customerId) {
     const patch: { address: string | null; phone?: string } = { address: address || null };
-    if (phone) {
+    // A picked customer keeps their own number (it may be their 2nd phone).
+    if (phone && !input.customerId) {
       const { data: clash } = await supabaseAdmin
         .from("customers")
         .select("id")
         .eq("phone", phone)
-        .neq("id", order.customer_id)
+        .neq("id", customerId)
         .maybeSingle();
       if (!clash) patch.phone = phone;
     }
-    await supabaseAdmin.from("customers").update(patch).eq("id", order.customer_id);
+    await supabaseAdmin.from("customers").update(patch).eq("id", customerId);
   }
 
   for (const [productId, move] of delta) {
@@ -459,6 +486,13 @@ export async function updateOrderAction(
     if (noteErr && noteErr.code !== "42703" && noteErr.code !== "PGRST204") throw noteErr;
   }
 
+  // Who saved this edit (migration 0105); same undefined-column tolerance as note above.
+  const editor = await getSessionUser();
+  if (editor) {
+    const { error: byErr } = await supabaseAdmin.from("orders").update({ updated_by: editor.id }).eq("id", orderId);
+    if (byErr && byErr.code !== "42703" && byErr.code !== "PGRST204") throw byErr;
+  }
+
   // order_source lives on migration 0037; same undefined-column tolerance as
   // note above.
   if (input.orderSource !== undefined) {
@@ -491,6 +525,12 @@ export async function updateFulfillmentStatusAction(
   ]);
   if (rpcErr) throw rpcErr;
   if (fetchErr) throw fetchErr;
+
+  // A completed order is paid: clear its Unpaid flag.
+  if (status === "complete") {
+    const { error: paidErr } = await supabaseAdmin.from("orders").update({ is_unpaid: false }).eq("id", orderId);
+    if (paidErr) throw paidErr;
+  }
 
   if (movedStock && movedStock.length > 0) {
     revalidatePath("/stock");
@@ -527,6 +567,39 @@ export async function setOrderUnpaidAction(orderId: string, unpaid: boolean): Pr
   const { error } = await supabaseAdmin.from("orders").update({ is_unpaid: unpaid }).eq("id", orderId);
   if (error) throw error;
 
+  revalidatePath(`/orders/${orderId}`);
+  revalidatePath("/orders");
+}
+
+// Sets the order's invoice number by hand (migration 0087). A blank value goes back
+// to the automatic YYYYMM-N number. Each typed-in number can belong to one order only.
+export async function setInvoiceNumberAction(orderId: string, value: string): Promise<void> {
+  const number = value.trim();
+  if (number.length > 40) throw new Error("Invoice number is too long (40 characters max).");
+
+  if (number) {
+    const { data: clash } = await supabaseAdmin
+      .from("orders")
+      .select("id")
+      .eq("custom_invoice_number", number)
+      .neq("id", orderId)
+      .limit(1);
+    if (clash?.length) throw new Error(`Invoice number ${number} is already used by another order.`);
+  }
+
+  const { error } = await supabaseAdmin
+    .from("orders")
+    .update({ custom_invoice_number: number || null })
+    .eq("id", orderId);
+  if (error) {
+    throw new Error(
+      error.code === "42703" || error.code === "PGRST204"
+        ? "Run migration 0087 (orders.custom_invoice_number) in Supabase first."
+        : error.message
+    );
+  }
+
+  revalidatePath(`/invoice/${orderId}`);
   revalidatePath(`/orders/${orderId}`);
   revalidatePath("/orders");
 }
