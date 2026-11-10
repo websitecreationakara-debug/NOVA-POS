@@ -51,7 +51,8 @@ export type DailyLedgerRow = {
   // What the row's Delete button does.
   deletion: LedgerDeletion;
   // The Stock product this ledger product is linked to (migration 0100); only on products added to the ledger.
-  stockLink?: { id: string; name: string };
+  // `quantity` is that Stock product's quantity now, shown next to the ledger's Ending for comparison.
+  stockLink?: { id: string; name: string; quantity: number };
   // Set on a website product that has no POS product yet: productId is then a placeholder, and the POS
   // product (what ensurePosProductForSiteProduct makes) is created the first time something is typed in.
   site?: LedgerSiteItem;
@@ -68,6 +69,9 @@ export type DailyLedgerRow = {
   cost10: number | null;
   // What one unit costs (Stock's Total), null when there is none -- Ending value is built from it.
   totalCost: number | null;
+  // Units in one case (typed; Drink&Snack's "Store case" column), null when none was typed. Stays with the
+  // product: a month without its own value shows the latest earlier one.
+  caseSize: number | null;
   begin: number;
   days: LedgerDay[];
   totalIn: number;
@@ -117,7 +121,7 @@ export function buildDailyLedger(input: {
     quantityNow: number;
     cost: number | null;
     site?: LedgerSiteItem;
-    stockLink?: { id: string; name: string };
+    stockLink?: { id: string; name: string; quantity: number };
   }[];
   // Stock changes inside the month, and those after it (up to now).
   movements: Dated[];
@@ -191,6 +195,7 @@ export function buildDailyLedger(input: {
       originalCost: p.originalCost,
       cost10: p.cost10,
       totalCost: p.cost,
+      caseSize: null,
       begin,
       days: ledgerDays,
       totalIn: 0,
@@ -232,6 +237,7 @@ export const LEDGER_FIELDS = [
   "tc10",
   "total_cost",
   "begin",
+  "case_size",
 ] as const;
 export const LEDGER_DAY_FIELD = /^[pso]:(0[1-9]|[12][0-9]|3[01])$/;
 export const LEDGER_TEXT_FIELDS: readonly string[] = ["sku", "weight", "unit", "ex_date"];
@@ -276,6 +282,10 @@ export function applyLedgerEntry(row: DailyLedgerRow, field: string, value: stri
       break;
     case "begin":
       if (numeric) row.begin = num;
+      else return;
+      break;
+    case "case_size":
+      if (numeric && num > 0) row.caseSize = num;
       else return;
       break;
     default: {
