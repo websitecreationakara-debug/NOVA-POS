@@ -2,8 +2,9 @@ import Link from "next/link";
 import BackLink from "@/components/BackLink";
 import { notFound } from "next/navigation";
 import { ALL_BUSINESSES_ID, getBrands, getMergedProductMarginDetail, getProductMarginDetail } from "@/lib/supabase/queries";
-import { ppToday } from "@/lib/phnomPenhTime";
+import { ppDay, ppToday } from "@/lib/phnomPenhTime";
 import { formatUsd } from "@/lib/formatNumber";
+import EditableCostCell from "./EditableCostCell";
 
 const DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -57,6 +58,29 @@ export default async function ProductMarginPage({
     ...(productIds.length > 1 ? { ids: productIds.join(",") } : {}),
   })}`;
 
+  // One row per day and cost: the units sold at that cost on that day (newest day first).
+  const round2 = (n: number) => Math.round(n * 100) / 100;
+  const costDayMap = new Map<string, { day: string; unitCost: number; units: number }>();
+  for (const s of sales) {
+    const cost = s.unitCost ?? (s.cogs !== null && s.quantity ? s.cogs / s.quantity : null);
+    if (cost === null || !s.paidAt) continue;
+    const unitCost = round2(cost);
+    const day = ppDay(s.paidAt);
+    const key = `${day}|${unitCost}`;
+    const row = costDayMap.get(key) ?? { day, unitCost, units: 0 };
+    row.units += s.quantity;
+    costDayMap.set(key, row);
+  }
+  const totalUnits = sales.reduce((sum, s) => sum + s.quantity, 0);
+  const costDayRows = [...costDayMap.values()]
+    .sort((a, b) => b.day.localeCompare(a.day) || b.unitCost - a.unitCost)
+    .map((r) => ({
+      ...r,
+      units: round2(r.units),
+      cogs: round2(r.unitCost * r.units),
+      share: totalUnits === 0 ? 0 : round2((r.units / totalUnits) * 100),
+    }));
+
   const stats = [
     { label: "Units sold", value: String(summary.unitsSold) },
     {
@@ -101,7 +125,7 @@ export default async function ProductMarginPage({
       <section className="rounded-2xl border border-border bg-card p-4">
         <h2 className="font-medium">Units sold by cost</h2>
         <p className="mt-1 text-xs text-muted-foreground">
-          Each sale keeps the cost it was made at, so Total COGS adds up these rows.
+          Each sale keeps the cost it was made at, so Total COGS adds up these rows. Click a cost to correct it for the sales on that day at it.
         </p>
         {costBreakdown.length === 0 ? (
           <p className="mt-3 text-sm text-muted-foreground">No cost recorded for the sales in this period.</p>
@@ -109,6 +133,7 @@ export default async function ProductMarginPage({
           <table className="mt-3 w-full text-sm">
             <thead>
               <tr className="border-b border-border text-left text-xs font-semibold text-muted-foreground">
+                <th className="py-2 pr-3">Date sold</th>
                 <th className="py-2 pr-3">Cost per unit</th>
                 <th className="py-2 pr-3 text-right">Units sold</th>
                 <th className="py-2 pr-3 text-right">% of units</th>
@@ -116,9 +141,19 @@ export default async function ProductMarginPage({
               </tr>
             </thead>
             <tbody>
-              {costBreakdown.map((c) => (
-                <tr key={c.unitCost} className="border-b border-border">
-                  <td className="py-2 pr-3 tabular-nums">{formatMoney(c.unitCost)}</td>
+              {costDayRows.map((c) => (
+                <tr key={`${c.day}|${c.unitCost}`} className="border-b border-border">
+                  <td className="py-2 pr-3 whitespace-nowrap text-muted-foreground tabular-nums">{c.day}</td>
+                  <td className="py-2 pr-3 whitespace-nowrap">
+                    {/* Edits only this day's sales at this cost. */}
+                    <EditableCostCell
+                      productIds={productIds}
+                      cost={c.unitCost}
+                      brandId={brand}
+                      fromDate={c.day}
+                      toDate={c.day}
+                    />
+                  </td>
                   <td className="py-2 pr-3 text-right tabular-nums">{c.units}</td>
                   <td className="py-2 pr-3 text-right text-muted-foreground tabular-nums">{c.share}%</td>
                   <td className="py-2 text-right tabular-nums">{formatMoney(c.cogs)}</td>

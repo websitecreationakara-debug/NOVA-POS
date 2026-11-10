@@ -2,12 +2,14 @@
 
 import { useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { Trash2, TriangleAlert, Wand2 } from "lucide-react";
+import { Pencil, Trash2, TriangleAlert, Wand2 } from "lucide-react";
 import { staffRoleLabel, type StaffRole } from "@/types/database";
 import {
   createStaffAccountAction,
   deleteStaffAccountAction,
   removeStaffAvatarAction,
+  resetStaffPasswordAction,
+  updateStaffDetailsAction,
   updateStaffRoleAction,
   uploadStaffAvatarAction,
 } from "./actions";
@@ -206,6 +208,62 @@ export default function UsersClient({
         setAvatarBusyId(null);
       }
     });
+  }
+
+  // The Edit dialog: change a staff member's name and email, or set them a new password.
+  const [editing, setEditing] = useState<{ id: string; fullName: string } | null>(null);
+  const [editName, setEditName] = useState("");
+  const [editEmail, setEditEmail] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [editBusy, setEditBusy] = useState<"details" | "password" | null>(null);
+  const [detailsMsg, setDetailsMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const [passwordMsg, setPasswordMsg] = useState<{ ok: boolean; text: string; password: string } | null>(null);
+  const [editCopied, setEditCopied] = useState(false);
+
+  function openEdit(s: { id: string; fullName: string; email: string | null }) {
+    setEditing({ id: s.id, fullName: s.fullName });
+    setEditName(s.fullName);
+    setEditEmail(s.email ?? "");
+    setNewPassword("");
+    setDetailsMsg(null);
+    setPasswordMsg(null);
+    setEditCopied(false);
+  }
+
+  function closeEdit() {
+    setEditing(null);
+  }
+
+  async function saveDetails() {
+    if (!editing) return;
+    setDetailsMsg(null);
+    setEditBusy("details");
+    try {
+      await updateStaffDetailsAction(editing.id, { fullName: editName, email: editEmail });
+      setEditing({ id: editing.id, fullName: editName.trim() });
+      setDetailsMsg({ ok: true, text: "Saved." });
+      router.refresh();
+    } catch (e) {
+      setDetailsMsg({ ok: false, text: e instanceof Error ? e.message : "Could not save" });
+    } finally {
+      setEditBusy(null);
+    }
+  }
+
+  async function resetPassword() {
+    if (!editing) return;
+    setPasswordMsg(null);
+    setEditBusy("password");
+    const password = newPassword;
+    try {
+      await resetStaffPasswordAction(editing.id, password);
+      setPasswordMsg({ ok: true, text: "Password changed. Share the new login with them:", password });
+      setNewPassword("");
+    } catch (e) {
+      setPasswordMsg({ ok: false, text: e instanceof Error ? e.message : "Could not reset the password", password: "" });
+    } finally {
+      setEditBusy(null);
+    }
   }
 
   function confirmDeleteAccount() {
@@ -452,7 +510,15 @@ export default function UsersClient({
                 <td className="mt-1 p-0 text-right text-xs text-muted-foreground md:mt-0 md:px-3 md:py-3 md:text-sm">
                   {new Date(s.createdAt).toLocaleDateString()}
                 </td>
-                <td className="absolute top-3 right-3 p-0 md:static md:px-6 md:py-3 md:text-right">
+                <td className="absolute top-3 right-3 flex items-center justify-end gap-1 p-0 md:static md:table-cell md:px-6 md:py-3 md:text-right">
+                  <button
+                    type="button"
+                    title="Edit name, email or password"
+                    onClick={() => openEdit(s)}
+                    className="rounded p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground"
+                  >
+                    <Pencil className="size-4" />
+                  </button>
                   {s.id !== currentUserId && (
                     <button
                       type="button"
@@ -532,6 +598,135 @@ export default function UsersClient({
                 {deletingId !== null ? "Deleting…" : "Delete"}
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {editing && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+          onClick={() => {
+            if (!editBusy) closeEdit();
+          }}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="edit-staff-title"
+            className="max-h-[90vh] w-full max-w-md overflow-y-auto rounded-2xl border border-border bg-card p-6 shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2 id="edit-staff-title" className="font-display text-lg font-bold">
+              Edit {editing.fullName}
+            </h2>
+
+            <div className="mt-4 space-y-3">
+              <div className="flex flex-col gap-1.5">
+                <label className="text-xs font-bold tracking-widest text-muted-foreground uppercase">Full name</label>
+                <input
+                  type="text"
+                  value={editName}
+                  onChange={(e) => setEditName(e.target.value)}
+                  className="w-full rounded-lg border border-border bg-transparent px-3 py-2 text-sm outline-none focus:border-brand"
+                />
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <label className="text-xs font-bold tracking-widest text-muted-foreground uppercase">Email (login)</label>
+                <input
+                  type="email"
+                  value={editEmail}
+                  onChange={(e) => setEditEmail(e.target.value)}
+                  className="w-full rounded-lg border border-border bg-transparent px-3 py-2 text-sm outline-none focus:border-brand"
+                />
+                <p className="text-xs text-muted-foreground">Changing the email changes what they log in with.</p>
+              </div>
+              {detailsMsg && (
+                <p className={`text-sm ${detailsMsg.ok ? "text-emerald-600 dark:text-emerald-400" : "text-red-500"}`}>{detailsMsg.text}</p>
+              )}
+              <button
+                type="button"
+                disabled={editBusy !== null}
+                onClick={saveDetails}
+                className="w-full rounded-full bg-brand px-5 py-2 text-sm font-medium text-white disabled:opacity-40"
+              >
+                {editBusy === "details" ? "Saving…" : "Save name and email"}
+              </button>
+            </div>
+
+            <div className="mt-6 space-y-3 border-t border-border pt-5">
+              <div className="flex items-center justify-between">
+                <h3 className="text-xs font-bold tracking-widest text-muted-foreground uppercase">Reset password</h3>
+                <button
+                  type="button"
+                  onClick={() => setNewPassword(generatePassword())}
+                  className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium text-brand hover:bg-brand/10"
+                >
+                  <Wand2 className="size-3" />
+                  Generate
+                </button>
+              </div>
+              <input
+                type="text"
+                value={newPassword}
+                onChange={(e) => {
+                  setNewPassword(e.target.value);
+                  setPasswordMsg(null);
+                }}
+                placeholder="New password"
+                className="w-full rounded-lg border border-border bg-transparent px-3 py-2 text-sm outline-none focus:border-brand"
+              />
+              <p
+                className={`text-xs ${
+                  newPassword.length === 0
+                    ? "text-muted-foreground"
+                    : newPassword.length < 8
+                      ? "text-red-500"
+                      : "text-emerald-600 dark:text-emerald-400"
+                }`}
+              >
+                At least 8 characters{newPassword.length > 0 && ` (${newPassword.length})`}. Their old password stops working at once.
+              </p>
+              {passwordMsg && (
+                <div className={`rounded-lg p-3 text-sm ${passwordMsg.ok ? "border border-brand/40 bg-brand/10" : "text-red-500"}`}>
+                  <p>{passwordMsg.text}</p>
+                  {passwordMsg.ok && (
+                    <div className="mt-2 flex items-center gap-2">
+                      <code className="flex-1 overflow-x-auto rounded bg-muted px-2 py-1.5 text-xs whitespace-nowrap">
+                        {editEmail} / {passwordMsg.password}
+                      </code>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          void navigator.clipboard?.writeText(`${editEmail} / ${passwordMsg.password}`);
+                          setEditCopied(true);
+                          setTimeout(() => setEditCopied(false), 1500);
+                        }}
+                        className="shrink-0 rounded-full border border-border px-3 py-1.5 text-xs"
+                      >
+                        {editCopied ? "Copied!" : "Copy"}
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
+              <button
+                type="button"
+                disabled={editBusy !== null || newPassword.length < 8}
+                onClick={resetPassword}
+                className="w-full rounded-full border border-border px-5 py-2 text-sm font-medium transition-colors hover:bg-muted disabled:opacity-40"
+              >
+                {editBusy === "password" ? "Resetting…" : "Reset password"}
+              </button>
+            </div>
+
+            <button
+              type="button"
+              disabled={editBusy !== null}
+              onClick={closeEdit}
+              className="mt-5 w-full rounded-full px-4 py-2 text-sm text-muted-foreground hover:bg-muted disabled:opacity-50"
+            >
+              Close
+            </button>
           </div>
         </div>
       )}
