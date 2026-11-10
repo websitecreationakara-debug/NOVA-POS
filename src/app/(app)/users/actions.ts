@@ -227,3 +227,49 @@ export async function removeStaffAvatarAction(userId: string): Promise<void> {
 
   revalidatePath("/users");
 }
+
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+// Changes a staff member's name and/or login email. Admin only. The email is the one they log in with, so it is
+// changed on the auth user (marked confirmed, as when an account is created here -- no confirmation mail is sent);
+// the name is kept in the auth user's metadata and in profiles, which is what the rest of the app shows.
+export async function updateStaffDetailsAction(userId: string, input: { fullName: string; email: string }): Promise<void> {
+  const caller = await getSessionUser();
+  if (caller?.role !== "admin") {
+    throw new Error("Only admins can edit staff accounts");
+  }
+  const fullName = input.fullName.trim();
+  const email = input.email.trim().toLowerCase();
+  if (!fullName) throw new Error("Name is required");
+  if (!EMAIL_RE.test(email)) throw new Error("Enter a valid email address");
+
+  const { data: current, error: fetchError } = await supabaseAdmin.auth.admin.getUserById(userId);
+  if (fetchError || !current.user) throw new Error(fetchError?.message ?? "Staff member not found");
+
+  const { error: authError } = await supabaseAdmin.auth.admin.updateUserById(userId, {
+    // Only sent when it changed, so saving just a new name never touches the login.
+    ...((current.user.email ?? "").toLowerCase() !== email ? { email, email_confirm: true } : {}),
+    user_metadata: { full_name: fullName },
+  });
+  if (authError) throw new Error(authError.message);
+
+  const { error: profileError } = await supabaseAdmin.from("profiles").update({ full_name: fullName }).eq("id", userId);
+  if (profileError) throw new Error(profileError.message);
+
+  revalidatePath("/users");
+}
+
+// Sets a new password for a staff member. Admin only. The old one stops working at once; the admin passes the new
+// one on, the same way as for a newly created account.
+export async function resetStaffPasswordAction(userId: string, password: string): Promise<void> {
+  const caller = await getSessionUser();
+  if (caller?.role !== "admin") {
+    throw new Error("Only admins can reset passwords");
+  }
+  if (password.length < 8) throw new Error("Password must be at least 8 characters");
+
+  const { error } = await supabaseAdmin.auth.admin.updateUserById(userId, { password });
+  if (error) throw new Error(error.message);
+
+  revalidatePath("/users");
+}

@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { ChevronDown, ChevronLeft, ChevronRight, Loader2, Pencil, Plus, Receipt, Search, Trash2, TriangleAlert, X } from "lucide-react";
 import TopBarSlot from "@/components/TopBarSlot";
 import { formatUsd } from "@/lib/formatNumber";
+import { parsePastedInvoice, type ParsedInvoice } from "@/lib/invoiceOcr";
 import type { Brand } from "@/types/database";
 import {
   createSupplierInvoiceAction,
@@ -70,6 +71,12 @@ type Line = {
   linkedId?: string;
   linkedName?: string;
 };
+const PASTE_EXAMPLE = [
+  "Invoice No: 26012392",
+  "Invoice Date: 02/Oct/2026",
+  "| NO. | SKU | DESCRIPTION | PACKING | UNIT | Q. | UNIT PRICE | AMOUNT |",
+  "| 1 | BU041a | Umesyu Reasonable | (2L) | Bottle | 1.00 | $ 12.23 | $ 12.23 |",
+].join("\n");
 const blankLine = (key: number): Line => ({ key, sku: "", name: "", packing: "", unit: "", quantity: "", unitCost: "" });
 
 // What the page was loaded with: the search/filters in the URL and the paging that came back.
@@ -144,6 +151,9 @@ export default function SupplierInvoicesClient({
   const [nextKey, setNextKey] = useState(2);
   const [lines, setLines] = useState<Line[]>([blankLine(1)]);
   const [saving, setSaving] = useState(false);
+  const [pasting, setPasting] = useState(false);
+  const [pasteText, setPasteText] = useState("");
+  const [scanNote, setScanNote] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [open, setOpen] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
@@ -198,7 +208,74 @@ export default function SupplierInvoicesClient({
     );
   }
 
+  // Puts a read invoice (from the photo's OCR or a pasted table) into the form. Lines the form can match to a product
+  // (by SKU or name) get that product's SKU / unit filled in.
+  async function applyParsed(scanned: ParsedInvoice) {
+    const data = await ensureFormData().catch(() => null);
+    const lk = buildLookups(data);
+    // OCR confuses the letter O with 0 and l with 1, so SKUs are also matched with those folded together.
+    const fold = (v: string) => v.trim().toLowerCase().replace(/o/g, "0").replace(/[il]/g, "1");
+    const skuFolded = new Map([...lk.bySku].map(([k, v]) => [fold(k), v]));
+    const ledgerSkuFolded = new Map([...lk.ledgerBySku].map(([k, v]) => [fold(k), v]));
+    // Lines the form can match to a product (by SKU or name) get that product's SKU / unit filled in.
+    const scannedLines: Line[] = scanned.lines.map((l, n) => {
+      let { sku, name, unit } = l;
+      const bySkuHit = sku ? (lk.bySku.get(sku.trim().toLowerCase()) ?? skuFolded.get(fold(sku))) : undefined;
+      const hit = bySkuHit ?? lk.byName.get(name.trim().toLowerCase());
+      const ledgerHit =
+        lk.ledgerByName.get(name.trim().toLowerCase()) ?? (sku ? ledgerSkuFolded.get(fold(sku)) : undefined);
+      if (bySkuHit) {
+        name = bySkuHit.name;
+        sku = bySkuHit.sku ?? sku;
+      }
+      if (hit) {
+        if (!sku) sku = hit.sku ?? "";
+        if (!unit) unit = hit.unit;
+      } else if (ledgerHit) {
+        sku = ledgerHit.sku || sku;
+        if (!unit) unit = ledgerHit.unit;
+      }
+      return {
+        key: nextKey + n,
+        sku,
+        name,
+        packing: l.packing ?? "",
+        unit,
+        quantity: l.quantity === null ? "" : String(l.quantity),
+        unitCost: l.unitCost === null ? "" : String(l.unitCost),
+      };
+    });
+    if (scanned.supplierName && !supplier.trim()) setSupplier(scanned.supplierName);
+    if (scanned.invoiceNumber && !number.trim()) setNumber(scanned.invoiceNumber);
+    if (scanned.invoiceDate) setDate(scanned.invoiceDate);
+    const blank = lines.every((l) => !l.sku.trim() && !l.name.trim() && !l.quantity && !l.unitCost);
+    setLines((ls) => (blank ? scannedLines : [...ls, ...scannedLines]));
+    setNextKey(nextKey + scannedLines.length + 1);
+    setScanNote(
+      scannedLines.length === 0
+        ? "No product lines were found."
+        : `Filled in ${scannedLines.length} line${scannedLines.length === 1 ? "" : "s"}. Check every name, quantity and price against the invoice, and add any line that is missing, before saving.`
+    );
+  }
+
+  // Fills the form from a table pasted in (copied from a chat, a spreadsheet or a PDF): each number goes to the column
+  // its header names, so "Q." is the quantity.
+  async function applyPasted() {
+    setError(null);
+    setScanNote(null);
+    try {
+      await applyParsed(parsePastedInvoice(pasteText));
+      setPasteText("");
+      setPasting(false);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not read that text");
+    }
+  }
+
   function reset() {
+    setScanNote(null);
+    setPasting(false);
+    setPasteText("");
     setSupplier("");
     setNumber("");
     setDate(today);
@@ -426,12 +503,56 @@ export default function SupplierInvoicesClient({
           <section className="rounded-2xl border border-border bg-card p-5 shadow-sm sm:p-6">
             <h3 className="mb-4 flex items-center gap-2 text-sm font-semibold text-foreground">
               {editingId ? "Edit invoice" : "New invoice"}
+              {!editingId && (
+                <button
+                  type="button"
+                  onClick={() => setPasting((p) => !p)}
+                  className="ml-2 inline-flex h-8 items-center gap-1.5 rounded-lg border border-border bg-background px-3 text-xs font-medium text-foreground transition hover:bg-muted"
+                >
+                  Paste lines
+                </button>
+              )}
               {formDataLoading && (
                 <span className="inline-flex items-center gap-1.5 text-xs font-normal text-muted-foreground">
                   <Loader2 className="size-3 animate-spin" /> Loading products…
                 </span>
               )}
             </h3>
+            {scanNote && (
+              <p className="mb-4 rounded-lg border border-brand/30 bg-brand/10 px-3 py-2 text-sm text-foreground">{scanNote}</p>
+            )}
+            {pasting && (
+              <div className="mb-4 space-y-2 rounded-xl border border-border bg-muted/40 p-3">
+                <p className="text-xs text-muted-foreground">
+                  Paste the invoice as a table with a header row (for example NO. | SKU | DESCRIPTION | PACKING | UNIT | Q. | UNIT PRICE |
+                  AMOUNT), copied from Claude, a spreadsheet or a PDF. Q. / Qty is the quantity. An invoice number and date written
+                  above the table are read too.
+                </p>
+                <textarea
+                  className="min-h-32 w-full rounded-lg border border-border bg-background p-3 font-mono text-xs text-foreground outline-none focus:border-brand focus:ring-2 focus:ring-brand/20"
+                  value={pasteText}
+                  onChange={(e) => setPasteText(e.target.value)}
+                  placeholder={PASTE_EXAMPLE}
+                />
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    disabled={!pasteText.trim()}
+                    onClick={() => void applyPasted()}
+                    className="inline-flex h-9 items-center rounded-lg bg-brand px-4 text-sm font-medium text-white transition hover:brightness-95 disabled:opacity-50"
+                  >
+                    Fill the form
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setPasting(false)}
+                    className="inline-flex h-9 items-center rounded-lg border border-border bg-background px-4 text-sm text-foreground transition hover:bg-muted"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            )}
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
               <div>
                 <label className={label}>Supplier</label>
