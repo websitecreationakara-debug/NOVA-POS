@@ -2264,21 +2264,157 @@ type OwnLedgerRow = {
   stock_product_id?: string | null;
 };
 
-// The names of the Stock products some ledger products are linked to.
-async function stockLinkNames(rows: OwnLedgerRow[]): Promise<Map<string, string>> {
+// A Stock product a ledger product is linked to: its name and quantity now.
+type LinkedStock = { name: string; quantity: number };
+
+// The names and current quantities of the Stock products some ledger products are linked to.
+async function stockLinkNames(rows: OwnLedgerRow[]): Promise<Map<string, LinkedStock>> {
   const linkIds = [...new Set(rows.map((o) => o.stock_product_id).filter((id): id is string => !!id))];
-  const linkNames = new Map<string, string>();
+  const linkNames = new Map<string, LinkedStock>();
   const pages = await Promise.all(
     Array.from({ length: Math.ceil(linkIds.length / 100) }, (_, i) =>
-      supabaseAdmin.from("products").select("id, name").in("id", linkIds.slice(i * 100, (i + 1) * 100))
+      supabaseAdmin.from("products").select("id, name, stock_levels(quantity)").in("id", linkIds.slice(i * 100, (i + 1) * 100))
     )
   );
-  for (const { data } of pages) for (const p of data ?? []) linkNames.set(p.id, p.name);
+  for (const { data } of pages) {
+    for (const p of data ?? []) {
+      const level = Array.isArray(p.stock_levels) ? p.stock_levels[0] : p.stock_levels;
+      linkNames.set(p.id, { name: p.name, quantity: Number(level?.quantity ?? 0) });
+    }
+  }
   return linkNames;
 }
 
-// The ledger products and typed values in the shape buildDailyLedger takes.
-function shapeOwnLedger(rows: OwnLedgerRow[], linkNames: Map<string, string>, typed: { product_id: string; field: string; value: string }[]) {
+type LedgerActivity = {
+  movements: { productId: string; day: string; qty: number }[];
+  movementsAfter: { productId: string; qty: number }[];
+  purchases: { productId: string; day: string; qty: number }[];
+  sold: { productId: string; day: string; qty: number }[];
+  other: { productId: string; day: string; qty: number }[];
+};
+
+// What happened to the Stock products some ledger products are linked to, filed under the ledger product's id:
+// a linked row takes its Begining stock (unless one is typed), P, S and O from Stock (see shapeOwnLedger).
+// Worked out the way the Stock-product ledger rows are: movements for the stock level, hand-made adjustments
+// as purchases / other out (an order's own "Order ..." adjustments are not either), paid order lines as sold.
+async function getLinkedStockActivity(
+  rows: OwnLedgerRow[],
+  linkNames: Map<string, LinkedStock>,
+  month: string
+): Promise<LedgerActivity> {
+  const activity: LedgerActivity = { movements: [], movementsAfter: [], purchases: [], sold: [], other: [] };
+  const ownByStock = new Map<string, string[]>();
+  for (const o of rows) {
+    if (!o.stock_product_id || !linkNames.has(o.stock_product_id)) continue;
+    ownByStock.set(o.stock_product_id, [...(ownByStock.get(o.stock_product_id) ?? []), `${LEDGER_OWN_PREFIX}${o.id}`]);
+  }
+  const stockIds = [...ownByStock.keys()];
+  if (stockIds.length === 0) return activity;
+
+  const days = daysOfMonth(month);
+  const from = ppDayStart(days[0]);
+  const to = ppDayEnd(days[days.length - 1]);
+  // Per Stock product and day: the net stock change (n) and what the ledger already explains it by (p, o, s).
+  const tally = { n: new Map<string, Map<string, number>>(), p: new Map<string, Map<string, number>>(), o: new Map<string, Map<string, number>>(), s: new Map<string, Map<string, number>>() };
+  const addTo = (map: Map<string, Map<string, number>>, stockId: string, day: string, qty: number) => {
+    const byDay = map.get(stockId) ?? new Map<string, number>();
+    byDay.set(day, (byDay.get(day) ?? 0) + qty);
+    map.set(stockId, byDay);
+  };
+  for (let i = 0; i < stockIds.length; i += 100) {
+    const ids = stockIds.slice(i, i + 100);
+    const [movements, after, adjustments, soldLines] = await Promise.all([
+      selectAll(
+        supabaseAdmin.from("stock_movements").select("product_id, delta, created_at").in("product_id", ids).gte("created_at", from).lte("created_at", to).order("id")
+      ),
+      selectAll(supabaseAdmin.from("stock_movements").select("product_id, delta").in("product_id", ids).gt("created_at", to).order("id")),
+      selectAll(
+        supabaseAdmin.from("stock_adjustments").select("product_id, delta, reason, created_at").in("product_id", ids).gte("created_at", from).lte("created_at", to).order("id")
+      ),
+      selectAll(
+        supabaseAdmin
+          .from("order_items")
+          .select("product_id, quantity, products!inner(stock_units_per_sale), orders!inner(status, list_at)")
+          .in("product_id", ids)
+          .eq("orders.status", "paid")
+          .in("orders.fulfillment_status", COUNTED_FULFILLMENT_STATUSES)
+          .gte("orders.list_at", from)
+          .lte("orders.list_at", to)
+          .order("id")
+      ),
+    ]);
+    for (const r of [movements, after, adjustments, soldLines]) if (r.error) throw r.error;
+    const owners = (stockId: string) => ownByStock.get(stockId) ?? [];
+
+    for (const m of movements.data as unknown as { product_id: string; delta: number; created_at: string }[]) {
+      addTo(tally.n, m.product_id, ppDay(m.created_at), Number(m.delta));
+      for (const own of owners(m.product_id)) activity.movements.push({ productId: own, day: ppDay(m.created_at), qty: Number(m.delta) });
+    }
+    for (const m of after.data as unknown as { product_id: string; delta: number }[])
+      for (const own of owners(m.product_id)) activity.movementsAfter.push({ productId: own, qty: Number(m.delta) });
+    for (const a of adjustments.data as unknown as { product_id: string; delta: number; reason: string | null; created_at: string }[]) {
+      if ((a.reason ?? "").startsWith("Order ")) continue;
+      const delta = Number(a.delta);
+      const day = ppDay(a.created_at);
+      if (delta > 0) addTo(tally.p, a.product_id, day, delta);
+      else if (delta < 0) addTo(tally.o, a.product_id, day, -delta);
+      // A supplier invoice puts its own quantity into the ledger's P cell (on the invoice's day) and takes it
+      // out again when the invoice is deleted or edited, so the Stock adjustments it makes (and its undo) are not
+      // shown as P / O as well -- they would double it, and a deleted invoice would leave a P and an O behind.
+      // The same goes for a P / O typed in the ledger itself: it is the typed cell, and also adjusts Stock.
+      if (/^(Undo: )?((Removed |Edited )?supplier invoice|Daily Ledger )/i.test(a.reason ?? "")) continue;
+      for (const own of owners(a.product_id)) {
+        if (delta > 0) activity.purchases.push({ productId: own, day, qty: delta });
+        else if (delta < 0) activity.other.push({ productId: own, day, qty: -delta });
+      }
+    }
+    for (const l of soldLines.data as unknown as {
+      product_id: string;
+      quantity: number;
+      products: { stock_units_per_sale: number } | null;
+      orders: { list_at: string | null } | null;
+    }[]) {
+      if (!l.orders?.list_at) continue;
+      const qty = Number(l.quantity) * (Number(l.products?.stock_units_per_sale) || 1);
+      addTo(tally.s, l.product_id, ppDay(l.orders.list_at), qty);
+      for (const own of owners(l.product_id)) activity.sold.push({ productId: own, day: ppDay(l.orders.list_at), qty });
+    }
+  }
+
+  // Stock set directly (typed on the Stock page, a sync...) moves the quantity without an adjustment or a
+  // sale, so P, S and O alone leave the row short of Stock (R stays put while Stock moved). When the
+  // month's net change in Stock isn't what P, S and O add up to, the difference is counted as P (it went
+  // up) or O (it went down) on the days where the change was unexplained -- never on a day with sales
+  // (sales are dated by delivery day, Stock's changes by when they happened), and never more than the
+  // month is out by, so a sale-dating difference can't add a phantom one.
+  const r2 = (n: number) => Math.round(n * 100) / 100;
+  for (const [stockId, nByDay] of tally.n) {
+    const get = (map: Map<string, Map<string, number>>, day: string) => map.get(stockId)?.get(day) ?? 0;
+    const unexplained = [...nByDay.keys()].sort().map((day) => ({
+      day,
+      x: r2((nByDay.get(day) ?? 0) - (get(tally.p, day) - get(tally.o, day) - get(tally.s, day))),
+      sold: get(tally.s, day) > 0,
+    }));
+    const total = r2(unexplained.reduce((sum, u) => sum + u.x, 0));
+    if (Math.abs(total) < 0.005) continue;
+    const sign = total > 0 ? 1 : -1;
+    let remaining = Math.abs(total);
+    for (const u of unexplained) {
+      const x = u.x * sign;
+      if (u.sold || x < 0.005 || remaining < 0.005) continue;
+      const take = Math.min(x, remaining);
+      remaining = r2(remaining - take);
+      for (const own of ownByStock.get(stockId) ?? [])
+        (sign > 0 ? activity.purchases : activity.other).push({ productId: own, day: u.day, qty: take });
+    }
+  }
+  return activity;
+}
+
+// The ledger products and typed values in the shape buildDailyLedger takes. A product linked to a Stock
+// product starts its Begining stock, P, S and O from Stock (getLinkedStockActivity); anything typed into a
+// cell is kept and wins over Stock's value for that cell.
+function shapeOwnLedger(rows: OwnLedgerRow[], linkNames: Map<string, LinkedStock>, typed: { product_id: string; field: string; value: string }[]) {
   return {
     products: rows.map((o) => ({
       id: `${LEDGER_OWN_PREFIX}${o.id}`,
@@ -2288,14 +2424,14 @@ function shapeOwnLedger(rows: OwnLedgerRow[], linkNames: Map<string, string>, ty
       size: "",
       deletion: { kind: "own" } as const,
       ...(o.stock_product_id && linkNames.has(o.stock_product_id)
-        ? { stockLink: { id: o.stock_product_id, name: linkNames.get(o.stock_product_id)! } }
+        ? { stockLink: { id: o.stock_product_id, ...linkNames.get(o.stock_product_id)! } }
         : {}),
       unit: o.unit,
       categoryName: o.category?.trim() || "Added in ledger",
       price: Number(o.unit_price),
       originalCost: null,
       cost10: null,
-      quantityNow: 0,
+      quantityNow: o.stock_product_id ? (linkNames.get(o.stock_product_id)?.quantity ?? 0) : 0,
       cost: null,
     })),
     entries: typed.map((e) => ({
@@ -2304,6 +2440,37 @@ function shapeOwnLedger(rows: OwnLedgerRow[], linkNames: Map<string, string>, ty
       value: e.value,
     })),
   };
+}
+
+// What identifies a ledger product stays with it: its SKU, size and Units per case. Every other cell is typed
+// per month, so a month where one of these wasn't typed shows the latest earlier month's instead of starting
+// blank. `ids` narrows the lookup to a page of products.
+const CARRIED_LEDGER_FIELDS = ["sku", "weight", "case_size"];
+async function withCarriedFields(
+  brandId: string,
+  month: string,
+  typed: { product_id: string; field: string; value: string }[],
+  ids?: string[]
+): Promise<{ product_id: string; field: string; value: string }[]> {
+  if (ids && ids.length === 0) return typed;
+  let query = supabaseAdmin
+    .from("daily_ledger_product_entries")
+    .select("product_id, month, field, value, daily_ledger_products!inner(brand_id)")
+    .eq("daily_ledger_products.brand_id", brandId)
+    .in("field", CARRIED_LEDGER_FIELDS)
+    .lt("month", month);
+  if (ids) query = query.in("product_id", ids);
+  const earlier = await selectAll(query.order("month", { ascending: false }).order("product_id").order("field"));
+  if (earlier.error) return typed;
+  const have = new Set(typed.map((e) => `${e.product_id}|${e.field}`));
+  const extra: { product_id: string; field: string; value: string }[] = [];
+  for (const e of earlier.data as unknown as { product_id: string; field: string; value: string }[]) {
+    const key = `${e.product_id}|${e.field}`;
+    if (have.has(key)) continue;
+    have.add(key);
+    extra.push({ product_id: e.product_id, field: e.field, value: e.value });
+  }
+  return [...typed, ...extra];
 }
 
 // Products added from the ledger itself (migrations 0091 / 0092) and what was typed into them, in the
@@ -2336,7 +2503,14 @@ async function getOwnLedgerProducts(brandId: string, month: string) {
       )
     : null;
   if (typedRes?.error) throw typedRes.error;
-  return shapeOwnLedger(rows, linkNames, (typedRes?.data ?? []) as unknown as { product_id: string; field: string; value: string }[]);
+  return {
+    ...shapeOwnLedger(
+      rows,
+      linkNames,
+      await withCarriedFields(brandId, month, (typedRes?.data ?? []) as unknown as { product_id: string; field: string; value: string }[])
+    ),
+    activity: await getLinkedStockActivity(rows, linkNames, month),
+  };
 }
 
 export const LEDGER_PAGE_SIZES = [25, 50, 100, 200];
@@ -2437,17 +2611,18 @@ export async function getDailyLedgerPage(
     categoriesPromise.catch(() => [] as string[]),
   ]);
   if (typed.error) throw typed.error;
-  const own = shapeOwnLedger(rows, linkNames, (typed.data ?? []) as { product_id: string; field: string; value: string }[]);
+  const own = shapeOwnLedger(
+    rows,
+    linkNames,
+    await withCarriedFields(brandId, month, (typed.data ?? []) as { product_id: string; field: string; value: string }[], ids)
+  );
+  const activity = await getLinkedStockActivity(rows, linkNames, month);
   return {
     rows: buildDailyLedger({
       month,
       today: ppToday(),
       products: own.products,
-      movements: [],
-      movementsAfter: [],
-      purchases: [],
-      sold: [],
-      other: [],
+      ...activity,
       entries: own.entries,
     }),
     total,
@@ -2469,11 +2644,7 @@ export async function getDailyLedger(brandId: string, month: string): Promise<Da
       month,
       today: ppToday(),
       products: own.products,
-      movements: [],
-      movementsAfter: [],
-      purchases: [],
-      sold: [],
-      other: [],
+      ...own.activity,
       entries: own.entries,
     });
   }
@@ -2713,17 +2884,23 @@ export async function getDailyLedger(brandId: string, month: string): Promise<Da
         cost: null,
       };
     }), ...unlinked],
-    movements: (movements.data as unknown as { product_id: string; delta: number; created_at: string }[]).map((m) => ({
-      productId: m.product_id,
-      day: ppDay(m.created_at),
-      qty: Number(m.delta),
-    })),
-    movementsAfter: (movementsAfter.data as unknown as { product_id: string; delta: number }[]).map((m) => ({
-      productId: m.product_id,
-      qty: Number(m.delta),
-    })),
-    purchases,
-    sold: (
+    movements: [
+      ...(movements.data as unknown as { product_id: string; delta: number; created_at: string }[]).map((m) => ({
+        productId: m.product_id,
+        day: ppDay(m.created_at),
+        qty: Number(m.delta),
+      })),
+      ...own.activity.movements,
+    ],
+    movementsAfter: [
+      ...(movementsAfter.data as unknown as { product_id: string; delta: number }[]).map((m) => ({
+        productId: m.product_id,
+        qty: Number(m.delta),
+      })),
+      ...own.activity.movementsAfter,
+    ],
+    purchases: [...purchases, ...own.activity.purchases],
+    sold: [...(
       soldLines.data as unknown as {
         product_id: string;
         quantity: number;
@@ -2736,8 +2913,8 @@ export async function getDailyLedger(brandId: string, month: string): Promise<Da
         productId: l.product_id,
         day: ppDay(l.orders!.list_at),
         qty: Number(l.quantity) * (Number(l.products?.stock_units_per_sale) || 1),
-      })),
-    other,
+      })), ...own.activity.sold],
+    other: [...other, ...own.activity.other],
     entries: [
       ...(typed.error ? [] : typed.data).map((e) => ({ productId: e.product_id, field: e.field, value: e.value })),
       ...own.entries,

@@ -8,8 +8,17 @@ import { daysOfMonth, isLedgerField, LEDGER_OWN_PREFIX, LEDGER_TEXT_FIELDS, type
 import { ensurePosProductForSiteProduct } from "@/app/(app)/sales/websiteActions";
 import type { WebsiteCatalogId } from "@/lib/websiteProducts/types";
 import { getBrands, getDailyLedger } from "@/lib/supabase/queries";
+import { adjustStockAction } from "../actions";
 
 const MONTH_RE = /^\d{4}-(0[1-9]|1[0-2])$/;
+
+// The typed-value tables only accept the fields their check constraint lists; "case_size" (Units / case) is
+// added to it by migration 0108.
+function caseSizeMigrationHint(error: { code?: string }, field: string): string | null {
+  return error.code === "23514" && field === "case_size"
+    ? "Run migration 0108_daily_ledger_case_size.sql in Supabase first, then try again."
+    : null;
+}
 
 // Saves one value typed into a Daily Ledger cell -- for that product and month only; Stock, prices and
 // orders are not touched. An empty value deletes the entry, so the cell goes back to its worked-out number.
@@ -20,6 +29,9 @@ export async function setLedgerEntryAction(input: {
   value: string | null;
   // For a website product with no POS product yet: it is created (and linked) now, then the value saved on it.
   site?: LedgerSiteItem;
+  // The number the cell showed before this change. A P / O typed on a row linked to a Stock product also
+  // changes that Stock product by the difference.
+  previous?: number;
 }): Promise<void> {
   await requireStockAccess();
   if (!MONTH_RE.test(input.month)) throw new Error("Pick a month");
@@ -33,6 +45,33 @@ export async function setLedgerEntryAction(input: {
   // A product added from the ledger itself keeps its typed values in its own table.
   if (input.productId.startsWith(LEDGER_OWN_PREFIX)) {
     const ownId = input.productId.slice(LEDGER_OWN_PREFIX.length);
+
+    // A purchase (P) or other out (O) typed on a row linked to a Stock product is real stock: the Stock
+    // product changes by what the cell changed (P adds, O takes out), logged on that day, so Stock and the
+    // ledger stay the same. Sales (S) come from orders, so a typed S stays a ledger note. Clearing a cell
+    // changes nothing in Stock -- type the old number back to undo.
+    const dayCell = /^([po]):(0[1-9]|[12][0-9]|3[01])$/.exec(input.field);
+    if (dayCell && value !== "") {
+      const { data: own, error: ownError } = await supabaseAdmin
+        .from("daily_ledger_products")
+        .select("stock_product_id")
+        .eq("id", ownId)
+        .maybeSingle();
+      // Before migration 0100 there is no link column, so nothing is linked.
+      const stockId = ownError ? null : ((own as { stock_product_id?: string | null } | null)?.stock_product_id ?? null);
+      const delta = Math.round((Number(value) - (Number.isFinite(input.previous) ? (input.previous as number) : 0)) * 100) / 100;
+      if (stockId && delta !== 0) {
+        const noon = new Date(`${input.month}-${dayCell[2]}T12:00:00+07:00`);
+        await adjustStockAction({
+          productId: stockId,
+          delta: dayCell[1] === "p" ? delta : -delta,
+          reason: `Daily Ledger ${dayCell[1].toUpperCase()} ${input.month}-${dayCell[2]}`,
+          // Logged on the cell's day (never in the future).
+          createdAt: (noon.getTime() > Date.now() ? new Date() : noon).toISOString(),
+        });
+      }
+    }
+
     const q =
       value === ""
         ? supabaseAdmin
@@ -48,7 +87,7 @@ export async function setLedgerEntryAction(input: {
               { onConflict: "product_id,month,field" }
             );
     const { error } = await q;
-    if (error) throw new Error(error.message);
+    if (error) throw new Error(caseSizeMigrationHint(error, input.field) ?? error.message);
     revalidatePath("/stock/ledger");
     return;
   }
@@ -82,7 +121,8 @@ export async function setLedgerEntryAction(input: {
       );
     if (error) {
       throw new Error(
-        /daily_ledger_entries/.test(error.message) ? "Run migration 0089 first, then try again." : error.message
+        caseSizeMigrationHint(error, input.field) ??
+          (/daily_ledger_entries/.test(error.message) ? "Run migration 0089 first, then try again." : error.message)
       );
     }
   }

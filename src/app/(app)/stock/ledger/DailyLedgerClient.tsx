@@ -51,13 +51,15 @@ const W = { sku: 96, name: 220, weight: 130, unit: 64, price: 76, exDate: 84, lo
 const LEFT = { sku: 0, name: W.sku };
 const FROZEN = W.sku + W.name;
 const LEFT_COLUMNS = 10;
-const TW = { totalIn: 72, totalSold: 76, totalOther: 76, ending: 72, value: 96 };
+const TW = { totalIn: 72, totalSold: 76, totalOther: 76, ending: 72, caseSize: 84, storeCase: 92, value: 96 };
 const RIGHT = {
   value: 0,
-  ending: TW.value,
-  totalOther: TW.value + TW.ending,
-  totalSold: TW.value + TW.ending + TW.totalOther,
-  totalIn: TW.value + TW.ending + TW.totalOther + TW.totalSold,
+  storeCase: TW.value,
+  caseSize: TW.value + TW.storeCase,
+  ending: TW.value + TW.storeCase + TW.caseSize,
+  totalOther: TW.value + TW.storeCase + TW.caseSize + TW.ending,
+  totalSold: TW.value + TW.storeCase + TW.caseSize + TW.ending + TW.totalOther,
+  totalIn: TW.value + TW.storeCase + TW.caseSize + TW.ending + TW.totalOther + TW.totalSold,
 };
 
 // The Category pick that means "type a new category".
@@ -98,6 +100,8 @@ function rawValue(r: DailyLedgerRow, field: string): string {
       return r.totalCost === null ? "" : String(r.totalCost);
     case "begin":
       return String(r.begin);
+    case "case_size":
+      return r.caseSize === null ? "" : String(r.caseSize);
     default: {
       const m = /^([pso]):(\d{2})$/.exec(field);
       if (!m) return "";
@@ -384,9 +388,17 @@ export default function DailyLedgerClient({
       );
     }
     try {
-      await setLedgerEntryAction({ productId: row.productId, month, field, value: value === "" ? null : value, site: row.site });
+      await setLedgerEntryAction({
+        productId: row.productId,
+        month,
+        field,
+        value: value === "" ? null : value,
+        site: row.site,
+        previous: Number(rawValue(row, field)) || 0,
+      });
       // A product made just now gets its real id (and, for a cleared cell, its worked-out number) from a fresh load.
-      if (value === "" || row.site) router.refresh();
+      // A P / O on a linked row also changed Stock, so its "Stock X" is refreshed too.
+      if (value === "" || row.site || (row.stockLink && /^[po]:\d{2}$/.test(field))) router.refresh();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Couldn't save that");
       router.refresh();
@@ -394,12 +406,18 @@ export default function DailyLedgerClient({
   }
 
   const isEditing = (r: DailyLedgerRow, field: string) => editing?.id === r.productId && editing.field === field;
+  // A row linked to a Stock product starts its Begining stock, P, S and O from Stock; any of them can be
+  // typed over, and clearing the box goes back to Stock's value.
   const cellProps = (r: DailyLedgerRow, field: string) => ({
     "data-id": r.productId,
     "data-f": field,
     title: r.edited.includes(field)
-      ? "Typed in -- clear the box to go back to the worked-out value"
-      : "Click to type a value",
+      ? r.stockLink
+        ? "Typed in -- clear the box to go back to the linked Stock product's value"
+        : "Typed in -- clear the box to go back to the worked-out value"
+      : r.stockLink
+        ? `From the linked Stock product (${r.stockLink.name}) -- click to type over it`
+        : "Click to type a value",
   });
   const typedTint = (r: DailyLedgerRow, field: string) =>
     (r.edited.includes(field) ? "bg-blue-50/70 dark:bg-blue-950/30 " : "") + "cursor-text";
@@ -670,7 +688,7 @@ export default function DailyLedgerClient({
     "border-b-2 border-border bg-muted px-2.5 py-2 text-[10.5px] font-semibold tracking-wide text-muted-foreground uppercase";
   const subHead = "border-b border-border bg-muted px-1 py-1 text-center text-[10.5px] font-semibold text-muted-foreground";
   const cellBase = "border-b border-border/70 px-2.5 py-2 whitespace-nowrap";
-  const colSpanAll = LEFT_COLUMNS + days.length * 4 + 5;
+  const colSpanAll = LEFT_COLUMNS + days.length * 4 + 7;
   const dash = <span className="text-muted-foreground/50">—</span>;
 
   return (
@@ -895,7 +913,7 @@ export default function DailyLedgerClient({
                   );
                 })}
                 <th
-                  colSpan={5}
+                  colSpan={7}
                   className={`${stickyLg} border-l border-b-2 border-border bg-muted px-2 py-2 text-center text-[10.5px] font-semibold tracking-wide text-muted-foreground uppercase`}
                   style={{ right: 0 }}
                 >
@@ -928,6 +946,12 @@ export default function DailyLedgerClient({
                 </th>
                 <th className={`${subHead} ${stickyLg} text-right`} style={{ right: RIGHT.ending, minWidth: TW.ending }}>
                   Ending
+                </th>
+                <th className={`${subHead} ${stickyLg} text-right`} style={{ right: RIGHT.caseSize, minWidth: TW.caseSize }}>
+                  Units / case
+                </th>
+                <th className={`${subHead} ${stickyLg} text-right`} style={{ right: RIGHT.storeCase, minWidth: TW.storeCase }}>
+                  Store case
                 </th>
                 <th className={`${subHead} ${stickyLg} text-right`} style={{ right: RIGHT.value, minWidth: TW.value }}>
                   Ending value
@@ -1113,6 +1137,38 @@ export default function DailyLedgerClient({
                       </td>
                       <td className={`${cellBase} ${stickyLg} bg-muted text-right font-semibold tabular-nums`} style={{ right: RIGHT.ending }}>
                         {fmt(r.ending)}
+                        {r.stockLink && (
+                          <div
+                            className={`text-[10px] font-normal ${
+                              month === thisMonth && Math.abs((r.ending ?? 0) - r.stockLink.quantity) > 0.004
+                                ? "text-amber-600"
+                                : "text-muted-foreground"
+                            }`}
+                            title={`Stock now (${r.stockLink.name}): ${fmt(r.stockLink.quantity)}`}
+                          >
+                            Stock {fmt(r.stockLink.quantity)}
+                          </div>
+                        )}
+                      </td>
+                      <td
+                        {...cellProps(r, "case_size")}
+                        className={`${cellBase} ${stickyLg} bg-muted text-right tabular-nums ${typedTint(r, "case_size")}`}
+                        style={{ right: RIGHT.caseSize }}
+                      >
+                        {isEditing(r, "case_size") ? editor(r, "case_size", "right") : r.caseSize === null ? dash : fmt(r.caseSize)}
+                      </td>
+                      <td
+                        className={`${cellBase} ${stickyLg} bg-muted text-right font-medium tabular-nums`}
+                        style={{ right: RIGHT.storeCase }}
+                        title="Ending ÷ units per case: whole cases + loose units"
+                      >
+                        {r.caseSize === null || r.ending < 0
+                          ? dash
+                          : (() => {
+                              const whole = Math.floor(r.ending / r.caseSize + 1e-9);
+                              const loose = Math.round((r.ending - whole * r.caseSize) * 100) / 100;
+                              return loose > 0 ? `${whole} + ${fmt(loose)}` : String(whole);
+                            })()}
                       </td>
                       <td className={`${cellBase} ${stickyLg} bg-muted text-right font-medium tabular-nums`} style={{ right: RIGHT.value }}>
                         {r.endingValue === null ? (
@@ -1135,7 +1191,7 @@ export default function DailyLedgerClient({
                     {paging.pageCount > 1 ? "Ending value (this page)" : "Total ending value"}
                   </td>
                   <td colSpan={LEFT_COLUMNS - 2 + days.length * 4} className="border-t-2 border-border bg-muted" />
-                  <td colSpan={4} className={`${stickyLg} border-t-2 border-border bg-muted`} style={{ right: RIGHT.ending }} />
+                  <td colSpan={6} className={`${stickyLg} border-t-2 border-border bg-muted`} style={{ right: RIGHT.ending }} />
                   <td
                     className={`${stickyLg} border-t-2 border-border bg-muted px-2.5 py-2.5 text-right text-sm font-bold tabular-nums`}
                     style={{ right: RIGHT.value }}
