@@ -112,74 +112,133 @@ function buildUserData(customer: CustomerRow) {
   return userData;
 }
 
+interface EventContext {
+  slug: BrandSlug;
+  dataset: { datasetId: string; tokenEnv: string };
+  accessToken: string;
+  order: { id: string; paid_at: string | null; created_at: string; total: number; channel: string | null };
+  customer: CustomerRow;
+}
+
+// Shared order/brand/customer/token lookup for every Meta event type sent from an order.
+// Returns null (logging why) for any case where there's nothing sensible to send.
+async function resolveEventContext(orderId: string): Promise<EventContext | null> {
+  const { data: order, error } = await supabaseAdmin
+    .from("orders")
+    .select("id, paid_at, created_at, total, customer_id, brand_id, channel")
+    .eq("id", orderId)
+    .single();
+
+  if (error || !order?.customer_id) {
+    return null; // No linked customer -- nothing to match on, skip silently.
+  }
+
+  const { data: brand } = await supabaseAdmin.from("brands").select("slug").eq("id", order.brand_id).single();
+  const slug = brand?.slug as BrandSlug | undefined;
+  const dataset = slug ? DATASETS[slug] : undefined;
+  if (!dataset) {
+    console.warn(`metaConversions: unknown or unmapped brand slug "${slug}" for order ${orderId}`);
+    return null;
+  }
+
+  const { data: customer } = await supabaseAdmin
+    .from("customers")
+    .select("id, name, first_name, last_name, phone, second_phone, email, gender, page_uid, state, dob")
+    .eq("id", order.customer_id)
+    .single();
+  if (!customer) return null;
+
+  const accessToken = process.env[dataset.tokenEnv];
+  if (!accessToken) {
+    console.warn(`metaConversions: ${dataset.tokenEnv} not set -- skipping sync for order ${orderId} (${slug})`);
+    return null;
+  }
+
+  // slug is guaranteed defined here: dataset is only set when slug was a valid key above.
+  return { slug: slug as BrandSlug, dataset, accessToken, order, customer: customer as CustomerRow };
+}
+
+async function postEvent(ctx: EventContext, event: Record<string, unknown>, label: string): Promise<void> {
+  const url = `https://graph.facebook.com/${API_VERSION}/${ctx.dataset.datasetId}/events?access_token=${encodeURIComponent(ctx.accessToken)}`;
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ data: [event] }),
+  });
+
+  if (!res.ok) {
+    const body = await res.json().catch(() => null);
+    console.error(`metaConversions: ${label} send failed for order ${ctx.order.id} (${ctx.slug})`, res.status, body);
+  }
+}
+
 export async function sendPurchaseEvent(orderId: string): Promise<void> {
   try {
-    const { data: order, error } = await supabaseAdmin
-      .from("orders")
-      .select("id, paid_at, created_at, total, customer_id, brand_id, channel")
-      .eq("id", orderId)
-      .single();
+    const ctx = await resolveEventContext(orderId);
+    if (!ctx) return;
 
-    if (error || !order?.customer_id) {
-      return; // No linked customer -- nothing to match on, skip silently.
-    }
-
-    const { data: brand } = await supabaseAdmin.from("brands").select("slug").eq("id", order.brand_id).single();
-    const slug = brand?.slug as BrandSlug | undefined;
-    const dataset = slug ? DATASETS[slug] : undefined;
-    if (!dataset) {
-      console.warn(`metaConversions: unknown or unmapped brand slug "${slug}" for order ${orderId}`);
-      return;
-    }
-
-    const { data: customer } = await supabaseAdmin
-      .from("customers")
-      .select("id, name, first_name, last_name, phone, second_phone, email, gender, page_uid, state, dob")
-      .eq("id", order.customer_id)
-      .single();
-    if (!customer) return;
-
-    const accessToken = process.env[dataset.tokenEnv];
-    if (!accessToken) {
-      console.warn(
-        `metaConversions: ${dataset.tokenEnv} not set -- skipping Purchase sync for order ${orderId} (${slug})`
-      );
-      return;
-    }
-
-    const tsSource = order.paid_at ?? order.created_at;
+    const tsSource = ctx.order.paid_at ?? ctx.order.created_at;
     const eventTime = Math.floor(new Date(tsSource).getTime() / 1000);
     if (!Number.isFinite(eventTime)) return;
 
-    const event = {
-      event_name: "Purchase",
-      event_time: eventTime,
-      event_id: `nova_order_${order.id}`,
-      // "online" storefront orders (create_online_order) came through a
-      // website checkout; everything else (charge_order -- in-store,
-      // Telegram, or Meta/Messenger sales) was taken in person.
-      action_source: order.channel === "online" ? "website" : "physical_store",
-      user_data: buildUserData(customer as CustomerRow),
-      custom_data: {
-        currency: "USD",
-        value: Number(order.total) || 0,
-        order_id: order.id,
+    await postEvent(
+      ctx,
+      {
+        event_name: "Purchase",
+        event_time: eventTime,
+        event_id: `nova_order_${ctx.order.id}`,
+        // "online" storefront orders (create_online_order) came through a
+        // website checkout; everything else (charge_order -- in-store,
+        // Telegram, or Meta/Messenger sales) was taken in person.
+        action_source: ctx.order.channel === "online" ? "website" : "physical_store",
+        user_data: buildUserData(ctx.customer),
+        custom_data: {
+          currency: "USD",
+          value: Number(ctx.order.total) || 0,
+          order_id: ctx.order.id,
+        },
       },
-    };
-
-    const url = `https://graph.facebook.com/${API_VERSION}/${dataset.datasetId}/events?access_token=${encodeURIComponent(accessToken)}`;
-    const res = await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ data: [event] }),
-    });
-
-    if (!res.ok) {
-      const body = await res.json().catch(() => null);
-      console.error(`metaConversions: send failed for order ${orderId} (${slug})`, res.status, body);
-    }
+      "Purchase",
+    );
   } catch (e) {
     // Best effort -- must never fail an order that's already been taken.
-    console.error(`metaConversions: unexpected error syncing order ${orderId}`, e);
+    console.error(`metaConversions: unexpected error syncing Purchase for order ${orderId}`, e);
+  }
+}
+
+// Meta's "CRM Integration" (Events Manager > Connect your CRM) reads a dataset's qualified-
+// leads funnel from a separate event shape: action_source "system_generated" rather than
+// "website"/"physical_store", and custom_data.event_source/lead_event_source identifying
+// this as a CRM-sourced stage change rather than a storefront conversion. NOVA POS has no
+// pre-purchase lead funnel to track (customers aren't recorded until an order exists), so
+// "Customer" -- fired at the same order-creation point as Purchase above -- is the one stage
+// this system can report.
+export async function sendCrmCustomerEvent(orderId: string): Promise<void> {
+  try {
+    const ctx = await resolveEventContext(orderId);
+    if (!ctx) return;
+
+    const tsSource = ctx.order.paid_at ?? ctx.order.created_at;
+    const eventTime = Math.floor(new Date(tsSource).getTime() / 1000);
+    if (!Number.isFinite(eventTime)) return;
+
+    await postEvent(
+      ctx,
+      {
+        event_name: "Customer",
+        event_time: eventTime,
+        event_id: `nova_crm_${ctx.order.id}`,
+        action_source: "system_generated",
+        user_data: buildUserData(ctx.customer),
+        custom_data: {
+          event_source: "crm",
+          lead_event_source: "NOVA POS",
+        },
+      },
+      "CRM Customer",
+    );
+  } catch (e) {
+    // Best effort -- must never fail an order that's already been taken.
+    console.error(`metaConversions: unexpected error syncing CRM event for order ${orderId}`, e);
   }
 }
