@@ -1,29 +1,36 @@
-// One-off: backfill real historical "Purchase" events from NOVA POS into Meta's
-// Conversions API, to raise Event Match Quality on the BOSBA Premium Foods
-// Meta dataset. Each event is a real paid order (its actual paid_at date and
-// total), not a synthetic/placeholder event -- Meta's terms require events to
-// reflect what actually happened, and backfilling fake conversions risks the
-// ad account being flagged and corrupts ad optimization signal.
+// One-off: backfill real historical events from NOVA POS into Meta's Conversions API, routed
+// to each order's own brand dataset (BOSBA Premium Foods, BOSBA Drink&Snack, Sora Sake -- same
+// mapping as src/lib/metaConversions.ts). Each event is a real paid order (its actual paid_at
+// date and customer), not a synthetic/placeholder event -- Meta's terms require events to
+// reflect what actually happened, and backfilling fake conversions risks the ad account being
+// flagged and corrupts ad optimization signal.
 //
-// Defaults to a dry run: builds and hashes every event locally and writes a
-// summary (counts only -- never raw PII) to scripts/.meta-crm-backfill-dry-run.json.
+// Two event shapes, picked with --crm:
+//   (default)  "Purchase" events for standard Conversions API / Ads Manager optimization.
+//   --crm      "Customer" events shaped for Meta's CRM Integration (Events Manager > Connect
+//              your CRM): action_source "system_generated", custom_data.event_source "crm".
+//              NOVA POS has no pre-purchase lead stage, so "Customer" -- fired for the same
+//              paid orders -- is the one funnel stage this system can report.
+//
+// Defaults to a dry run: builds and hashes every event locally and writes a per-brand summary
+// (counts only -- never raw PII) to scripts/.meta-crm-backfill-dry-run.json.
 // Nothing is sent to Meta unless you pass --send.
 //
 // Usage:
-//   node scripts/meta-crm-backfill.mjs                                   # dry run, all orders
-//   node scripts/meta-crm-backfill.mjs --limit=5 --send --test-event-code=TEST12345
+//   node scripts/meta-crm-backfill.mjs                                   # dry run, Purchase, all orders
+//   node scripts/meta-crm-backfill.mjs --crm                             # dry run, CRM Customer events
+//   node scripts/meta-crm-backfill.mjs --crm --limit=5 --send --test-event-code=TEST12345
 //                                                                         # verify a handful in
 //                                                                         # Events Manager > Test Events
-//   node scripts/meta-crm-backfill.mjs --send                            # real send, all orders
+//   node scripts/meta-crm-backfill.mjs --crm --send                      # real send, all orders
 //
 // Environment (checked in process.env, then .env.local):
-//   NEXT_PUBLIC_SUPABASE_URL      same as the app
-//   SUPABASE_SERVICE_ROLE_KEY     same as the app (bypasses RLS to read all customers/orders)
-//   META_DATASET_ID               defaults to 557782553161482
-//   META_ACCESS_TOKEN             required for --send (Events Manager > Settings >
-//                                 Conversions API > Set up direct integration > Generate Access Token)
-//   META_API_VERSION              defaults to v21.0
-//   META_ACTION_SOURCE            defaults to physical_store (these are in-store POS sales)
+//   NEXT_PUBLIC_SUPABASE_URL          same as the app
+//   SUPABASE_SERVICE_ROLE_KEY         same as the app (bypasses RLS to read all customers/orders)
+//   META_ACCESS_TOKEN                 BOSBA Premium Foods + Sora Sake dataset token
+//   META_ACCESS_TOKEN_DRINK_SNACK     BOSBA Drink&Snack dataset token
+//   META_API_VERSION                  defaults to v21.0
+//   META_ACTION_SOURCE                Purchase mode only; defaults to physical_store (in-store POS sales)
 
 import { readFileSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -59,6 +66,7 @@ loadEnvLocal();
 
 const args = process.argv.slice(2);
 const SEND = args.includes("--send");
+const CRM = args.includes("--crm");
 const limitArg = args.find((a) => a.startsWith("--limit="));
 const LIMIT = limitArg ? Number(limitArg.split("=")[1]) : null;
 const testArg = args.find((a) => a.startsWith("--test-event-code="));
@@ -66,11 +74,16 @@ const TEST_EVENT_CODE = testArg ? testArg.split("=")[1] : null;
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
-const DATASET_ID = process.env.META_DATASET_ID || "557782553161482";
-const ACCESS_TOKEN = process.env.META_ACCESS_TOKEN || "";
 const API_VERSION = process.env.META_API_VERSION || "v21.0";
 const ACTION_SOURCE = process.env.META_ACTION_SOURCE || "physical_store";
 const BATCH_SIZE = 1000;
+
+// Same brand -> dataset/token mapping as src/lib/metaConversions.ts.
+const DATASETS = {
+  "bosba-premium-foods": { datasetId: "557782553161482", tokenEnv: "META_ACCESS_TOKEN" },
+  "sora-sake": { datasetId: "609436530954785", tokenEnv: "META_ACCESS_TOKEN" },
+  "bosba-drink-snack": { datasetId: "965650992440513", tokenEnv: "META_ACCESS_TOKEN_DRINK_SNACK" },
+};
 
 if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
   console.error(
@@ -114,9 +127,8 @@ function normalizeDob(raw) {
   return digits.length === 8 ? digits : null;
 }
 
-// All BOSBA Premium Foods stores operate in Cambodia -- there is no
-// per-customer country field in NOVA POS, so this is a safe constant rather
-// than a guess.
+// All brands operate in Cambodia -- there is no per-customer country field in
+// NOVA POS, so this is a safe constant rather than a guess.
 const COUNTRY_CODE = "kh";
 
 function buildUserData(customer) {
@@ -176,6 +188,20 @@ function buildEvent(order) {
   const eventTime = Math.floor(new Date(tsSource).getTime() / 1000);
   if (!Number.isFinite(eventTime)) return null;
 
+  if (CRM) {
+    return {
+      event_name: "Customer",
+      event_time: eventTime,
+      event_id: `nova_crm_${order.id}`,
+      action_source: "system_generated",
+      user_data: buildUserData(customer),
+      custom_data: {
+        event_source: "crm",
+        lead_event_source: "NOVA POS",
+      },
+    };
+  }
+
   return {
     event_name: "Purchase",
     event_time: eventTime,
@@ -198,7 +224,8 @@ async function fetchPaidOrders() {
     const { data, error } = await supabase
       .from("orders")
       .select(
-        `id, paid_at, created_at, total, customer_id,
+        `id, paid_at, created_at, total, customer_id, brand_id,
+         brands!orders_brand_id_fkey ( slug ),
          customers ( id, name, first_name, last_name, phone, second_phone, email, gender, page_uid, state, dob )`
       )
       .eq("status", "paid")
@@ -221,9 +248,9 @@ function chunk(arr, size) {
   return out;
 }
 
-async function sendBatch(batch, index, total) {
-  const url = `https://graph.facebook.com/${API_VERSION}/${DATASET_ID}/events?access_token=${encodeURIComponent(
-    ACCESS_TOKEN
+async function sendBatch(dataset, accessToken, batch, index, total, label) {
+  const url = `https://graph.facebook.com/${API_VERSION}/${dataset.datasetId}/events?access_token=${encodeURIComponent(
+    accessToken
   )}`;
   const body = { data: batch };
   if (TEST_EVENT_CODE) body.test_event_code = TEST_EVENT_CODE;
@@ -235,7 +262,7 @@ async function sendBatch(batch, index, total) {
   });
   const json = await res.json().catch(() => null);
   console.log(
-    `Batch ${index + 1}/${total}: HTTP ${res.status}` +
+    `[${label}] Batch ${index + 1}/${total}: HTTP ${res.status}` +
       (json?.events_received !== undefined
         ? ` events_received=${json.events_received}`
         : ` ${JSON.stringify(json)}`)
@@ -244,62 +271,88 @@ async function sendBatch(batch, index, total) {
 }
 
 async function main() {
-  console.log("Fetching paid orders with a linked CRM customer from NOVA POS...");
+  console.log(`Fetching paid orders with a linked CRM customer from NOVA POS (${CRM ? "CRM Customer" : "Purchase"} mode)...`);
   const orders = await fetchPaidOrders();
-  console.log(`Fetched ${orders.length} paid order(s).`);
+  console.log(`Fetched ${orders.length} paid order(s) across all brands.`);
 
   const limited = LIMIT ? orders.slice(0, LIMIT) : orders;
-  const events = limited.map(buildEvent).filter(Boolean);
-  console.log(`Built ${events.length} Purchase event(s).`);
 
-  const coverage = { ph: 0, em: 0, fn: 0, ln: 0, ge: 0, st: 0, db: 0, psid: 0 };
-  for (const e of events) {
-    if (e.user_data.ph) coverage.ph++;
-    if (e.user_data.em) coverage.em++;
-    if (e.user_data.fn) coverage.fn++;
-    if (e.user_data.ln) coverage.ln++;
-    if (e.user_data.ge) coverage.ge++;
-    if (e.user_data.st) coverage.st++;
-    if (e.user_data.db) coverage.db++;
-    if (e.user_data.page_scoped_user_id) coverage.psid++;
+  // Group by brand slug so each goes to its own dataset -- the same mapping
+  // src/lib/metaConversions.ts uses for real-time events.
+  const bySlug = new Map();
+  let skippedUnknownBrand = 0;
+  for (const order of limited) {
+    const slug = order.brands?.slug;
+    if (!slug || !DATASETS[slug]) {
+      skippedUnknownBrand++;
+      continue;
+    }
+    if (!bySlug.has(slug)) bySlug.set(slug, []);
+    bySlug.get(slug).push(order);
   }
-  console.log("Identifier coverage (count of events with this field present):", coverage);
+  if (skippedUnknownBrand) {
+    console.log(`Skipped ${skippedUnknownBrand} order(s) with an unknown/unmapped brand.`);
+  }
 
-  const batches = chunk(events, BATCH_SIZE);
-  console.log(`${batches.length} batch(es) of up to ${BATCH_SIZE} events each.`);
+  const summary = {};
+  const sampleEvents = {};
+  let totalEvents = 0;
+
+  for (const [slug, slugOrders] of bySlug) {
+    const dataset = DATASETS[slug];
+    const events = slugOrders.map(buildEvent).filter(Boolean);
+    totalEvents += events.length;
+
+    const coverage = { ph: 0, em: 0, fn: 0, ln: 0, ge: 0, st: 0, db: 0, psid: 0 };
+    for (const e of events) {
+      if (e.user_data.ph) coverage.ph++;
+      if (e.user_data.em) coverage.em++;
+      if (e.user_data.fn) coverage.fn++;
+      if (e.user_data.ln) coverage.ln++;
+      if (e.user_data.ge) coverage.ge++;
+      if (e.user_data.st) coverage.st++;
+      if (e.user_data.db) coverage.db++;
+      if (e.user_data.page_scoped_user_id) coverage.psid++;
+    }
+
+    summary[slug] = { datasetId: dataset.datasetId, eventCount: events.length, coverage };
+    sampleEvents[slug] = events[0] ?? null;
+    console.log(`[${slug}] Built ${events.length} ${CRM ? "Customer" : "Purchase"} event(s) for dataset ${dataset.datasetId}.`);
+    console.log(`[${slug}] Identifier coverage:`, coverage);
+  }
 
   if (!SEND) {
     const outPath = join(root, "scripts", ".meta-crm-backfill-dry-run.json");
-    writeFileSync(
-      outPath,
-      JSON.stringify(
-        { totalEvents: events.length, batchCount: batches.length, coverage, sampleEvent: events[0] ?? null },
-        null,
-        2
-      )
-    );
-    console.log(`Dry run only -- nothing was sent to Meta. Summary written to ${outPath}`);
+    writeFileSync(outPath, JSON.stringify({ mode: CRM ? "crm" : "purchase", totalEvents, summary, sampleEvents }, null, 2));
+    console.log(`\nDry run only -- nothing was sent to Meta. Summary written to ${outPath}`);
     console.log(
       "Next: get a test_event_code from Events Manager > Test Events, then run e.g.\n" +
-        "  node scripts/meta-crm-backfill.mjs --limit=5 --send --test-event-code=XXXXX\n" +
-        "Check it shows up in Test Events, then run the full --send without --limit/--test-event-code."
+        `  node scripts/meta-crm-backfill.mjs ${CRM ? "--crm " : ""}--limit=5 --send --test-event-code=XXXXX\n` +
+        `Check it shows up in Test Events, then run the full --send without --limit/--test-event-code.`
     );
     return;
   }
 
-  if (!ACCESS_TOKEN) {
-    console.error("META_ACCESS_TOKEN is not set (checked env + .env.local). Aborting.");
-    process.exit(1);
-  }
-
   const results = [];
-  for (let i = 0; i < batches.length; i++) {
-    results.push(await sendBatch(batches[i], i, batches.length));
-    if (i < batches.length - 1) await new Promise((r) => setTimeout(r, 500));
+  for (const [slug, slugOrders] of bySlug) {
+    const dataset = DATASETS[slug];
+    const accessToken = process.env[dataset.tokenEnv];
+    if (!accessToken) {
+      console.error(`[${slug}] ${dataset.tokenEnv} is not set (checked env + .env.local) -- skipping this brand.`);
+      continue;
+    }
+
+    const events = slugOrders.map(buildEvent).filter(Boolean);
+    const batches = chunk(events, BATCH_SIZE);
+    console.log(`[${slug}] Sending ${batches.length} batch(es) of up to ${BATCH_SIZE} events each...`);
+    for (let i = 0; i < batches.length; i++) {
+      results.push(await sendBatch(dataset, accessToken, batches[i], i, batches.length, slug));
+      if (i < batches.length - 1) await new Promise((r) => setTimeout(r, 500));
+    }
   }
 
   const failed = results.filter((r) => !r.ok);
-  console.log(`Done. ${results.length - failed.length}/${results.length} batch(es) succeeded.`);
+  console.log(`\nDone. ${results.length - failed.length}/${results.length} batch(es) succeeded.`);
   if (failed.length) {
     console.error(`${failed.length} batch(es) failed -- see batch output above for details.`);
     process.exit(1);

@@ -1,0 +1,40 @@
+name: Sync Meta Custom Audiences
+
+# Daily at 23:00 Phnom Penh time (16:00 UTC): re-uploads NOVA POS's current customer list into
+# Meta Custom Audiences, one per brand (see scripts/meta-audience-sync.mjs for why this -- not
+# Conversions API events -- is the only way to keep customers with older purchase history
+# represented in Meta for ad targeting; Custom Audiences have no event-age limit).
+# "Run workflow" in the Actions tab triggers one by hand.
+#
+# Needs these repository secrets (Settings > Secrets and variables > Actions):
+#   SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, META_ADS_ACCESS_TOKEN
+on:
+  schedule:
+    - cron: "0 16 * * *"
+  workflow_dispatch:
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out the sync script
+        uses: actions/checkout@v4
+        with:
+          sparse-checkout: scripts/meta-audience-sync.mjs
+          sparse-checkout-cone-mode: false
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install @supabase/supabase-js
+        run: npm install @supabase/supabase-js@2
+
+      - name: Run the sync
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          META_ADS_ACCESS_TOKEN: ${{ secrets.META_ADS_ACCESS_TOKEN }}
+        run: node scripts/meta-audience-sync.mjs
