@@ -17,6 +17,8 @@ export type CustomerFilters = {
   // it, counting only those orders. One day = from and to the same date.
   boughtFrom: string;
   boughtTo: string;
+  // Only customers who bought from this business (a brand id); "" = every business.
+  business: string;
 };
 
 // "Top buyers" sorts rank customers by what they bought (their orders:
@@ -39,9 +41,11 @@ export const NO_CUSTOMER_FILTERS: CustomerFilters = {
   sinceTo: "",
   boughtFrom: "",
   boughtTo: "",
+  business: "",
 };
 
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export function parseCustomerFilters(p: {
   sort?: string;
@@ -52,6 +56,7 @@ export function parseCustomerFilters(p: {
   since_to?: string;
   bought_from?: string;
   bought_to?: string;
+  business?: string;
 }): CustomerFilters {
   const sort = (p.sort ?? "") as CustomerSort;
   return {
@@ -63,6 +68,7 @@ export function parseCustomerFilters(p: {
     sinceTo: DAY.test(p.since_to ?? "") ? p.since_to! : "",
     boughtFrom: DAY.test(p.bought_from ?? "") ? p.bought_from! : "",
     boughtTo: DAY.test(p.bought_to ?? "") ? p.bought_to! : "",
+    business: UUID.test(p.business ?? "") ? p.business! : "",
   };
 }
 

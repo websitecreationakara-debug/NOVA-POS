@@ -1,7 +1,10 @@
+import { redirect } from "next/navigation";
 import { getBrands, getDailyLedgerPage, LEDGER_PAGE_SIZES } from "@/lib/supabase/queries";
 import { ppToday } from "@/lib/phnomPenhTime";
 import DailyLedgerClient from "./DailyLedgerClient";
 
+// Rows per page when the address has no ?limit= (one of LEDGER_PAGE_SIZES).
+const DEFAULT_LIMIT = 25;
 const MONTH_RE = /^\d{4}-(0[1-9]|1[0-2])$/;
 
 // Stock > Daily Ledger: one month, every product's day-by-day stock (see lib/dailyLedger.ts), for
@@ -13,8 +16,18 @@ export default async function StockLedgerPage({
   searchParams: Promise<{ brand?: string; month?: string; q?: string; page?: string; limit?: string }>;
 }) {
   const { brand: brandParam, month: monthParam, q: qParam, page: pageParam, limit: limitParam } = await searchParams;
+  // Opened without a page / limit (the sidebar link): go to the same address with them, e.g. ?page=1&limit=25.
+  if (!pageParam || !limitParam) {
+    const params = new URLSearchParams();
+    if (brandParam) params.set("brand", brandParam);
+    if (monthParam) params.set("month", monthParam);
+    if (qParam) params.set("q", qParam);
+    params.set("page", pageParam || "1");
+    params.set("limit", limitParam || String(DEFAULT_LIMIT));
+    redirect(`/stock/ledger?${params}`);
+  }
   const q = (qParam ?? "").trim().slice(0, 80);
-  const limit = LEDGER_PAGE_SIZES.includes(Number(limitParam)) ? Number(limitParam) : 50;
+  const limit = LEDGER_PAGE_SIZES.includes(Number(limitParam)) ? Number(limitParam) : DEFAULT_LIMIT;
   const today = ppToday();
   const month = monthParam && MONTH_RE.test(monthParam) ? monthParam : today.slice(0, 7);
 

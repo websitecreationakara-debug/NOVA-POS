@@ -12,6 +12,8 @@ export type ReorderData = {
   products: ReorderProduct[];
   // Products of the business with no sales in the look-back window (left off the list).
   withoutSales: number;
+  // When these figures were worked out (ms since 1970), so the page can say how old they are.
+  computedAt: number;
 };
 
 const DAY_MS = 24 * 3600 * 1000;
@@ -32,15 +34,13 @@ async function readAll<T>(page: (from: number, to: number) => PromiseLike<{ data
 
 // The products of the business that are in Stock / POS but not in its Daily Ledger: their sales and stock come from
 // orders and stock movements. (A product that is in the ledger is read from the ledger instead -- see getReorderData.)
-async function getStockBasedProducts(
-  brandId: string,
-  brandSlug: string,
-  inLedger: { linkedIds: Set<string>; names: Set<string> }
-): Promise<{ products: ReorderProduct[]; withoutSales: number }> {
+type StockBasedInputs = Awaited<ReturnType<typeof loadStockBasedInputs>>;
+
+// Everything the Stock / POS side reads from the database and the storefront. None of it depends on the Daily Ledger,
+// so it is started together with the ledger months instead of after them (see computeReorderData).
+async function loadStockBasedInputs(brandId: string, brandSlug: string) {
   const today = ppToday();
   const firstDay = addDays(today, -HISTORY_DAYS);
-  const days = Array.from({ length: HISTORY_DAYS }, (_, i) => addDays(firstDay, i)); // oldest .. yesterday
-  const dayIndex = new Map(days.map((d, i) => [d, i]));
 
   type ProductRow = {
     id: string;
@@ -52,7 +52,7 @@ async function getStockBasedProducts(
     stock_levels: { quantity: number } | { quantity: number }[] | null;
     product_site_links: { site_product_id: string; variation_id: string }[];
   };
-  const [productRows, soldLines, movements, setRes] = await Promise.all([
+  const [productRows, soldLines, movements, setRes, unlimited] = await Promise.all([
     readAll<ProductRow>((from, to) =>
       supabaseAdmin
         .from("products")
@@ -85,7 +85,21 @@ async function getStockBasedProducts(
         .range(from, to)
     ),
     supabaseAdmin.from("sets").select("linked_product_id").eq("brand_id", brandId).not("linked_product_id", "is", null),
+    // Website items with no stock number are unlimited: their count isn't real, so they get no suggestion.
+    unlimitedSiteKeys(brandSlug),
   ]);
+  return { productRows, soldLines, movements, setRes, unlimited };
+}
+
+async function getStockBasedProducts(
+  inputs: Promise<StockBasedInputs>,
+  inLedger: { linkedIds: Set<string>; names: Set<string> }
+): Promise<{ products: ReorderProduct[]; withoutSales: number }> {
+  const today = ppToday();
+  const firstDay = addDays(today, -HISTORY_DAYS);
+  const days = Array.from({ length: HISTORY_DAYS }, (_, i) => addDays(firstDay, i)); // oldest .. yesterday
+  const dayIndex = new Map(days.map((d, i) => [d, i]));
+  const { productRows, soldLines, movements, setRes, unlimited } = await inputs;
 
   // A "Set" (a bundle sold as one product) has no stock of its own.
   const setProductIds = new Set<string>((setRes.data ?? []).map((s) => s.linked_product_id as string));
@@ -119,9 +133,6 @@ async function getStockBasedProducts(
     byDay.set(day, e);
     moveBy.set(m.product_id, byDay);
   }
-
-  // Website items with no stock number are unlimited: their count isn't real, so they get no suggestion.
-  const unlimited = await unlimitedSiteKeys(brandSlug);
 
   // Units per case: the Daily Ledger's Units / case of a ledger product linked to the Stock product.
   const caseSizes = await caseSizesFor(rows.map((r) => r.id));
@@ -186,6 +197,9 @@ async function computeReorderData(brandId: string, brandSlug: string): Promise<R
   const dayIndex = new Map(days.map((d, i) => [d, i]));
   const months = [...new Set([...days, today].map((d) => d.slice(0, 7)))].sort();
 
+  // The Stock / POS reads don't depend on the ledger, so they run alongside it.
+  const stockInputs = loadStockBasedInputs(brandId, brandSlug);
+  stockInputs.catch(() => undefined); // a failure is reported where the result is used, not as an unhandled rejection
   const ledgerMonths = await Promise.all(months.map((m) => getDailyLedger(brandId, m)));
 
   type Series = {
@@ -277,20 +291,24 @@ async function computeReorderData(brandId: string, brandSlug: string): Promise<R
     });
   }
 
-  const fromStock = await getStockBasedProducts(brandId, brandSlug, { linkedIds, names });
+  const fromStock = await getStockBasedProducts(stockInputs, { linkedIds, names });
   products.push(...fromStock.products);
   products.sort((a, b) => a.name.localeCompare(b.name));
-  return { today, products, withoutSales: withoutSales + fromStock.withoutSales };
+  return { today, products, withoutSales: withoutSales + fromStock.withoutSales, computedAt: Date.now() };
 }
 
-// Reading four months of the ledger takes several seconds, so a business's result is kept for two minutes (a reload, or
-// another person opening the page, reuses it).
-const CACHE_MS = 2 * 60 * 1000;
+// Reading four months of the ledger takes a few seconds, so a business's result is kept per server instance:
+//   * younger than FRESH_MS: used as it is;
+//   * up to STALE_MS old: shown at once while a new one is worked out in the background (the next visit has it), so
+//     opening the page is instant instead of waiting for the ledger every time;
+//   * older, or none: worked out now.
+// The page says how old its figures are and has a Refresh button (clearReorderCache) for a new one on the spot.
+const FRESH_MS = 2 * 60 * 1000;
+const STALE_MS = 15 * 60 * 1000;
 const cache = new Map<string, { at: number; value: Promise<ReorderData> }>();
+const refreshing = new Set<string>();
 
-export function getReorderData(brandId: string, brandSlug: string): Promise<ReorderData> {
-  const hit = cache.get(brandId);
-  if (hit && Date.now() - hit.at < CACHE_MS) return hit.value;
+function loadReorderData(brandId: string, brandSlug: string): Promise<ReorderData> {
   const value = computeReorderData(brandId, brandSlug);
   const entry = { at: Date.now(), value };
   cache.set(brandId, entry);
@@ -299,6 +317,29 @@ export function getReorderData(brandId: string, brandSlug: string): Promise<Reor
     if (cache.get(brandId) === entry) cache.delete(brandId);
   });
   return value;
+}
+
+export function getReorderData(brandId: string, brandSlug: string): Promise<ReorderData> {
+  const hit = cache.get(brandId);
+  const age = hit ? Date.now() - hit.at : Infinity;
+  if (hit && age < FRESH_MS) return hit.value;
+  if (hit && age < STALE_MS) {
+    if (!refreshing.has(brandId)) {
+      refreshing.add(brandId);
+      // The old result stays in place until the new one is ready; a failure keeps the old one.
+      computeReorderData(brandId, brandSlug)
+        .then((fresh) => cache.set(brandId, { at: Date.now(), value: Promise.resolve(fresh) }))
+        .catch(() => undefined)
+        .finally(() => refreshing.delete(brandId));
+    }
+    return hit.value;
+  }
+  return loadReorderData(brandId, brandSlug);
+}
+
+// Drops a business's kept result, so the next read works it out again (the page's Refresh button).
+export function clearReorderCache(brandId: string): void {
+  cache.delete(brandId);
 }
 
 // "siteProductId::variationId" of the business's website items (and add-ons) that have no stock number.
