@@ -3,10 +3,11 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ChevronLeft, ChevronRight, FileSpreadsheet, Link2, Loader2, Pencil, Plus, Search, Trash2, TriangleAlert, Upload, X } from "lucide-react";
+import { CalendarClock, ChevronLeft, ChevronRight, FileSpreadsheet, Link2, Loader2, Pencil, Plus, Search, Trash2, TriangleAlert, Upload, X } from "lucide-react";
 import TopBarSlot from "@/components/TopBarSlot";
 import { decodeCsvBytes, normalizeDate, parseCsv } from "@/lib/customerCsv";
 import { applyLedgerEntry, daysOfMonth, LEDGER_TEXT_FIELDS, recalcRow, type DailyLedgerRow } from "@/lib/dailyLedger";
+import { expiryDaysText, expiryStatus, expiryTitle, type ExpiryTier } from "@/lib/expiry";
 import { formatUsd } from "@/lib/formatNumber";
 import { ENGLISH_SCALES } from "@/lib/khmerScales";
 import type { Brand } from "@/types/database";
@@ -68,6 +69,16 @@ const NEW_CATEGORY = "\u0000new";
 
 const WEEKDAYS =["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const fmt = (n: number) => String(Math.round(n * 100) / 100);
+
+// How a product close to its ex-date is marked in the EX-DATE cell, and in the legend.
+const EXPIRY_STYLE: Record<ExpiryTier, string> = {
+  expired: "bg-red-600 text-white",
+  week: "bg-red-500/15 text-red-700 ring-1 ring-red-500/40 dark:text-red-400",
+  two_weeks: "bg-orange-500/15 text-orange-700 ring-1 ring-orange-500/40 dark:text-orange-400",
+  month: "bg-amber-400/20 text-amber-800 ring-1 ring-amber-500/40 dark:text-amber-300",
+};
+// An ex-date that is still far off is marked green, so every product with an ex-date has a mark.
+const EXPIRY_OK = "bg-emerald-500/10 text-emerald-700 ring-1 ring-emerald-500/30 dark:text-emerald-400";
 
 function shiftMonth(month: string, by: number): string {
   const [y, m] = month.split("-").map(Number);
@@ -356,6 +367,8 @@ export default function DailyLedgerClient({
       .sort((a, b) => brandIndex(a.brandId) - brandIndex(b.brandId) || a.name.localeCompare(b.name))
       .map((g) => ({ ...g, items: g.items.sort((a, b) => a.name.localeCompare(b.name) || a.size.localeCompare(b.size)) }));
   }, [localRows, brands]);
+  // How close a row is to its ex-date (null when it has none, or the text isn't a date).
+  const exOf = (r: DailyLedgerRow) => (r.exDate ? expiryStatus(r.exDate, today) : null);
   const showBrands = currentBrandId === "all";
   const brandName = (id: string | undefined) => brands.find((b) => b.id === id)?.name ?? "";
   const brandValue = (id: string | undefined) =>
@@ -1033,6 +1046,14 @@ export default function DailyLedgerClient({
                               {r.name}
                             </Link>
                           )}
+                          {exOf(r)?.tier && (
+                            <span
+                              title={expiryTitle(exOf(r)!)}
+                              className={`shrink-0 rounded-md p-1 ${EXPIRY_STYLE[exOf(r)!.tier!]}`}
+                            >
+                              <CalendarClock className="size-3.5" />
+                            </span>
+                          )}
                           {r.deletion.kind === "own" && !isEditing(r, "name") && (
                             <button
                               type="button"
@@ -1088,7 +1109,28 @@ export default function DailyLedgerClient({
                         {...cellProps(r, "ex_date")}
                         className={`${cellBase} group-hover:bg-muted/60 ${typedTint(r, "ex_date")}`}
                       >
-                        {isEditing(r, "ex_date") ? editor(r, "ex_date", "left") : r.exDate || dash}
+                        {isEditing(r, "ex_date") ? (
+                          editor(r, "ex_date", "left")
+                        ) : r.exDate ? (
+                          (() => {
+                            const ex = expiryStatus(r.exDate, today);
+                            // Text that isn't a date ("N/A") is shown as typed.
+                            if (!ex) return r.exDate;
+                            return (
+                              <span
+                                title={expiryTitle(ex)}
+                                className={`inline-flex flex-col rounded-md px-1.5 py-0.5 text-xs leading-tight font-semibold ${
+                                  ex.tier ? EXPIRY_STYLE[ex.tier] : EXPIRY_OK
+                                }`}
+                              >
+                                <span>{r.exDate}</span>
+                                <span className="text-[10px] font-medium opacity-80">{expiryDaysText(ex)}</span>
+                              </span>
+                            );
+                          })()
+                        ) : (
+                          dash
+                        )}
                       </td>
                       {/* S-Price LOKA is Stock's Original Cost, until a value is typed here. */}
                       <td
