@@ -410,6 +410,22 @@ export async function createLedgerProductAction(input: {
   revalidatePath("/stock/ledger");
 }
 
+// Renames a product added from the ledger itself (the pencil next to its name). Only the ledger's own name
+// changes: the Stock product it may be linked to is not renamed.
+export async function renameLedgerProductAction(input: { productId: string; name: string }): Promise<void> {
+  await requireStockAccess();
+  if (!input.productId.startsWith(LEDGER_OWN_PREFIX)) throw new Error("Only products added to the ledger can be renamed here");
+  const name = input.name.trim();
+  if (!name) throw new Error("Type the product name");
+  if (name.length > 120) throw new Error("That name is too long");
+  const { error } = await supabaseAdmin
+    .from("daily_ledger_products")
+    .update({ name })
+    .eq("id", input.productId.slice(LEDGER_OWN_PREFIX.length));
+  if (error) throw new Error(error.message);
+  revalidatePath("/stock/ledger");
+}
+
 // The Delete button on a product added from the ledger: it and what was typed into it are removed.
 export async function deleteLedgerProductAction(input: { productId: string }): Promise<void> {
   await requireStockAccess();
