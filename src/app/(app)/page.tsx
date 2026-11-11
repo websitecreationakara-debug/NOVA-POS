@@ -452,7 +452,7 @@ export default async function Home({
           ) : (
             <ol className="mt-4 space-y-3">
               {topStats.topProducts.map((p, i) => (
-                <li key={p.name} className="flex items-center gap-3 text-sm">
+                <li key={`${i}-${p.name}`} className="flex items-center gap-3 text-sm">
                   <span
                     className={`grid size-6 shrink-0 place-items-center rounded-full text-xs font-bold ${
                       i === 0 ? "bg-brand text-white" : "bg-muted text-muted-foreground"

@@ -545,7 +545,12 @@ export async function listCustomersAction(
     p_offset: offset,
     p_bought_from: filters.boughtFrom || null,
     p_bought_to: filters.boughtTo || null,
+    // Only sent when a business is picked, so the list still works before migration 0110 is applied.
+    ...(filters.business ? { p_brand_id: filters.business } : {}),
   });
+  if (rankedError && filters.business && rankedError.code === "PGRST202") {
+    throw new Error("Run migration 0110_marketing_customers_business.sql in Supabase first, then try again.");
+  }
   if (!rankedError) {
     const buying: Record<string, CustomerBuying> = {};
     const customers = (ranked ?? []).map((r) => {
@@ -944,4 +949,70 @@ export async function importCustomersAction(
 
   revalidatePath("/marketing");
   return result;
+}
+
+// One customer as exported (Export CSV / Export PDF on Marketing > CRM): the list's columns, as plain text.
+export type CustomerExportRow = {
+  phone: string;
+  name: string;
+  orders: number | null;
+  products: number | null;
+  spent: number | null;
+  business: string;
+  email: string;
+  address: string;
+  customerSince: string;
+  firstName: string;
+  lastName: string;
+  psid: string;
+  capital: string;
+  state: string;
+  age: string;
+  gender: string;
+  nationality: string;
+};
+
+// Most customers one export holds: each batch of 200 also looks up the businesses the customers bought from.
+const EXPORT_MAX = 2000;
+const EXPORT_BATCH = 200;
+
+// Every customer matching the search and filters in use on the CRM list (not just the page on screen), up to
+// EXPORT_MAX, in the list's order. `total` is how many match, so the caller can say when the export was cut short.
+export async function exportCustomersAction(
+  search: string,
+  filters: CustomerFilters
+): Promise<{ rows: CustomerExportRow[]; total: number }> {
+  // Like Import / Delete, not for the CRM-only role.
+  await requireMarketingAccess();
+  const first = await listCustomersAction(search, 1, EXPORT_BATCH, filters);
+  const batches = Math.ceil(Math.min(first.total, EXPORT_MAX) / EXPORT_BATCH);
+  const rest = await Promise.all(
+    Array.from({ length: Math.max(0, batches - 1) }, (_, i) => listCustomersAction(search, i + 2, EXPORT_BATCH, filters))
+  );
+  const rows: CustomerExportRow[] = [];
+  for (const part of [first, ...rest]) {
+    for (const c of part.customers) {
+      const buying = part.buying[c.id];
+      rows.push({
+        phone: c.phone ?? "",
+        name: c.name,
+        orders: buying ? buying.orders : null,
+        products: buying ? buying.units : null,
+        spent: buying ? buying.spent : null,
+        business: part.businesses[c.id]?.join(", ") ?? "",
+        email: c.email ?? "",
+        address: c.address ?? "",
+        customerSince: c.customer_since ?? "",
+        firstName: c.first_name ?? "",
+        lastName: c.last_name ?? "",
+        psid: c.page_uid ?? "",
+        capital: c.capital ?? "",
+        state: c.state ?? "",
+        age: c.age ?? "",
+        gender: c.gender ?? "",
+        nationality: c.nationality ?? "",
+      });
+    }
+  }
+  return { rows: rows.slice(0, EXPORT_MAX), total: first.total };
 }

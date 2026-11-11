@@ -1,15 +1,15 @@
 // Reorder suggestions: how much of each product to buy so there is enough stock for the next month.
 //
-//   1. Average daily sales = units sold over the look-back window (30 / 60 / 90 days) / the days counted.
-//      Days the product had no stock to sell are not counted (they would read as zero sales).
-//   2. Need = average daily sales x (days to cover + delivery days).
-//   3. Safety stock = a % of the need on top, so a busy week doesn't empty the shelf.
-//   4. Suggested buy = need + safety - stock now - stock already on order; zero or less means "don't buy yet".
-//   5. Rounded up to whole cases when the product has Units / case.
+//   1. ADS (average daily sales) = the last 90 days' units sold / 90.
+//   2. Target stock = ADS x (days to cover (30) + supplier delivery days + safety days).
+//   3. Suggested buy = max(0, target stock - stock now - stock already on order); zero means "don't buy yet".
+//   4. Rounded up to whole cases when the product has Units / case.
 // A product with under 14 days of history has "not enough data", and one whose stock isn't tracked (unlimited on the
 // website, or sold without its stock moving) gets no number.
 
 export const HISTORY_DAYS = 90;
+// Rows per page on the Reorder Suggestions table when the address has no ?limit=.
+export const DEFAULT_LIMIT = 10;
 export const MIN_HISTORY_DAYS = 14;
 
 export type ReorderProduct = {
@@ -35,17 +35,15 @@ export type ReorderProduct = {
 };
 
 export type ReorderSettings = {
-  // Look back this many days (30 / 60 / 90).
-  windowDays: number;
   // Buy enough for this many days...
   coverDays: number;
-  // ...plus the days it takes the supplier to deliver.
+  // ...plus the days it takes the supplier to deliver...
   leadDays: number;
-  // Extra on top of the need, in percent.
-  safetyPct: number;
+  // ...plus this many days of safety stock, so a busy week doesn't empty the shelf.
+  safetyDays: number;
 };
 
-export const DEFAULT_SETTINGS: ReorderSettings = { windowDays: 60, coverDays: 30, leadDays: 0, safetyPct: 15 };
+export const DEFAULT_SETTINGS: ReorderSettings = { coverDays: 30, leadDays: 3, safetyDays: 5 };
 
 export type ReorderStatus = "buy" | "enough" | "no_sales" | "not_enough_data" | "untracked";
 
@@ -86,17 +84,18 @@ export function suggestReorder(p: ReorderProduct, settings: ReorderSettings, onO
   const empty = { dailyRate: null, daysLeft: null, trendPct: null, target: 0, buyUnits: 0, cases: null, cost: null, stockBelowZero };
   if (!p.tracked) return { status: "untracked", ...empty };
 
-  const windowDays = Math.min(HISTORY_DAYS, Math.max(1, Math.round(settings.windowDays)));
-  const start = p.daily.length - windowDays;
-  // Days before the product existed are not part of the average.
-  const firstDay = Math.max(start, p.daily.length - Math.min(p.historyDays, p.daily.length));
+  // Days before the product existed are not part of the history shown for the trend.
+  const firstDay = Math.max(0, p.daily.length - Math.min(p.historyDays, p.daily.length));
   if (p.historyDays < MIN_HISTORY_DAYS) return { status: "not_enough_data", ...empty };
 
-  const { rate, days } = rateOver(p, firstDay, p.daily.length);
-  if (rate === null || days < 7) return { status: "not_enough_data", ...empty };
+  // ADS = the last HISTORY_DAYS (90) days' units sold / 90.
+  const { days } = rateOver(p, firstDay, p.daily.length);
+  if (days < 7) return { status: "not_enough_data", ...empty };
+  const sold = p.daily.reduce((sum, n) => sum + n, 0);
+  const rate = sold / HISTORY_DAYS;
   if (rate === 0) return { status: "no_sales", ...empty, dailyRate: 0 };
 
-  // Trend: the recent half of the counted window against the half before it.
+  // Trend: the recent half of the counted history against the half before it.
   const mid = firstDay + Math.floor((p.daily.length - firstDay) / 2);
   const before = rateOver(p, firstDay, mid);
   const recent = rateOver(p, mid, p.daily.length);
@@ -105,12 +104,12 @@ export function suggestReorder(p: ReorderProduct, settings: ReorderSettings, onO
       ? Math.round(((recent.rate - before.rate) / before.rate) * 100)
       : null;
 
-  const need = rate * (Math.max(0, settings.coverDays) + Math.max(0, settings.leadDays));
-  // Whole units, as in the worked example: 36 x 1.15 = 41.4 -> 41.
-  const target = Math.round(need * (1 + Math.max(0, settings.safetyPct) / 100));
+  // TargetStock = ADS x (30 + LeadTimeDays + SafetyDays)
+  const targetExact = rate * (Math.max(0, settings.coverDays) + Math.max(0, settings.leadDays) + Math.max(0, settings.safetyDays));
+  const target = round2(targetExact);
   // A negative stock is a recording gap, not a debt: it counts as 0.
   const stock = Math.max(0, p.stock);
-  const short = target - stock - Math.max(0, onOrder);
+  const short = targetExact - stock - Math.max(0, onOrder);
   const daysLeft = stock > 0 ? round2(stock / rate) : 0;
   const base = { dailyRate: round2(rate), daysLeft, trendPct, target, stockBelowZero };
   if (short <= 0.0001) return { status: "enough", ...base, buyUnits: 0, cases: null, cost: null };

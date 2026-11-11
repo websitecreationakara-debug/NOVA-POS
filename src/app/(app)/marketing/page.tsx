@@ -46,6 +46,7 @@ export default async function MarketingPage({
     since_to?: string;
     bought_from?: string;
     bought_to?: string;
+    business?: string;
     customer?: string;
     range?: string;
     from?: string;
@@ -110,7 +111,7 @@ export default async function MarketingPage({
       />
     );
   }
-  const limit = Math.min(Math.max(parseInt(limitParam ?? "", 10) || 50, 1), 200);
+  const limit = Math.min(Math.max(parseInt(limitParam ?? "", 10) || 10, 1), 200);
   const page = Math.max(parseInt(pageParam ?? "", 10) || 1, 1);
 
   if (tab === "cost-control") {

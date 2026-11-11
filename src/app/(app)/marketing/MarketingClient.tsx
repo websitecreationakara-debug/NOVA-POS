@@ -2,7 +2,7 @@
 
 import { Fragment, useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { ChevronLeft, ChevronRight, Trash2 } from "lucide-react";
+import { ChevronLeft, ChevronRight, Download, FileText, Loader2, Search, SlidersHorizontal, Tag, Trash2, Users, X } from "lucide-react";
 import type { Brand, Customer, DiscountType, Promotion } from "@/types/database";
 import { CUSTOMER_AGES, CUSTOMER_GENDERS, CUSTOMER_NATIONALITIES, PROVINCES } from "@/lib/cambodiaPlaces";
 import CustomerPurchasesDialog from "@/components/CustomerPurchasesDialog";
@@ -18,9 +18,11 @@ import {
 import {
   createPromotionAction,
   deletePromotionAction,
+  exportCustomersAction,
   setPromotionActiveAction,
   updateCustomerAction,
 } from "./actions";
+import { exportCustomersCsv, exportCustomersPdf, openPrintWindow } from "@/lib/exportCustomers";
 import { formatUsd } from "@/lib/formatNumber";
 
 function formatDiscount(p: Promotion) {
@@ -35,6 +37,23 @@ function formatWindow(p: Promotion) {
 }
 
 const PAGE_SIZE_OPTIONS = [10, 25, 50];
+
+// Soft colored badges. The same text always gets the same color (a business keeps its color everywhere).
+const BADGE_TONES = [
+  "bg-amber-500/10 text-amber-700 dark:text-amber-400",
+  "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400",
+  "bg-sky-500/10 text-sky-700 dark:text-sky-400",
+  "bg-violet-500/10 text-violet-700 dark:text-violet-400",
+  "bg-rose-500/10 text-rose-700 dark:text-rose-400",
+];
+function toneFor(text: string): string {
+  let h = 0;
+  for (const ch of text) h = (h * 31 + ch.codePointAt(0)!) >>> 0;
+  return BADGE_TONES[h % BADGE_TONES.length];
+}
+// A filter that is in use is tinted, so the active ones can be seen at a glance.
+const ACTIVE_FIELD = "border-brand/60 bg-brand/5 font-medium text-brand";
+const dash = <span className="text-muted-foreground/50">—</span>;
 
 // A dropdown for the customer edit form. The first entry is the empty choice
 // (shown as the field name). A value already saved on the customer that isn't
@@ -208,6 +227,11 @@ export default function MarketingClient({
 
   // The CRM filters live in the URL; changing one drops back to page 1.
   const filtersActive = JSON.stringify(customerFilters) !== JSON.stringify(NO_CUSTOMER_FILTERS);
+  // The Since and Bought-on date pairs each count once.
+  const activeFilterCount =
+    [customerFilters.sort !== "name", !!customerFilters.state, !!customerFilters.business, !!customerFilters.age, !!customerFilters.gender].filter(Boolean).length +
+    (customerFilters.sinceFrom || customerFilters.sinceTo ? 1 : 0) +
+    (customerFilters.boughtFrom || customerFilters.boughtTo ? 1 : 0);
   function setCustomerFilter(patch: Partial<Record<string, string>>) {
     const params = new URLSearchParams(window.location.search);
     for (const [key, value] of Object.entries(patch)) {
@@ -227,6 +251,7 @@ export default function MarketingClient({
       since_to: "",
       bought_from: "",
       bought_to: "",
+      business: "",
     });
   }
   // Quick "Bought on" choices, in Phnom Penh days (YYYY-MM-DD).
@@ -255,6 +280,38 @@ export default function MarketingClient({
     : customerFilters.boughtTo
       ? `up to ${usDay(customerFilters.boughtTo)}`
       : null;
+
+  // Export CSV / Export PDF: every customer matching the search and filters in use (up to the export's limit), not
+  // just the page on screen.
+  const [exporting, setExporting] = useState<"csv" | "pdf" | null>(null);
+  async function exportCustomers(kind: "csv" | "pdf") {
+    if (exporting) return;
+    setError(null);
+    // The PDF's window has to be opened right here, from the click, or the browser blocks it.
+    let win: Window | null = null;
+    try {
+      if (kind === "pdf") win = openPrintWindow();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Couldn't open the PDF");
+      return;
+    }
+    setExporting(kind);
+    try {
+      const { rows, total } = await exportCustomersAction(search.trim(), customerFilters);
+      const stamp = today;
+      const note = `${rows.length.toLocaleString()} customer${rows.length === 1 ? "" : "s"}${
+        total > rows.length ? ` (the first ${rows.length.toLocaleString()} of ${total.toLocaleString()})` : ""
+      } · ${stamp}`;
+      if (kind === "csv") exportCustomersCsv(rows, `customers-${stamp}.csv`);
+      else if (win) exportCustomersPdf(win, rows, "Customers", note);
+      if (total > rows.length) setError(`Exported the first ${rows.length.toLocaleString()} of ${total.toLocaleString()} customers: narrow the list with the filters to export the rest.`);
+    } catch (e) {
+      win?.close();
+      setError(e instanceof Error ? e.message : "Couldn't export the customers");
+    } finally {
+      setExporting(null);
+    }
+  }
 
   function withBrandParam(brandId: string) {
     const params = new URLSearchParams();
@@ -364,23 +421,34 @@ export default function MarketingClient({
   }
 
   const inputClass =
-    "rounded border border-black/[.15] bg-transparent px-3 py-1.5 text-sm dark:border-white/[.2]";
+    "h-10 rounded-lg border border-border bg-background px-3 text-sm text-foreground outline-none transition placeholder:text-muted-foreground focus:border-brand focus:ring-2 focus:ring-brand/20";
   // Selects need an opaque background, not bg-transparent -- the native
   // dropdown popup paints on its own surface and otherwise inherits the
   // page's light-on-dark text color against the browser's white popup,
   // washing out unselected options (see the brand-switcher screenshot bug).
   const selectClass =
-    "rounded border border-black/[.15] bg-card px-3 py-1.5 text-sm text-foreground dark:border-white/[.2]";
+    "h-10 rounded-lg border border-border bg-card px-3 text-sm text-foreground outline-none transition focus:border-brand focus:ring-2 focus:ring-brand/20";
 
   return (
-    <main className="min-h-screen p-6">
-      <h1 className="text-lg font-medium">{crmOnly ? "CRM" : "Marketing"}</h1>
-      {error && <p className="mt-3 text-sm text-red-500">{error}</p>}
+    <main className="mx-auto min-h-screen w-full max-w-[1600px] px-4 py-6 sm:px-6">
+      <div className="flex flex-col gap-1">
+        <h1 className="text-2xl font-semibold tracking-tight text-foreground">{crmOnly ? "CRM" : "Marketing"}</h1>
+        <p className="text-sm text-muted-foreground">
+          {crmOnly ? "Your customers and what they bought." : "Promotions and customers (CRM) in one place."}
+        </p>
+      </div>
+      {error && (
+        <p className="mt-4 rounded-xl border border-red-200 bg-red-50 px-4 py-2.5 text-sm text-red-700 dark:border-red-900 dark:bg-red-950/40 dark:text-red-300">
+          {error}
+        </p>
+      )}
 
       {!crmOnly && (
-      <section className="mt-6 rounded-lg border border-black/[.08] p-4 dark:border-white/[.145]">
+      <section className="mt-6 rounded-2xl border border-border bg-card p-5 shadow-sm">
         <div className="flex flex-wrap items-center gap-3">
-          <h2 className="font-medium">Promotions</h2>
+          <h2 className="flex items-center gap-2 text-base font-semibold text-foreground">
+            <Tag className="size-4 text-muted-foreground" /> Promotions
+          </h2>
           <select
             aria-label="Business"
             className={`ml-auto ${selectClass}`}
@@ -396,7 +464,7 @@ export default function MarketingClient({
           </select>
         </div>
 
-        <div className="mt-3 flex flex-wrap gap-2">
+        <div className="mt-4 flex flex-wrap gap-2 rounded-xl bg-muted/40 p-3">
           <input
             type="text"
             placeholder="Code"
@@ -458,17 +526,17 @@ export default function MarketingClient({
           <button
             disabled={isPending}
             onClick={createPromotion}
-            className="rounded-full bg-brand px-4 py-1.5 text-sm font-medium text-white hover:brightness-95 disabled:opacity-40"
+            className="h-10 rounded-lg bg-brand px-5 text-sm font-medium text-white shadow-sm transition hover:brightness-95 disabled:opacity-40"
           >
             Add promotion
           </button>
         </div>
 
-        <div className="mt-4 overflow-x-auto">
-        <table className="w-full text-left text-sm whitespace-nowrap [&_td]:pr-4 [&_th]:pr-4">
+        <div className="mt-4 overflow-x-auto rounded-xl border border-border">
+        <table className="w-full text-left text-sm whitespace-nowrap [&_td]:px-4 [&_td]:py-3 [&_th]:px-4 [&_th]:py-3">
           <thead>
-            <tr className="border-b border-black/[.08] text-xs tracking-wide text-zinc-500 uppercase dark:border-white/[.145]">
-              <th className="py-2">Code</th>
+            <tr className="bg-muted/60 text-[11px] font-semibold tracking-wider text-muted-foreground uppercase">
+              <th>Code</th>
               <th>Description</th>
               <th>Discount</th>
               <th>Brand</th>
@@ -479,8 +547,8 @@ export default function MarketingClient({
           </thead>
           <tbody>
             {promotions.map((p) => (
-              <tr key={p.id} className="border-t border-black/[.06] dark:border-white/[.08]">
-                <td className="py-2 font-medium">{p.code}</td>
+              <tr key={p.id} className="border-t border-border transition-colors hover:bg-muted/50">
+                <td className="font-semibold text-foreground">{p.code}</td>
                 <td className="text-zinc-500">{p.description || "—"}</td>
                 <td>{formatDiscount(p)}</td>
                 <td>{brands.find((b) => b.id === p.brand_id)?.name ?? "All brands"}</td>
@@ -488,7 +556,11 @@ export default function MarketingClient({
                 <td>
                   <button
                     onClick={() => toggleActive(p)}
-                    className={p.is_active ? "text-green-600" : "text-zinc-400"}
+                    className={`rounded-full px-2.5 py-1 text-xs font-medium transition-colors ${
+                      p.is_active
+                        ? "bg-emerald-500/10 text-emerald-600 hover:bg-emerald-500/20 dark:text-emerald-400"
+                        : "bg-muted text-muted-foreground hover:bg-muted/70"
+                    }`}
                   >
                     {p.is_active ? "Active" : "Inactive"}
                   </button>
@@ -496,16 +568,17 @@ export default function MarketingClient({
                 <td className="text-right">
                   <button
                     onClick={() => removePromotion(p.id)}
-                    className="text-zinc-400 hover:text-red-500"
+                    aria-label="Delete promotion"
+                    className="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-950"
                   >
-                    ×
+                    <X className="size-4" />
                   </button>
                 </td>
               </tr>
             ))}
             {promotions.length === 0 && (
               <tr>
-                <td colSpan={7} className="py-4 text-sm text-zinc-500">
+                <td colSpan={7} className="py-10 text-center text-sm text-muted-foreground">
                   No promotions yet.
                 </td>
               </tr>
@@ -516,29 +589,77 @@ export default function MarketingClient({
       </section>
       )}
 
-      <section className="mt-6 rounded-lg border border-black/[.08] p-4 dark:border-white/[.145]">
+      <section className="mt-6 rounded-2xl border border-border bg-card p-5 shadow-sm">
         <div className="flex flex-wrap items-center gap-3">
-          <h2 className="font-medium">Customers</h2>
-          <input
-            type="text"
-            placeholder="Search name or phone"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className={`ml-auto ${inputClass}`}
-          />
+          <h2 className="flex items-center gap-2 text-base font-semibold text-foreground">
+            <Users className="size-4 text-muted-foreground" /> Customers
+            <span className="rounded-full bg-muted px-2.5 py-0.5 text-xs font-medium text-muted-foreground tabular-nums">
+              {customerTotal.toLocaleString()}
+            </span>
+          </h2>
+          <div className="relative ml-auto">
+            <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
+            <input
+              type="text"
+              placeholder="Search name or phone"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className={`w-64 pl-9 ${inputClass}`}
+            />
+          </div>
           {!crmOnly && <ImportCustomersButton kind="csv" />}
           {!crmOnly && <ImportCustomersButton kind="pdf" />}
+          {!crmOnly && (
+            <>
+              <button
+                type="button"
+                disabled={exporting !== null}
+                onClick={() => void exportCustomers("csv")}
+                className="inline-flex h-10 items-center gap-1.5 rounded-lg border border-border bg-card px-4 text-sm font-medium shadow-sm transition-colors hover:bg-muted disabled:opacity-50"
+              >
+                {exporting === "csv" ? <Loader2 className="size-4 animate-spin" /> : <Download className="size-4" />}
+                Export CSV
+              </button>
+              <button
+                type="button"
+                disabled={exporting !== null}
+                onClick={() => void exportCustomers("pdf")}
+                className="inline-flex h-10 items-center gap-1.5 rounded-lg border border-border bg-card px-4 text-sm font-medium shadow-sm transition-colors hover:bg-muted disabled:opacity-50"
+              >
+                {exporting === "pdf" ? <Loader2 className="size-4 animate-spin" /> : <FileText className="size-4" />}
+                Export PDF
+              </button>
+            </>
+          )}
         </div>
 
         {/* Filters + top-buyer ranking -- applied across ALL customers (in the
             database), not just the page on screen. */}
-        <div className="mt-3 flex flex-wrap items-end gap-3 text-xs text-zinc-500">
+        <div className="mt-4 flex flex-wrap items-end gap-x-4 gap-y-4 rounded-xl border border-border bg-muted/30 p-4 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase [&_button]:tracking-normal [&_button]:normal-case [&_input]:font-normal [&_input]:tracking-normal [&_input]:normal-case [&_select]:font-normal [&_select]:tracking-normal [&_select]:normal-case">
+          <div className="flex w-full items-center justify-between normal-case">
+            <p className="flex items-center gap-2 text-sm font-semibold tracking-normal text-foreground">
+              <SlidersHorizontal className="size-4 text-muted-foreground" /> Filters
+              {activeFilterCount > 0 && (
+                <span className="rounded-full bg-brand px-2 py-0.5 text-[11px] font-semibold text-white tabular-nums">
+                  {activeFilterCount}
+                </span>
+              )}
+            </p>
+            {filtersActive && (
+              <button
+                onClick={clearCustomerFilters}
+                className="inline-flex h-8 items-center gap-1.5 rounded-lg px-2.5 text-xs font-medium text-red-600 transition-colors hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-950/40"
+              >
+                <X className="size-3.5" /> Clear filters
+              </button>
+            )}
+          </div>
           <label className="flex flex-col gap-1">
             Sort
             <select
               value={customerFilters.sort}
               onChange={(e) => setCustomerFilter({ sort: e.target.value === "name" ? "" : (e.target.value as CustomerSort) })}
-              className={selectClass}
+              className={`${selectClass} ${customerFilters.sort !== "name" ? ACTIVE_FIELD : ""}`}
             >
               {(Object.keys(CUSTOMER_SORT_LABELS) as CustomerSort[]).map((s) => (
                 <option key={s} value={s}>
@@ -552,7 +673,7 @@ export default function MarketingClient({
             <select
               value={customerFilters.state}
               onChange={(e) => setCustomerFilter({ state: e.target.value })}
-              className={selectClass}
+              className={`${selectClass} ${customerFilters.state ? ACTIVE_FIELD : ""}`}
             >
               <option value="">All states</option>
               {filterOptions.states.map((o) => (
@@ -563,11 +684,26 @@ export default function MarketingClient({
             </select>
           </label>
           <label className="flex flex-col gap-1">
+            Business
+            <select
+              value={customerFilters.business}
+              onChange={(e) => setCustomerFilter({ business: e.target.value })}
+              className={`${selectClass} ${customerFilters.business ? ACTIVE_FIELD : ""}`}
+            >
+              <option value="">All businesses</option>
+              {brands.map((b) => (
+                <option key={b.id} value={b.id}>
+                  {b.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="flex flex-col gap-1">
             Age
             <select
               value={customerFilters.age}
               onChange={(e) => setCustomerFilter({ age: e.target.value })}
-              className={selectClass}
+              className={`${selectClass} ${customerFilters.age ? ACTIVE_FIELD : ""}`}
             >
               <option value="">All ages</option>
               {filterOptions.ages.map((o) => (
@@ -582,7 +718,7 @@ export default function MarketingClient({
             <select
               value={customerFilters.gender}
               onChange={(e) => setCustomerFilter({ gender: e.target.value })}
-              className={selectClass}
+              className={`${selectClass} ${customerFilters.gender ? ACTIVE_FIELD : ""}`}
             >
               <option value="">All genders</option>
               {filterOptions.genders.map((o) => (
@@ -602,7 +738,7 @@ export default function MarketingClient({
                 aria-label="Customer since: from"
                 value={customerFilters.sinceFrom}
                 onChange={(e) => setCustomerFilter({ since_from: e.target.value })}
-                className={selectClass}
+                className={`${selectClass} ${customerFilters.sinceFrom ? ACTIVE_FIELD : ""}`}
               />
               <span>to</span>
               <input
@@ -610,7 +746,7 @@ export default function MarketingClient({
                 aria-label="Customer since: to"
                 value={customerFilters.sinceTo}
                 onChange={(e) => setCustomerFilter({ since_to: e.target.value })}
-                className={selectClass}
+                className={`${selectClass} ${customerFilters.sinceTo ? ACTIVE_FIELD : ""}`}
               />
             </div>
           </div>
@@ -631,10 +767,10 @@ export default function MarketingClient({
                         : setCustomerFilter({ bought_from: p.from, bought_to: p.to })
                     }
                     aria-pressed={active}
-                    className={`rounded border px-2.5 py-1.5 text-sm transition-colors ${
+                    className={`h-10 rounded-lg border px-3 text-sm font-medium transition-colors ${
                       active
-                        ? "border-brand bg-brand text-white"
-                        : "border-black/[.15] text-foreground hover:bg-black/[.04] dark:border-white/[.2] dark:hover:bg-white/[.06]"
+                        ? "border-brand bg-brand text-white shadow-sm"
+                        : "border-border bg-card text-foreground hover:bg-muted"
                     }`}
                   >
                     {p.label}
@@ -653,10 +789,10 @@ export default function MarketingClient({
                 type="button"
                 onClick={() => setShowBoughtRange((v) => !v)}
                 aria-expanded={showBoughtRange}
-                className={`rounded border px-2.5 py-1.5 text-sm transition-colors ${
+                className={`h-10 rounded-lg border px-3 text-sm font-medium transition-colors ${
                   showBoughtRange
-                    ? "border-brand bg-brand text-white"
-                    : "border-brand/60 text-brand hover:bg-brand/10"
+                    ? "border-brand bg-brand text-white shadow-sm"
+                    : "border-brand/60 bg-card text-brand hover:bg-brand/10"
                 }`}
               >
                 Range
@@ -682,14 +818,6 @@ export default function MarketingClient({
               </div>
             )}
           </div>
-          {filtersActive && (
-            <button
-              onClick={clearCustomerFilters}
-              className="rounded border border-black/[.15] px-3 py-1.5 text-sm text-foreground hover:bg-black/[.04] dark:border-white/[.2] dark:hover:bg-white/[.06]"
-            >
-              Clear filters
-            </button>
-          )}
         </div>
 
         {boughtLabel && (
@@ -702,11 +830,11 @@ export default function MarketingClient({
 
         {/* 18 columns don't fit at page width -- the wrapper scrolls sideways
             instead of squashing them. */}
-        <div className="mt-4 overflow-x-auto">
-        <table className="w-full text-left text-sm whitespace-nowrap [&_td]:pr-4 [&_th]:pr-4">
+        <div className="mt-4 overflow-x-auto rounded-xl border border-border">
+        <table className="w-full text-left text-sm whitespace-nowrap [&_td]:px-4 [&_td]:py-3 [&_th]:px-4 [&_th]:py-3">
           <thead>
-            <tr className="border-b border-black/[.08] text-xs tracking-wide text-zinc-500 uppercase dark:border-white/[.145]">
-              <th className="py-2">Phone Number</th>
+            <tr className="bg-muted/60 text-[11px] font-semibold tracking-wider text-muted-foreground uppercase">
+              <th>Phone Number</th>
               <th>Customer Name</th>
               <th className="text-right">Orders</th>
               <th className="text-right">Products</th>
@@ -732,29 +860,79 @@ export default function MarketingClient({
                 <tr
                   onClick={() => setViewing(c)}
                   title="Click to see what this customer bought"
-                  className="cursor-pointer border-t border-black/[.06] hover:bg-black/[.03] dark:border-white/[.08] dark:hover:bg-white/[.05]"
+                  className="cursor-pointer border-t border-border transition-colors hover:bg-muted/50"
                 >
-                  <td className="py-2">{c.phone || "—"}</td>
-                  <td>{c.name}</td>
-                  <td className="text-right tabular-nums">{customerBuying[c.id]?.orders ?? "—"}</td>
-                  <td className="text-right tabular-nums">{customerBuying[c.id]?.units ?? "—"}</td>
+                  <td className="font-medium tabular-nums text-foreground">{c.phone || dash}</td>
+                  <td className="font-medium text-foreground">{c.name}</td>
                   <td className="text-right tabular-nums">
-                    {customerBuying[c.id] ? formatUsd(customerBuying[c.id].spent) : "—"}
+                    {customerBuying[c.id] ? (
+                      <span
+                        className={`inline-block min-w-7 rounded-md px-2 py-0.5 text-center text-xs font-semibold ${
+                          customerBuying[c.id].orders >= 2 ? "bg-brand/10 text-brand" : "bg-muted text-foreground"
+                        }`}
+                      >
+                        {customerBuying[c.id].orders}
+                      </span>
+                    ) : (
+                      dash
+                    )}
                   </td>
-                  <td>{customerBusinesses[c.id]?.join(", ") || "—"}</td>
-                  <td>{c.email || "—"}</td>
+                  <td className="text-right tabular-nums">{customerBuying[c.id]?.units ?? dash}</td>
+                  <td
+                    className={`text-right font-semibold tabular-nums ${
+                      customerBuying[c.id]?.spent > 0 ? "text-emerald-600 dark:text-emerald-400" : "text-muted-foreground"
+                    }`}
+                  >
+                    {customerBuying[c.id] ? formatUsd(customerBuying[c.id].spent) : dash}
+                  </td>
+                  <td>
+                    {customerBusinesses[c.id]?.length ? (
+                      <div className="flex gap-1">
+                        {customerBusinesses[c.id].map((b) => (
+                          <span key={b} className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${toneFor(b)}`}>
+                            {b}
+                          </span>
+                        ))}
+                      </div>
+                    ) : (
+                      dash
+                    )}
+                  </td>
+                  <td className="text-muted-foreground">{c.email || dash}</td>
                   <td className="max-w-[16rem] truncate" title={c.address ?? undefined}>
-                    {c.address || "—"}
+                    {c.address || dash}
                   </td>
-                  <td className="text-xs text-zinc-500">{c.customer_since || "—"}</td>
-                  <td>{c.first_name || "—"}</td>
-                  <td>{c.last_name || "—"}</td>
-                  <td>{c.page_uid || "—"}</td>
-                  <td>{c.capital || "—"}</td>
-                  <td>{c.state || "—"}</td>
-                  <td>{c.age ?? "—"}</td>
-                  <td>{c.gender || "—"}</td>
-                  <td>{c.nationality || "—"}</td>
+                  <td className="text-xs text-muted-foreground tabular-nums">{c.customer_since || dash}</td>
+                  <td>{c.first_name || dash}</td>
+                  <td>{c.last_name || dash}</td>
+                  <td className="text-muted-foreground tabular-nums">{c.page_uid || dash}</td>
+                  <td>{c.capital || dash}</td>
+                  <td>
+                    {c.state ? (
+                      <span className="rounded-md bg-muted px-2 py-0.5 text-xs font-medium text-foreground">{c.state}</span>
+                    ) : (
+                      dash
+                    )}
+                  </td>
+                  <td>{c.age ?? dash}</td>
+                  <td>
+                    {c.gender ? (
+                      <span
+                        className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${
+                          c.gender === "F"
+                            ? "bg-pink-500/10 text-pink-700 dark:text-pink-400"
+                            : c.gender === "M"
+                              ? "bg-sky-500/10 text-sky-700 dark:text-sky-400"
+                              : "bg-muted text-foreground"
+                        }`}
+                      >
+                        {c.gender}
+                      </span>
+                    ) : (
+                      dash
+                    )}
+                  </td>
+                  <td>{c.nationality || dash}</td>
                   <td className="text-right whitespace-nowrap">
                     <button
                       onClick={(e) => {
@@ -762,7 +940,7 @@ export default function MarketingClient({
                         if (editingId === c.id) setEditingId(null);
                         else startEdit(c);
                       }}
-                      className="text-zinc-400 hover:text-black dark:hover:text-white"
+                      className="rounded-lg px-2.5 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
                     >
                       {editingId === c.id ? "Cancel" : "Edit"}
                     </button>
@@ -783,8 +961,8 @@ export default function MarketingClient({
                   </td>
                 </tr>
                 {editingId === c.id && (
-                  <tr className="border-t border-black/[.06] dark:border-white/[.08]">
-                    <td colSpan={18} className="py-3 whitespace-normal">
+                  <tr className="border-t border-border bg-muted/30">
+                    <td colSpan={18} className="whitespace-normal">
                       <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
                         <input
                           placeholder="Name"
@@ -861,7 +1039,7 @@ export default function MarketingClient({
                       <button
                         disabled={isPending}
                         onClick={() => saveEdit(c.id)}
-                        className="mt-3 rounded-full bg-black px-4 py-1.5 text-sm text-white disabled:opacity-40 dark:bg-white dark:text-black"
+                        className="mt-3 h-10 rounded-lg bg-brand px-5 text-sm font-medium text-white shadow-sm transition hover:brightness-95 disabled:opacity-40"
                       >
                         Save
                       </button>
@@ -872,7 +1050,7 @@ export default function MarketingClient({
             ))}
             {visibleCustomers.length === 0 && (
               <tr>
-                <td colSpan={18} className="py-4 text-sm text-zinc-500">
+                <td colSpan={18} className="py-12 text-center text-sm text-muted-foreground">
                   {search.trim() !== searchTerm.trim() ? "Searching..." : "No customers found."}
                 </td>
               </tr>
@@ -882,8 +1060,8 @@ export default function MarketingClient({
         </div>
 
         {visibleCustomers.length > 0 && (
-          <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-black/[.08] pt-3 text-sm dark:border-white/[.145]">
-            <label className="flex items-center gap-2 text-xs text-zinc-500">
+          <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-border pt-4 text-sm">
+            <label className="flex items-center gap-2 text-xs text-muted-foreground">
               Items per page
               <select
                 value={customerLimit}
@@ -893,7 +1071,7 @@ export default function MarketingClient({
                   const limit = Number(e.target.value);
                   goToCustomerPage(Math.min(customerPage, Math.max(1, Math.ceil(customerTotal / limit))), limit);
                 }}
-                className="rounded border border-black/[.15] bg-card px-2 py-1 text-xs text-foreground dark:border-white/[.2]"
+                className="h-8 rounded-lg border border-border bg-card px-2 text-xs text-foreground"
               >
                 {PAGE_SIZE_OPTIONS.map((n) => (
                   <option key={n} value={n}>
@@ -906,18 +1084,18 @@ export default function MarketingClient({
               <button
                 onClick={() => goToCustomerPage(customerPage - 1)}
                 disabled={customerPage <= 1}
-                className="flex items-center gap-1 rounded border border-black/[.15] px-2.5 py-1 text-xs disabled:opacity-30 dark:border-white/[.2]"
+                className="flex h-8 items-center gap-1 rounded-lg border border-border px-3 text-xs transition hover:bg-muted disabled:opacity-30"
               >
                 <ChevronLeft className="size-3.5" />
                 Prev
               </button>
-              <span className="tabular-nums text-zinc-500">
+              <span className="text-xs text-muted-foreground tabular-nums">
                 Page {customerPage} of {customerPageCount} ({customerTotal.toLocaleString()} customers)
               </span>
               <button
                 onClick={() => goToCustomerPage(customerPage + 1)}
                 disabled={customerPage >= customerPageCount}
-                className="flex items-center gap-1 rounded border border-black/[.15] px-2.5 py-1 text-xs disabled:opacity-30 dark:border-white/[.2]"
+                className="flex h-8 items-center gap-1 rounded-lg border border-border px-3 text-xs transition hover:bg-muted disabled:opacity-30"
               >
                 Next
                 <ChevronRight className="size-3.5" />
