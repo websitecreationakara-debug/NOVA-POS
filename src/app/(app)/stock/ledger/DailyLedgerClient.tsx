@@ -3,7 +3,7 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ChevronLeft, ChevronRight, FileSpreadsheet, Link2, Loader2, Plus, Search, Trash2, TriangleAlert, Upload, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, FileSpreadsheet, Link2, Loader2, Pencil, Plus, Search, Trash2, TriangleAlert, Upload, X } from "lucide-react";
 import TopBarSlot from "@/components/TopBarSlot";
 import { decodeCsvBytes, normalizeDate, parseCsv } from "@/lib/customerCsv";
 import { applyLedgerEntry, daysOfMonth, LEDGER_TEXT_FIELDS, recalcRow, type DailyLedgerRow } from "@/lib/dailyLedger";
@@ -20,6 +20,7 @@ import {
 import {
   createLedgerProductAction,
   deleteLedgerProductAction,
+  renameLedgerProductAction,
   exportDailyLedgerAction,
   hideRemovedLedgerProductAction,
   importLedgerEntriesAction,
@@ -82,6 +83,8 @@ function monthLabel(month: string): string {
 // What a cell holds, as text, for its box when it is typed into.
 function rawValue(r: DailyLedgerRow, field: string): string {
   switch (field) {
+    case "name":
+      return r.name;
     case "sku":
       return r.sku ?? "";
     case "weight":
@@ -372,6 +375,22 @@ export default function DailyLedgerClient({
     }
     const value = raw.trim();
     if (value === rawValue(row, field)) return;
+    // The product's name: saved on the ledger product itself, not as a typed cell of the month.
+    if (field === "name") {
+      if (value === "") {
+        setError("Type the product name");
+        return;
+      }
+      setError(null);
+      setLocalRows((prev) => prev.map((r) => (r.productId === row.productId ? { ...r, name: value } : r)));
+      try {
+        await renameLedgerProductAction({ productId: row.productId, name: value });
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Couldn't save that");
+        router.refresh();
+      }
+      return;
+    }
     if (value !== "" && !LEDGER_TEXT_FIELDS.includes(field) && !Number.isFinite(Number(value))) {
       setError("Type a number");
       return;
@@ -426,7 +445,7 @@ export default function DailyLedgerClient({
       autoFocus
       defaultValue={rawValue(r, field)}
       type={field === "ex_date" ? "date" : "text"}
-      inputMode={LEDGER_TEXT_FIELDS.includes(field) ? "text" : "decimal"}
+      inputMode={field === "name" || LEDGER_TEXT_FIELDS.includes(field) ? "text" : "decimal"}
       onFocus={(e) => {
         if (field === "ex_date") {
           try {
@@ -1002,14 +1021,29 @@ export default function DailyLedgerClient({
                         title={r.name}
                       >
                         <div className="flex items-center justify-between gap-2">
-                          {/* Opens the supplier invoices that have this product (the invoices page, searched by its name). */}
-                          <Link
-                            href={`/stock/invoices?${new URLSearchParams({ brand: r.brandId ?? currentBrandId, q: r.name, page: "1", limit: "25" })}`}
-                            title={`Invoices with ${r.name}`}
-                            className="truncate hover:text-brand hover:underline"
-                          >
-                            {r.name}
-                          </Link>
+                          {isEditing(r, "name") ? (
+                            editor(r, "name", "left")
+                          ) : (
+                            /* Opens the supplier invoices that have this product (the invoices page, searched by its name). */
+                            <Link
+                              href={`/stock/invoices?${new URLSearchParams({ brand: r.brandId ?? currentBrandId, q: r.name, page: "1", limit: "25" })}`}
+                              title={`Invoices with ${r.name}`}
+                              className="truncate hover:text-brand hover:underline"
+                            >
+                              {r.name}
+                            </Link>
+                          )}
+                          {r.deletion.kind === "own" && !isEditing(r, "name") && (
+                            <button
+                              type="button"
+                              aria-label={`Rename ${r.name}`}
+                              title="Edit name"
+                              onClick={() => setEditing({ id: r.productId, field: "name" })}
+                              className="shrink-0 rounded p-1 text-muted-foreground/50 hover:bg-muted hover:text-foreground"
+                            >
+                              <Pencil className="size-4" />
+                            </button>
+                          )}
                           {r.deletion.kind === "own" && (
                             <button
                               type="button"

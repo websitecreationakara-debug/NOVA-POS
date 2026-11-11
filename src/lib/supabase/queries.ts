@@ -2265,7 +2265,8 @@ type OwnLedgerRow = {
 };
 
 // A Stock product a ledger product is linked to: its name and quantity now.
-type LinkedStock = { name: string; quantity: number };
+// `shown` is how Stock itself names it (the website title and the size / flavor), when that can be worked out.
+type LinkedStock = { name: string; quantity: number; shown?: { name: string; size: string } };
 
 // The names and current quantities of the Stock products some ledger products are linked to.
 async function stockLinkNames(rows: OwnLedgerRow[]): Promise<Map<string, LinkedStock>> {
@@ -2273,13 +2274,57 @@ async function stockLinkNames(rows: OwnLedgerRow[]): Promise<Map<string, LinkedS
   const linkNames = new Map<string, LinkedStock>();
   const pages = await Promise.all(
     Array.from({ length: Math.ceil(linkIds.length / 100) }, (_, i) =>
-      supabaseAdmin.from("products").select("id, name, stock_levels(quantity)").in("id", linkIds.slice(i * 100, (i + 1) * 100))
+      supabaseAdmin
+        .from("products")
+        .select("id, name, stock_levels(quantity), product_site_links(site, site_product_id, variation_id)")
+        .in("id", linkIds.slice(i * 100, (i + 1) * 100))
     )
   );
+  const siteLinks = new Map<string, { site: string; site_product_id: string; variation_id: string | null }[]>();
   for (const { data } of pages) {
     for (const p of data ?? []) {
       const level = Array.isArray(p.stock_levels) ? p.stock_levels[0] : p.stock_levels;
       linkNames.set(p.id, { name: p.name, quantity: Number(level?.quantity ?? 0) });
+      const links = Array.isArray(p.product_site_links) ? p.product_site_links : p.product_site_links ? [p.product_site_links] : [];
+      if (links.length > 0) siteLinks.set(p.id, links);
+    }
+  }
+
+  // The name and size the Stock page shows for each linked website product, named the way the Stock-based
+  // ledger names them (title + the variation's weight or flavor). If a storefront can't be reached the
+  // ledger product keeps its own name.
+  const sites = [...new Set([...siteLinks.values()].flat().map((l) => l.site))];
+  const shown = new Map<string, { name: string; size: string }>();
+  await Promise.all(
+    sites.map(async (site) => {
+      const catalog = catalogForBrandSlug(site);
+      if (!catalog) return;
+      try {
+        for (const wp of await listWebsiteProducts(catalog.id)) {
+          const variations = (wp.type === "variable" || wp.type === "variant") && (wp.variations?.length ?? 0) > 0 ? wp.variations! : null;
+          if (variations) {
+            // Stock shows the flavor under the title ("Title(Flavor)") when a variation has a size as well.
+            for (const v of variations)
+              shown.set(
+                `${site}::${wp.id}::${v.id}`,
+                v.weight && v.flavor ? { name: `${wp.title}(${v.flavor})`, size: v.weight } : { name: wp.title, size: v.weight || v.flavor || "" }
+              );
+          } else {
+            shown.set(`${site}::${wp.id}::`, { name: wp.title, size: wp.weight ?? "" });
+          }
+        }
+      } catch {
+        // Unreachable: those ledger products keep their own names.
+      }
+    })
+  );
+  for (const [id, links] of siteLinks) {
+    for (const l of links) {
+      const hit = shown.get(`${l.site}::${l.site_product_id}::${l.variation_id ?? ""}`);
+      if (hit) {
+        linkNames.get(id)!.shown = hit;
+        break;
+      }
     }
   }
   return linkNames;
@@ -2420,11 +2465,18 @@ function shapeOwnLedger(rows: OwnLedgerRow[], linkNames: Map<string, LinkedStock
       id: `${LEDGER_OWN_PREFIX}${o.id}`,
       sku: null,
       fullName: o.name,
+      // The name is the ledger product's own (editable in the ledger); a linked product's size starts as Stock's.
       name: o.name,
-      size: "",
+      size: (o.stock_product_id && linkNames.get(o.stock_product_id)?.shown?.size) || "",
       deletion: { kind: "own" } as const,
       ...(o.stock_product_id && linkNames.has(o.stock_product_id)
-        ? { stockLink: { id: o.stock_product_id, ...linkNames.get(o.stock_product_id)! } }
+        ? {
+            stockLink: {
+              id: o.stock_product_id,
+              name: linkNames.get(o.stock_product_id)!.name,
+              quantity: linkNames.get(o.stock_product_id)!.quantity,
+            },
+          }
         : {}),
       unit: o.unit,
       categoryName: o.category?.trim() || "Added in ledger",
