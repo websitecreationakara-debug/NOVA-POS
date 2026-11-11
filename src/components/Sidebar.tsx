@@ -72,6 +72,7 @@ const ACCOUNTANCE_ROLES = ["admin", "accountance"];
 const STOCK_LINKS = [
   { href: "/stock/ledger", label: "Daily Ledger" },
   { href: "/stock/invoices", label: "Supplier Invoices" },
+  { href: "/stock/reorder", label: "Reorder Suggestions" },
 ];
 
 // Remembered per browser so the sidebar stays how the staff member left it.
