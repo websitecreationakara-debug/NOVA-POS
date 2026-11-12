@@ -7,10 +7,12 @@
 //
 // Two event shapes, picked with --crm:
 //   (default)  "Purchase" events for standard Conversions API / Ads Manager optimization.
-//   --crm      "Customer" events shaped for Meta's CRM Integration (Events Manager > Connect
-//              your CRM): action_source "system_generated", custom_data.event_source "crm".
-//              NOVA POS has no pre-purchase lead stage, so "Customer" -- fired for the same
-//              paid orders -- is the one funnel stage this system can report.
+//   --crm      "Lead" + "Customer" event pair per order, shaped for Meta's CRM Integration
+//              (Events Manager > Connect your CRM): action_source "system_generated",
+//              custom_data.event_source "crm". Meta's setup guide requires a trigger for
+//              every funnel stage, "including the initial raw lead stage" -- NOVA POS has no
+//              multi-day funnel (a customer is only recorded once they've already paid), so
+//              both stages are reported at the same instant, for the same paid order.
 //
 // Defaults to a dry run: builds and hashes every event locally and writes a per-brand summary
 // (counts only -- never raw PII) to scripts/.meta-crm-backfill-dry-run.json.
@@ -18,7 +20,7 @@
 //
 // Usage:
 //   node scripts/meta-crm-backfill.mjs                                   # dry run, Purchase, all orders
-//   node scripts/meta-crm-backfill.mjs --crm                             # dry run, CRM Customer events
+//   node scripts/meta-crm-backfill.mjs --crm                             # dry run, CRM Lead+Customer events
 //   node scripts/meta-crm-backfill.mjs --crm --limit=5 --send --test-event-code=TEST12345
 //                                                                         # verify a handful in
 //                                                                         # Events Manager > Test Events
@@ -180,40 +182,55 @@ function buildUserData(customer) {
   return userData;
 }
 
-function buildEvent(order) {
+// Returns an array: CRM mode reports both funnel stages Meta's setup guide requires ("a
+// trigger must occur for every stage of your funnel, including the initial raw lead stage")
+// at the same instant, since NOVA POS has no multi-day funnel -- a customer is only ever
+// recorded once they've already paid. Purchase mode is unaffected (array of one).
+function buildEvents(order) {
   const customer = order.customers;
-  if (!customer) return null;
+  if (!customer) return [];
 
   const tsSource = order.paid_at ?? order.created_at;
   const eventTime = Math.floor(new Date(tsSource).getTime() / 1000);
-  if (!Number.isFinite(eventTime)) return null;
+  if (!Number.isFinite(eventTime)) return [];
 
   if (CRM) {
-    return {
-      event_name: "Customer",
-      event_time: eventTime,
-      event_id: `nova_crm_${order.id}`,
-      action_source: "system_generated",
-      user_data: buildUserData(customer),
-      custom_data: {
-        event_source: "crm",
-        lead_event_source: "NOVA POS",
+    const userData = buildUserData(customer);
+    const customData = { event_source: "crm", lead_event_source: "NOVA POS" };
+    return [
+      {
+        event_name: "Lead",
+        event_time: eventTime,
+        event_id: `nova_crm_lead_${order.id}`,
+        action_source: "system_generated",
+        user_data: userData,
+        custom_data: customData,
       },
-    };
+      {
+        event_name: "Customer",
+        event_time: eventTime,
+        event_id: `nova_crm_${order.id}`,
+        action_source: "system_generated",
+        user_data: userData,
+        custom_data: customData,
+      },
+    ];
   }
 
-  return {
-    event_name: "Purchase",
-    event_time: eventTime,
-    event_id: `nova_order_${order.id}`,
-    action_source: ACTION_SOURCE,
-    user_data: buildUserData(customer),
-    custom_data: {
-      currency: "USD",
-      value: Number(order.total) || 0,
-      order_id: order.id,
+  return [
+    {
+      event_name: "Purchase",
+      event_time: eventTime,
+      event_id: `nova_order_${order.id}`,
+      action_source: ACTION_SOURCE,
+      user_data: buildUserData(customer),
+      custom_data: {
+        currency: "USD",
+        value: Number(order.total) || 0,
+        order_id: order.id,
+      },
     },
-  };
+  ];
 }
 
 async function fetchPaidOrders() {
@@ -271,7 +288,7 @@ async function sendBatch(dataset, accessToken, batch, index, total, label) {
 }
 
 async function main() {
-  console.log(`Fetching paid orders with a linked CRM customer from NOVA POS (${CRM ? "CRM Customer" : "Purchase"} mode)...`);
+  console.log(`Fetching paid orders with a linked CRM customer from NOVA POS (${CRM ? "CRM Lead+Customer" : "Purchase"} mode)...`);
   const orders = await fetchPaidOrders();
   console.log(`Fetched ${orders.length} paid order(s) across all brands.`);
 
@@ -300,7 +317,7 @@ async function main() {
 
   for (const [slug, slugOrders] of bySlug) {
     const dataset = DATASETS[slug];
-    const events = slugOrders.map(buildEvent).filter(Boolean);
+    const events = slugOrders.flatMap(buildEvents);
     totalEvents += events.length;
 
     const coverage = { ph: 0, em: 0, fn: 0, ln: 0, ge: 0, st: 0, db: 0, psid: 0 };
@@ -317,7 +334,7 @@ async function main() {
 
     summary[slug] = { datasetId: dataset.datasetId, eventCount: events.length, coverage };
     sampleEvents[slug] = events[0] ?? null;
-    console.log(`[${slug}] Built ${events.length} ${CRM ? "Customer" : "Purchase"} event(s) for dataset ${dataset.datasetId}.`);
+    console.log(`[${slug}] Built ${events.length} ${CRM ? "Lead+Customer" : "Purchase"} event(s) for dataset ${dataset.datasetId}.`);
     console.log(`[${slug}] Identifier coverage:`, coverage);
   }
 
@@ -342,7 +359,7 @@ async function main() {
       continue;
     }
 
-    const events = slugOrders.map(buildEvent).filter(Boolean);
+    const events = slugOrders.flatMap(buildEvents);
     const batches = chunk(events, BATCH_SIZE);
     console.log(`[${slug}] Sending ${batches.length} batch(es) of up to ${BATCH_SIZE} events each...`);
     for (let i = 0; i < batches.length; i++) {

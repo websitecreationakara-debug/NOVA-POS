@@ -5,7 +5,7 @@ import { supabaseAdmin } from "@/lib/supabase/server";
 import { getSessionUser } from "@/lib/supabase/auth-server";
 import { pushStockToSites } from "@/lib/site-sync";
 import { getLinkedStockCost10pcts } from "@/lib/websiteProducts/purchaseCosts";
-import { sendCrmCustomerEvent, sendPurchaseEvent } from "@/lib/metaConversions";
+import { sendCrmCustomerEvent, sendCrmLeadEvent, sendPurchaseEvent } from "@/lib/metaConversions";
 import type { OrderSource, PaymentMethod } from "@/types/database";
 import { ppToday } from "@/lib/phnomPenhTime";
 import {
@@ -455,6 +455,7 @@ export async function chargeOrder(input: {
   // doc) so this sale isn't held up waiting on Meta's API -- a Meta outage
   // must never fail or slow down a sale that's already been taken.
   after(() => sendPurchaseEvent(orderId));
+  after(() => sendCrmLeadEvent(orderId));
   after(() => sendCrmCustomerEvent(orderId));
 
   return {

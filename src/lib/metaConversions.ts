@@ -209,10 +209,41 @@ export async function sendPurchaseEvent(orderId: string): Promise<void> {
 // Meta's "CRM Integration" (Events Manager > Connect your CRM) reads a dataset's qualified-
 // leads funnel from a separate event shape: action_source "system_generated" rather than
 // "website"/"physical_store", and custom_data.event_source/lead_event_source identifying
-// this as a CRM-sourced stage change rather than a storefront conversion. NOVA POS has no
-// pre-purchase lead funnel to track (customers aren't recorded until an order exists), so
-// "Customer" -- fired at the same order-creation point as Purchase above -- is the one stage
-// this system can report.
+// this as a CRM-sourced stage change rather than a storefront conversion. Meta's setup guide
+// requires a trigger for every funnel stage, "including the initial raw lead stage" -- NOVA
+// POS has no multi-day funnel (a customer is only recorded once they've already paid), so a
+// walk-in/checkout sale reports both stages at the same instant: sendCrmLeadEvent (the raw
+// lead) immediately followed by sendCrmCustomerEvent (the conversion) below.
+export async function sendCrmLeadEvent(orderId: string): Promise<void> {
+  try {
+    const ctx = await resolveEventContext(orderId);
+    if (!ctx) return;
+
+    const tsSource = ctx.order.paid_at ?? ctx.order.created_at;
+    const eventTime = Math.floor(new Date(tsSource).getTime() / 1000);
+    if (!Number.isFinite(eventTime)) return;
+
+    await postEvent(
+      ctx,
+      {
+        event_name: "Lead",
+        event_time: eventTime,
+        event_id: `nova_crm_lead_${ctx.order.id}`,
+        action_source: "system_generated",
+        user_data: buildUserData(ctx.customer),
+        custom_data: {
+          event_source: "crm",
+          lead_event_source: "NOVA POS",
+        },
+      },
+      "CRM Lead",
+    );
+  } catch (e) {
+    // Best effort -- must never fail an order that's already been taken.
+    console.error(`metaConversions: unexpected error syncing CRM Lead for order ${orderId}`, e);
+  }
+}
+
 export async function sendCrmCustomerEvent(orderId: string): Promise<void> {
   try {
     const ctx = await resolveEventContext(orderId);

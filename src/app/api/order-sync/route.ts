@@ -4,7 +4,7 @@ import { supabaseAdmin } from "@/lib/supabase/server";
 import type { ProductSiteLink } from "@/types/database";
 import { ALL_PAYMENT_METHODS, type PaymentMethod } from "@/lib/paymentMethods";
 import { ppDay } from "@/lib/phnomPenhTime";
-import { sendCrmCustomerEvent, sendPurchaseEvent } from "@/lib/metaConversions";
+import { sendCrmCustomerEvent, sendCrmLeadEvent, sendPurchaseEvent } from "@/lib/metaConversions";
 import { pushStockToSites } from "@/lib/site-sync";
 
 const VALID_SITES: ProductSiteLink["site"][] = [
@@ -282,6 +282,7 @@ export async function POST(request: NextRequest) {
   // Best effort, scheduled to run after the response is sent so this
   // storefront's checkout isn't held up waiting on Meta's API.
   after(() => sendPurchaseEvent(orderId));
+  after(() => sendCrmLeadEvent(orderId));
   after(() => sendCrmCustomerEvent(orderId));
   revalidatePath("/orders");
   revalidatePath("/stock");
