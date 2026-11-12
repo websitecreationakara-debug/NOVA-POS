@@ -73,6 +73,11 @@ const limitArg = args.find((a) => a.startsWith("--limit="));
 const LIMIT = limitArg ? Number(limitArg.split("=")[1]) : null;
 const testArg = args.find((a) => a.startsWith("--test-event-code="));
 const TEST_EVENT_CODE = testArg ? testArg.split("=")[1] : null;
+// Meta rejects any event_time older than 7 days -- pass e.g. --days=7 to only build events for
+// orders paid within that window, instead of failing every older order in --crm/--send mode.
+const daysArg = args.find((a) => a.startsWith("--days="));
+const DAYS = daysArg ? Number(daysArg.split("=")[1]) : null;
+const sinceMs = DAYS ? Date.now() - DAYS * 24 * 60 * 60 * 1000 : null;
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -292,7 +297,21 @@ async function main() {
   const orders = await fetchPaidOrders();
   console.log(`Fetched ${orders.length} paid order(s) across all brands.`);
 
-  const limited = LIMIT ? orders.slice(0, LIMIT) : orders;
+  const windowed = sinceMs
+    ? orders.filter((o) => new Date(o.paid_at ?? o.created_at).getTime() >= sinceMs)
+    : orders;
+  if (sinceMs) {
+    console.log(`--days=${DAYS}: ${windowed.length}/${orders.length} order(s) are within the window.`);
+  }
+
+  // Orders are fetched in `id` order (arbitrary re: time) for stable pagination -- when
+  // --limit is a smoke-test sample (e.g. with --test-event-code), the most recent orders are
+  // far more useful than the first ones, since Meta rejects events more than 7 days old.
+  const limited = LIMIT
+    ? [...windowed]
+        .sort((a, b) => new Date(b.paid_at ?? b.created_at) - new Date(a.paid_at ?? a.created_at))
+        .slice(0, LIMIT)
+    : windowed;
 
   // Group by brand slug so each goes to its own dataset -- the same mapping
   // src/lib/metaConversions.ts uses for real-time events.
