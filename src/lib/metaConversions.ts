@@ -116,8 +116,22 @@ interface EventContext {
   slug: BrandSlug;
   dataset: { datasetId: string; tokenEnv: string };
   accessToken: string;
-  order: { id: string; paid_at: string | null; created_at: string; total: number; channel: string | null };
+  order: {
+    id: string;
+    paid_at: string | null;
+    created_at: string;
+    total: number;
+    channel: string | null;
+    fbc: string | null;
+  };
   customer: CustomerRow;
+}
+
+// fbc is a per-session click token, not a customer attribute, so it's applied on top of
+// buildUserData() here rather than folded into it. Sent verbatim -- Meta's spec requires fbc/fbp
+// unhashed, unlike every other user_data field.
+function withClickId(userData: Record<string, string[] | string>, fbc: string | null) {
+  return fbc ? { ...userData, fbc } : userData;
 }
 
 // Shared order/brand/customer/token lookup for every Meta event type sent from an order.
@@ -125,7 +139,7 @@ interface EventContext {
 async function resolveEventContext(orderId: string): Promise<EventContext | null> {
   const { data: order, error } = await supabaseAdmin
     .from("orders")
-    .select("id, paid_at, created_at, total, customer_id, brand_id, channel")
+    .select("id, paid_at, created_at, total, customer_id, brand_id, channel, fbc")
     .eq("id", orderId)
     .single();
 
@@ -155,7 +169,13 @@ async function resolveEventContext(orderId: string): Promise<EventContext | null
   }
 
   // slug is guaranteed defined here: dataset is only set when slug was a valid key above.
-  return { slug: slug as BrandSlug, dataset, accessToken, order, customer: customer as CustomerRow };
+  return {
+    slug: slug as BrandSlug,
+    dataset,
+    accessToken,
+    order: { ...order, fbc: order.fbc ?? null },
+    customer: customer as CustomerRow,
+  };
 }
 
 async function postEvent(ctx: EventContext, event: Record<string, unknown>, label: string): Promise<void> {
@@ -191,7 +211,7 @@ export async function sendPurchaseEvent(orderId: string): Promise<void> {
         // website checkout; everything else (charge_order -- in-store,
         // Telegram, or Meta/Messenger sales) was taken in person.
         action_source: ctx.order.channel === "online" ? "website" : "physical_store",
-        user_data: buildUserData(ctx.customer),
+        user_data: withClickId(buildUserData(ctx.customer), ctx.order.fbc),
         custom_data: {
           currency: "USD",
           value: Number(ctx.order.total) || 0,
@@ -230,7 +250,7 @@ export async function sendCrmLeadEvent(orderId: string): Promise<void> {
         event_time: eventTime,
         event_id: `nova_crm_lead_${ctx.order.id}`,
         action_source: "system_generated",
-        user_data: buildUserData(ctx.customer),
+        user_data: withClickId(buildUserData(ctx.customer), ctx.order.fbc),
         custom_data: {
           event_source: "crm",
           lead_event_source: "NOVA POS",
@@ -260,7 +280,7 @@ export async function sendCrmCustomerEvent(orderId: string): Promise<void> {
         event_time: eventTime,
         event_id: `nova_crm_${ctx.order.id}`,
         action_source: "system_generated",
-        user_data: buildUserData(ctx.customer),
+        user_data: withClickId(buildUserData(ctx.customer), ctx.order.fbc),
         custom_data: {
           event_source: "crm",
           lead_event_source: "NOVA POS",

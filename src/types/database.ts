@@ -356,6 +356,9 @@ export type Order = {
   // How a "pos" order was placed -- in_store, telegram, meta, tiktok or pickup (migrations
   // 0037, 0095). Not meaningful for "online" orders (those show their site instead).
   order_source: OrderSource;
+  // Meta's click-id cookie (_fbc) for this order's storefront session, forwarded verbatim to
+  // Meta's Conversions API by metaConversions.ts (migration 0111). Only set for "online" orders.
+  fbc?: string | null;
 };
 
 export type OrderItem = {

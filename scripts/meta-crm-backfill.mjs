@@ -187,6 +187,12 @@ function buildUserData(customer) {
   return userData;
 }
 
+// fbc is a per-session click token, not a customer attribute, so it's applied on top of
+// buildUserData() here rather than folded into it -- sent verbatim, never hashed.
+function withClickId(userData, fbc) {
+  return fbc ? { ...userData, fbc } : userData;
+}
+
 // Returns an array: CRM mode reports both funnel stages Meta's setup guide requires ("a
 // trigger must occur for every stage of your funnel, including the initial raw lead stage")
 // at the same instant, since NOVA POS has no multi-day funnel -- a customer is only ever
@@ -200,7 +206,7 @@ function buildEvents(order) {
   if (!Number.isFinite(eventTime)) return [];
 
   if (CRM) {
-    const userData = buildUserData(customer);
+    const userData = withClickId(buildUserData(customer), order.fbc);
     const customData = { event_source: "crm", lead_event_source: "NOVA POS" };
     return [
       {
@@ -228,7 +234,7 @@ function buildEvents(order) {
       event_time: eventTime,
       event_id: `nova_order_${order.id}`,
       action_source: ACTION_SOURCE,
-      user_data: buildUserData(customer),
+      user_data: withClickId(buildUserData(customer), order.fbc),
       custom_data: {
         currency: "USD",
         value: Number(order.total) || 0,
@@ -246,7 +252,7 @@ async function fetchPaidOrders() {
     const { data, error } = await supabase
       .from("orders")
       .select(
-        `id, paid_at, created_at, total, customer_id, brand_id,
+        `id, paid_at, created_at, total, customer_id, brand_id, fbc,
          brands!orders_brand_id_fkey ( slug ),
          customers ( id, name, first_name, last_name, phone, second_phone, email, gender, page_uid, state, dob )`
       )

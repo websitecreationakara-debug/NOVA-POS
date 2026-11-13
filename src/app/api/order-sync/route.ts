@@ -97,6 +97,10 @@ export async function POST(request: NextRequest) {
     // no offset would be parsed as UTC here, silently shifting it off by
     // whatever the storefront's local UTC offset actually is.
     deliveryAt?: string | null;
+    // Meta's click-id cookie (_fbc) or, lacking that, the storefront's own
+    // reconstruction from a ?fbclid= landing param -- forwarded as-is (never
+    // hashed) to Meta's Conversions API by metaConversions.ts.
+    fbc?: string | null;
   };
   try {
     body = await request.json();
@@ -226,6 +230,7 @@ export async function POST(request: NextRequest) {
     p_total: body.total ?? null,
     p_payment_method: paymentMethod,
     p_delivery_at: deliveryAt,
+    p_fbc: typeof body.fbc === "string" ? body.fbc.trim() || null : null,
   });
   if (rpcError) {
     // SQLSTATE class 22 (data exception, e.g. numeric overflow) and 23514
