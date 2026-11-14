@@ -178,6 +178,22 @@ async function resolveEventContext(orderId: string): Promise<EventContext | null
   };
 }
 
+// Drives the CRM "Meta Conv." column (src/app/(app)/marketing/MarketingClient.tsx).
+// A failure never overwrites a prior "connected" -- one transient API error
+// shouldn't make an already-confirmed customer look disconnected.
+async function markSyncStatus(customerId: string, status: "connected" | "failed"): Promise<void> {
+  try {
+    let query = supabaseAdmin
+      .from("customers")
+      .update({ meta_sync_status: status, meta_synced_at: new Date().toISOString() })
+      .eq("id", customerId);
+    if (status === "failed") query = query.neq("meta_sync_status", "connected");
+    await query;
+  } catch (e) {
+    console.error(`metaConversions: failed to record sync status for customer ${customerId}`, e);
+  }
+}
+
 async function postEvent(ctx: EventContext, event: Record<string, unknown>, label: string): Promise<void> {
   const url = `https://graph.facebook.com/${API_VERSION}/${ctx.dataset.datasetId}/events?access_token=${encodeURIComponent(ctx.accessToken)}`;
   const res = await fetch(url, {
@@ -189,6 +205,9 @@ async function postEvent(ctx: EventContext, event: Record<string, unknown>, labe
   if (!res.ok) {
     const body = await res.json().catch(() => null);
     console.error(`metaConversions: ${label} send failed for order ${ctx.order.id} (${ctx.slug})`, res.status, body);
+    await markSyncStatus(ctx.customer.id, "failed");
+  } else {
+    await markSyncStatus(ctx.customer.id, "connected");
   }
 }
 

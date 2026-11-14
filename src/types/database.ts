@@ -150,6 +150,8 @@ export type Customer = {
   gender: string | null;
   nationality: string | null;
   follow_up: string | null;
+  meta_sync_status: "connected" | "failed" | null;
+  meta_synced_at: string | null;
   created_at: string;
 };
 
