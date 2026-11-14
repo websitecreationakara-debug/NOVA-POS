@@ -55,6 +55,31 @@ function toneFor(text: string): string {
 const ACTIVE_FIELD = "border-brand/60 bg-brand/5 font-medium text-brand";
 const dash = <span className="text-muted-foreground/50">—</span>;
 
+// CRM "Meta Conv." column -- reflects customers.meta_sync_status, written by
+// src/lib/metaConversions.ts after it actually attempts to send that customer's
+// data to Meta's Conversions API (not just whether the brand is configured).
+function MetaSyncBadge({ status }: { status: Customer["meta_sync_status"] }) {
+  if (status === "connected") {
+    return (
+      <span className="rounded-full bg-emerald-500/10 px-2.5 py-0.5 text-xs font-medium text-emerald-700 dark:text-emerald-400">
+        Connected
+      </span>
+    );
+  }
+  if (status === "failed") {
+    return (
+      <span className="rounded-full bg-amber-500/10 px-2.5 py-0.5 text-xs font-medium text-amber-700 dark:text-amber-400">
+        Failed
+      </span>
+    );
+  }
+  return (
+    <span className="rounded-full bg-muted px-2.5 py-0.5 text-xs font-medium text-muted-foreground">
+      Not connected
+    </span>
+  );
+}
+
 // A dropdown for the customer edit form. The first entry is the empty choice
 // (shown as the field name). A value already saved on the customer that isn't
 // in the list (an older spelling, say) is kept as its own entry rather than
@@ -828,7 +853,7 @@ export default function MarketingClient({
           </p>
         )}
 
-        {/* 18 columns don't fit at page width -- the wrapper scrolls sideways
+        {/* 19 columns don't fit at page width -- the wrapper scrolls sideways
             instead of squashing them. */}
         <div className="mt-4 overflow-x-auto rounded-xl border border-border">
         <table className="w-full text-left text-sm whitespace-nowrap [&_td]:px-4 [&_td]:py-3 [&_th]:px-4 [&_th]:py-3">
@@ -846,6 +871,7 @@ export default function MarketingClient({
               <th>First Name</th>
               <th>Last Name</th>
               <th>PSID</th>
+              <th>Meta Conv.</th>
               <th>Capital</th>
               <th>State</th>
               <th>Age</th>
@@ -906,6 +932,9 @@ export default function MarketingClient({
                   <td>{c.first_name || dash}</td>
                   <td>{c.last_name || dash}</td>
                   <td className="text-muted-foreground tabular-nums">{c.page_uid || dash}</td>
+                  <td>
+                    <MetaSyncBadge status={c.meta_sync_status} />
+                  </td>
                   <td>{c.capital || dash}</td>
                   <td>
                     {c.state ? (
@@ -962,7 +991,7 @@ export default function MarketingClient({
                 </tr>
                 {editingId === c.id && (
                   <tr className="border-t border-border bg-muted/30">
-                    <td colSpan={18} className="whitespace-normal">
+                    <td colSpan={19} className="whitespace-normal">
                       <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
                         <input
                           placeholder="Name"
