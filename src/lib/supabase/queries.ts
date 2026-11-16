@@ -1547,7 +1547,9 @@ export type StockPickerItem = {
 export async function getStockPickerItems(
   brandId: string,
   brandSlug: string,
-  options?: { includeAddons?: boolean }
+  // `stockPageOnly` lists only what the Stock page itself shows (live website products and add-ons, and
+  // POS-only products), leaving out leftover POS products whose website product no longer exists.
+  options?: { includeAddons?: boolean; stockPageOnly?: boolean }
 ): Promise<StockPickerItem[]> {
   const catalog = catalogForBrandSlug(brandSlug);
   // The POS products and the storefront's product and add-on lists are read at the same time (each is
@@ -1561,10 +1563,12 @@ export async function getStockPickerItems(
 
   const items: StockPickerItem[] = [];
   const usedPosKeys = new Set<string>();
+  let storefrontLoaded = false;
 
   if (catalog) {
     try {
       if (!sitePrefetch) throw new Error("Storefront unreachable");
+      storefrontLoaded = true;
       const siteProducts = sitePrefetch.value;
       for (const wp of siteProducts) {
         const isVariable =
@@ -1659,6 +1663,7 @@ export async function getStockPickerItems(
   for (const p of posProducts) {
     const key = p.site_link ? `${p.site_link.site_product_id}::${p.site_link.variation_id || ""}` : null;
     if (key && usedPosKeys.has(key)) continue; // already represented above, with its website link
+    if (options?.stockPageOnly && storefrontLoaded && !p.pos_only) continue; // not on the Stock page
     items.push({
       key: `pos:${p.id}`,
       name: p.name,

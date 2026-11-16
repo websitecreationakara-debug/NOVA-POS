@@ -168,7 +168,7 @@ export default async function MarketingPage({
         ? Promise.resolve({ sets: [] as SetSummary[], total: 0, page: 1 })
         : listSetsAction(currentBrand.id, { page: setsPage, limit: setsLimit, q }),
       setParam
-        ? getStockPickerItems(currentBrand.id, currentBrand.slug, { includeAddons: true })
+        ? getStockPickerItems(currentBrand.id, currentBrand.slug, { includeAddons: true, stockPageOnly: true })
         : Promise.resolve([] as StockPickerItem[]),
       activeSetId ? getSetAction(activeSetId) : Promise.resolve(null),
     ]);
