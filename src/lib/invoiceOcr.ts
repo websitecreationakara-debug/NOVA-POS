@@ -87,7 +87,7 @@ function recoverDecimals(nums: number[], raws: string[]): void {
 
 // One product row: name, then numbers at the end (quantity, unit price, and usually the line total).
 export function parseInvoiceRow(line: string): ParsedInvoice["lines"][number] | null {
-  const clean = line.replace(/[|_]/g, " ").trim();
+  const clean = line.replace(/[|_\[\]]/g, " ").trim();
   if (!/[A-Za-z]{2}/.test(clean) || SKIP_ROW.test(clean)) return null;
   const tokens = clean.split(/\s+/);
   const nums: number[] = [];
@@ -95,7 +95,7 @@ export function parseInvoiceRow(line: string): ParsedInvoice["lines"][number] | 
   // Numbers at the end of the row; a "$" (or an OCR-misread "S") standing alone before a number is just its symbol.
   while (tokens.length > 1 && nums.length < 4) {
     const last = tokens[tokens.length - 1];
-    if (/^[$៛]$|^S$/.test(last)) tokens.pop();
+    if (/^[$៛]$|^S\$?$/.test(last)) tokens.pop();
     else if (NUMBER.test(last)) {
       raws.unshift(last);
       nums.unshift(toNumber(tokens.pop() as string));
@@ -131,7 +131,8 @@ export function parseInvoiceRow(line: string): ParsedInvoice["lines"][number] | 
   const skuAt = head.findIndex((t) => SKU.test(t));
   if (skuAt >= 0 && head.length > 1) sku = head.splice(skuAt, 1)[0];
   const name = head.join(" ").trim();
-  if (name.replace(/[^A-Za-z]/g, "").length < 2) return null;
+  // A real product name has at least one word of 3+ letters; shorter is OCR noise like "eC a".
+  if (!/[A-Za-z]{3}/.test(name)) return null;
   return { sku, name, unit, packing, quantity, unitCost };
 }
 
