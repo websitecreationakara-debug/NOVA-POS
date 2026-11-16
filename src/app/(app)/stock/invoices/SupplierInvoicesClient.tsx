@@ -15,6 +15,7 @@ import {
   setSupplierInvoicePaidAction,
   updateSupplierInvoiceAction,
 } from "./actions";
+import { scanInvoiceImageAction } from "./scanActions";
 import type { InvoiceFormData } from "./types";
 
 // The lookups the form uses on its product data (see loadInvoiceFormDataAction).
@@ -95,7 +96,23 @@ export type InvoiceList = {
 const input =
   "h-10 w-full rounded-lg border border-border bg-background px-3 text-sm text-foreground outline-none transition placeholder:text-muted-foreground/60 focus:border-brand focus:ring-2 focus:ring-brand/20";
 const label = "mb-1.5 block text-xs font-medium text-muted-foreground";
-const LINE_COLS = "sm:grid-cols-[7rem_1fr_6rem_5rem_5rem_6rem_6rem_2rem]";
+const LINE_COLS = "sm:grid-cols-[2rem_7rem_1fr_6rem_5rem_5rem_6rem_6rem_2rem]";
+
+// Shrinks a photo to at most 1800px on its longest side and re-encodes it as a JPEG, so it is small enough to send
+// for scanning (phone photos are often several MB). Returns the base64 data without the "data:" prefix.
+async function shrinkForScan(file: File): Promise<string> {
+  const bmp = await createImageBitmap(file);
+  const scale = Math.min(1, 1800 / Math.max(bmp.width, bmp.height));
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.round(bmp.width * scale);
+  canvas.height = Math.round(bmp.height * scale);
+  const ctx = canvas.getContext("2d");
+  if (!ctx) throw new Error("Could not prepare the photo");
+  ctx.imageSmoothingQuality = "high";
+  ctx.drawImage(bmp, 0, 0, canvas.width, canvas.height);
+  bmp.close();
+  return canvas.toDataURL("image/jpeg", 0.85).split(",")[1] ?? "";
+}
 
 export default function SupplierInvoicesClient({
   brands,
@@ -154,6 +171,8 @@ export default function SupplierInvoicesClient({
   const [pasting, setPasting] = useState(false);
   const [pasteText, setPasteText] = useState("");
   const [scanNote, setScanNote] = useState<string | null>(null);
+  const [scanning, setScanning] = useState<string | null>(null);
+  const photoInput = useRef<HTMLInputElement>(null);
   const [error, setError] = useState<string | null>(null);
   const [open, setOpen] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
@@ -269,6 +288,27 @@ export default function SupplierInvoicesClient({
       setPasting(false);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not read that text");
+    }
+  }
+
+  // Reads a photo of an invoice with Google Gemini (see scanInvoiceImageAction) and fills the form from it.
+  async function scanPhoto(file: File) {
+    setError(null);
+    setScanNote(null);
+    setScanning("Reading the invoice…");
+    try {
+      const result = await scanInvoiceImageAction({ imageBase64: await shrinkForScan(file), mimeType: "image/jpeg" });
+      if ("error" in result) setError(result.error);
+      else if (result.invoice.lines.length === 0) {
+        // Nothing readable: leave the form alone rather than fill it with a misread header.
+        setScanNote("No product lines were found in that photo. Try a clearer one, or use Paste lines.");
+      } else {
+        await applyParsed(result.invoice);
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not read that photo");
+    } finally {
+      setScanning(null);
     }
   }
 
@@ -512,6 +552,34 @@ export default function SupplierInvoicesClient({
                   Paste lines
                 </button>
               )}
+              {!editingId && (
+                <>
+                  <input
+                    ref={photoInput}
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    onChange={(e) => {
+                      const f = e.target.files?.[0];
+                      e.target.value = "";
+                      if (f) void scanPhoto(f);
+                    }}
+                  />
+                  <button
+                    type="button"
+                    disabled={scanning !== null}
+                    onClick={() => photoInput.current?.click()}
+                    className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-border bg-background px-3 text-xs font-medium text-foreground transition hover:bg-muted disabled:opacity-50"
+                  >
+                    Scan photo
+                  </button>
+                </>
+              )}
+              {scanning && (
+                <span className="inline-flex items-center gap-1.5 text-xs font-normal text-muted-foreground">
+                  <Loader2 className="size-3 animate-spin" /> {scanning}
+                </span>
+              )}
               {formDataLoading && (
                 <span className="inline-flex items-center gap-1.5 text-xs font-normal text-muted-foreground">
                   <Loader2 className="size-3 animate-spin" /> Loading products…
@@ -589,6 +657,7 @@ export default function SupplierInvoicesClient({
             </datalist>
             <div className="mt-6 space-y-2 rounded-xl border border-border bg-muted/40 p-3">
               <div className={`hidden ${LINE_COLS} gap-2 px-1 text-xs font-medium uppercase tracking-wide text-muted-foreground sm:grid`}>
+                <span>No.</span>
                 <span>SKU</span>
                 <span>Description</span>
                 <span>Packing</span>
@@ -598,11 +667,12 @@ export default function SupplierInvoicesClient({
                 <span className="text-right">Amount</span>
                 <span />
               </div>
-              {lines.map((l) => (
+              {lines.map((l, n) => (
                 <div
                   key={l.key}
                   className={`grid grid-cols-4 items-center gap-2 ${LINE_COLS}`}
                 >
+                  <span className="hidden px-1 text-sm tabular-nums text-muted-foreground sm:block">{n + 1}</span>
                   <input
                     className={`${input} col-span-2 sm:col-span-1`}
                     value={l.sku}
@@ -844,6 +914,7 @@ export default function SupplierInvoicesClient({
                         <table className="w-full min-w-[34rem] text-sm">
                           <thead className="bg-muted/50 text-left text-xs uppercase tracking-wide text-muted-foreground">
                             <tr>
+                              <th className="px-3 py-2 font-medium">No.</th>
                               <th className="px-3 py-2 font-medium">SKU</th>
                               <th className="px-3 py-2 font-medium">Description</th>
                               <th className="px-3 py-2 font-medium">Packing</th>
@@ -854,8 +925,9 @@ export default function SupplierInvoicesClient({
                             </tr>
                           </thead>
                           <tbody>
-                            {inv.items.map((i) => (
+                            {inv.items.map((i, n) => (
                               <tr key={i.id} className="border-t border-border/60">
+                                <td className="px-3 py-2.5 tabular-nums text-muted-foreground">{n + 1}</td>
                                 <td className="px-3 py-2.5 text-muted-foreground">{i.sku}</td>
                                 <td className="px-3 py-2.5 font-medium">
                                   {i.productName}

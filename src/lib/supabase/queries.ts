@@ -930,7 +930,9 @@ export async function getOrdersList(
   // By list_at, not paid_at: a Pre-Order that was changed to another status is
   // filed under the day of that change (migration 0062) while the order keeps
   // its own date and invoice number.
-  if (!params.countOnly) query = query.order("list_at", { ascending: false }).order("id").range(offset, offset + limit - 1);
+  // Orders delivered on one day share the same list_at (its delivery time), so paid_at
+  // breaks the tie -- invoice numbers follow paid_at -- then id keeps pages stable.
+  if (!params.countOnly) query = query.order("list_at", { ascending: false }).order("paid_at", { ascending: false }).order("id").range(offset, offset + limit - 1);
 
   if (status) query = query.eq("fulfillment_status", status);
   if (params.source) query = query.eq("channel", params.source === "website" ? "online" : "pos");
@@ -996,7 +998,16 @@ export async function getOrdersList(
     brands: { name: string } | null;
   };
 
-  const rows: OrderListRow[] = ((data ?? []) as unknown as Row[]).map((o) => ({
+  // Within one day the time of day doesn't matter (a 12 PM and a 6 PM delivery are the
+  // same day): newest day first, then by invoice order (paid_at), within this page.
+  const sorted = [...((data ?? []) as unknown as Row[])].sort((a, b) => {
+    const da = ppDay(a.list_at ?? a.paid_at);
+    const db = ppDay(b.list_at ?? b.paid_at);
+    if (da !== db) return da < db ? 1 : -1;
+    return (b.paid_at ?? "") < (a.paid_at ?? "") ? -1 : (b.paid_at ?? "") > (a.paid_at ?? "") ? 1 : 0;
+  });
+
+  const rows: OrderListRow[] = sorted.map((o) => ({
     id: o.id,
     // A number typed in by hand wins over the YYYYMM-N one worked out below.
     invoiceNumber: o.custom_invoice_number ?? null,
