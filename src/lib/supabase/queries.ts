@@ -727,36 +727,37 @@ async function computeDashboardStats(
   const inRange = (dateStr: string) => dateStr >= fromDate && dateStr <= toDate;
   const daysInRange = orderDays.filter((d) => inRange(d.day));
   const totalRevenue = daysInRange.reduce((sum, d) => sum + d.revenue, 0);
-  // One business: every order touching it counts. All businesses: a mixed order
-  // is still ONE order, so use the shares that add up to 1.
-  const ordersIn = (d: OrderDayRow) => (brandId === ALL_BUSINESSES_ID ? d.order_share : d.orders);
-  const orderCount = Math.round(daysInRange.reduce((sum, d) => sum + ordersIn(d), 0));
+  // Charts: a mixed order is split between its businesses (shares add up to 1 per order).
+  const ordersIn = (d: OrderDayRow) => d.order_share;
   const deliveryFees = round2(daysInRange.reduce((sum, d) => sum + d.delivery_fees, 0));
 
   // Best sellers in the selected range, both ranked by revenue (units sold
   // shown alongside for products).
-  // Orders are each business's share of its orders (a mixed order is split, not
-  // repeated), rounded so the rows add up to the real order count -- the same
-  // number the Orders page shows.
-  const branchTotals = new Map<string, { name: string; revenue: number; orders: number; share: number }>();
+  const branchTotals = new Map<string, { name: string; revenue: number; orders: number }>();
   for (const d of daysInRange) {
-    const e = branchTotals.get(d.brand_id) ?? { name: d.brand_name, revenue: 0, orders: 0, share: 0 };
+    const e = branchTotals.get(d.brand_id) ?? { name: d.brand_name, revenue: 0, orders: 0 };
     e.revenue += d.revenue;
-    e.share += d.order_share;
     branchTotals.set(d.brand_id, e);
   }
-  const branchList = Array.from(branchTotals.values());
-  // Largest-remainder rounding: floor every share, then give the leftover orders
-  // to the businesses with the biggest fractions.
-  for (const b of branchList) b.orders = Math.floor(b.share + 1e-9);
-  let leftover = Math.round(branchList.reduce((s, b) => s + b.share, 0)) - branchList.reduce((s, b) => s + b.orders, 0);
-  for (const b of [...branchList].sort((a, c) => (c.share - c.orders) - (a.share - a.orders))) {
-    if (leftover <= 0) break;
-    b.orders += 1;
-    leftover -= 1;
-  }
-  const topBranches = branchList
-    .map(({ share: _share, ...b }) => ({ ...b, revenue: round2(b.revenue) }))
+  // Orders per business are counted the way the Orders page does: each order once,
+  // under its own business (a mixed order is not repeated), so the numbers match.
+  await Promise.all(
+    Array.from(branchTotals.entries()).map(async ([id, e]) => {
+      const { count, error: countError } = await supabaseAdmin
+        .from("orders")
+        .select("id", { count: "exact", head: true })
+        .eq("status", "paid")
+        .in("fulfillment_status", COUNTED_FULFILLMENT_STATUSES)
+        .eq("brand_id", id)
+        .gte("list_at", ppDayStart(fromDate))
+        .lte("list_at", ppDayEnd(toDate));
+      if (countError) throw countError;
+      e.orders = count ?? 0;
+    })
+  );
+  const orderCount = Array.from(branchTotals.values()).reduce((sum, b) => sum + b.orders, 0);
+  const topBranches = Array.from(branchTotals.values())
+    .map((b) => ({ ...b, revenue: round2(b.revenue) }))
     .sort((a, b) => b.revenue - a.revenue);
 
   // Total COGS is the Margin Report's: the sum of the products that have a Total
@@ -930,13 +931,7 @@ export async function getOrdersList(
   let query = supabaseAdmin
     .from("orders")
     .select(
-      params.countOnly
-        ? brandId
-          ? "id, order_brands!inner(brand_id)"
-          : "id"
-        : brandId
-          ? "*, brands!orders_brand_id_fkey(name), order_brands!inner(brand_id)"
-          : "*, brands!orders_brand_id_fkey(name)",
+      params.countOnly ? "id" : "*, brands!orders_brand_id_fkey(name)",
       { count: "exact", head: params.countOnly }
     )
     .eq("status", "paid");
@@ -950,9 +945,9 @@ export async function getOrdersList(
   if (status) query = query.eq("fulfillment_status", status);
   if (params.source) query = query.eq("channel", params.source === "website" ? "online" : "pos");
   if (params.unpaid) query = query.eq("is_unpaid", true).neq("fulfillment_status", "cancelled");
-  // An order shows under EVERY business it has products from (order_brands,
-  // migration 0058), not just its main one.
-  if (brandId) query = query.eq("order_brands.brand_id", brandId);
+  // Only orders whose business (the Business column) is the chosen one -- a mixed
+  // order shows under its main business, not under every business it touches.
+  if (brandId) query = query.eq("brand_id", brandId);
   if (from && DAY_RE.test(from)) query = query.gte("list_at", `${from}T00:00:00+07:00`);
   if (to && DAY_RE.test(to)) query = query.lte("list_at", `${to}T23:59:59.999+07:00`);
 
