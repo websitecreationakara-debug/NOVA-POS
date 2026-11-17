@@ -735,15 +735,28 @@ async function computeDashboardStats(
 
   // Best sellers in the selected range, both ranked by revenue (units sold
   // shown alongside for products).
-  const branchTotals = new Map<string, { name: string; revenue: number; orders: number }>();
+  // Orders are each business's share of its orders (a mixed order is split, not
+  // repeated), rounded so the rows add up to the real order count -- the same
+  // number the Orders page shows.
+  const branchTotals = new Map<string, { name: string; revenue: number; orders: number; share: number }>();
   for (const d of daysInRange) {
-    const e = branchTotals.get(d.brand_id) ?? { name: d.brand_name, revenue: 0, orders: 0 };
+    const e = branchTotals.get(d.brand_id) ?? { name: d.brand_name, revenue: 0, orders: 0, share: 0 };
     e.revenue += d.revenue;
-    e.orders += d.orders;
+    e.share += d.order_share;
     branchTotals.set(d.brand_id, e);
   }
-  const topBranches = Array.from(branchTotals.values())
-    .map((b) => ({ ...b, revenue: round2(b.revenue) }))
+  const branchList = Array.from(branchTotals.values());
+  // Largest-remainder rounding: floor every share, then give the leftover orders
+  // to the businesses with the biggest fractions.
+  for (const b of branchList) b.orders = Math.floor(b.share + 1e-9);
+  let leftover = Math.round(branchList.reduce((s, b) => s + b.share, 0)) - branchList.reduce((s, b) => s + b.orders, 0);
+  for (const b of [...branchList].sort((a, c) => (c.share - c.orders) - (a.share - a.orders))) {
+    if (leftover <= 0) break;
+    b.orders += 1;
+    leftover -= 1;
+  }
+  const topBranches = branchList
+    .map(({ share: _share, ...b }) => ({ ...b, revenue: round2(b.revenue) }))
     .sort((a, b) => b.revenue - a.revenue);
 
   // Total COGS is the Margin Report's: the sum of the products that have a Total
