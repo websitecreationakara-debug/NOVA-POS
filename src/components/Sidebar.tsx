@@ -53,6 +53,7 @@ const MARKETING_LINKS = [
   { tab: "crm-charts", label: "CRM Charts" },
   { tab: "product-insight", label: "Product Insight" },
   { tab: "cost-control", label: "Cost Control" },
+  { tab: "broadcast", label: "Broadcast" },
 ];
 // "sales" (Sale Customer Support) gets the CRM links (CRM, CRM Charts), not Product Insight or Cost Control.
 const MARKETING_ROLES = ["admin", "marketing", "accountance", "sales"];
@@ -396,7 +397,7 @@ export default function Sidebar({ role }: { role: string }) {
             </div>
             {marketingOpen && !collapsed && (
               <div className="mt-1 flex flex-col gap-0.5 border-l border-border pl-4">
-                {MARKETING_LINKS.filter((l) => role !== "sales" || (l.tab !== "cost-control" && l.tab !== "product-insight")).map((l) => (
+                {MARKETING_LINKS.filter((l) => role !== "sales" || (l.tab !== "cost-control" && l.tab !== "product-insight" && l.tab !== "broadcast")).map((l) => (
                   <Link
                     key={l.tab}
                     href={`/marketing?tab=${l.tab}`}
