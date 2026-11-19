@@ -18,6 +18,9 @@ import ProductInsightClient from "./ProductInsightClient";
 import ProductMonthlyClient from "./ProductMonthlyClient";
 import { parseInsightRange } from "@/lib/productInsight";
 import CostControlClient from "./CostControlClient";
+import BroadcastClient from "./BroadcastClient";
+import { getBroadcastSectionsAction } from "./broadcastActions";
+import { BROADCAST_CONFIGS, DRINK_SNACK, configForSlug } from "@/lib/broadcast";
 import { catalogForBrandSlug } from "@/lib/websiteProducts/catalogs";
 import {
   addonToWebsiteProduct,
@@ -57,6 +60,7 @@ export default async function MarketingPage({
     a?: string;
     b?: string;
     province?: string;
+    biz?: string;
   }>;
 }) {
   const sp = await searchParams;
@@ -67,7 +71,32 @@ export default async function MarketingPage({
   // promotions, no Cost Control, no deleting or importing customers.
   const caller = await getSessionUser();
   const crmOnly = caller?.role === "sales";
-  if (crmOnly && (tab === "cost-control" || tab === "product-insight")) redirect("/marketing");
+  if (crmOnly && (tab === "cost-control" || tab === "product-insight" || tab === "broadcast")) redirect("/marketing");
+
+  // Broadcast: the products of one business to announce to customers, as a tree and a copy-ready message.
+  // ?biz= picks the business (default Drink&Snack); only businesses lib/broadcast.ts has a tree for are offered.
+  if (tab === "broadcast") {
+    const offered = (await getBrands()).filter((b) => configForSlug(b.slug));
+    const chosen = offered.find((b) => b.slug === sp.biz) ?? offered.find((b) => b.slug === DRINK_SNACK.slug) ?? offered[0];
+    if (!chosen) {
+      return (
+        <main className="p-8">
+          <h1 className="text-2xl font-semibold">Broadcast</h1>
+          <p className="mt-2 text-zinc-500">No business is set up for broadcasts.</p>
+        </main>
+      );
+    }
+    return (
+      <BroadcastClient
+        key={chosen.slug}
+        businessName={chosen.name}
+        businesses={BROADCAST_CONFIGS.flatMap((c) => offered.filter((b) => b.slug === c.slug)).map((b) => ({ slug: b.slug, name: b.name }))}
+        activeSlug={chosen.slug}
+        sections={await getBroadcastSectionsAction(chosen.id)}
+        today={ppToday()}
+      />
+    );
+  }
 
   // CRM Charts: customers by province / gender / age / nationality / district,
   // new customers per month and top buyers.
