@@ -8,6 +8,7 @@ import { getSessionUser } from "@/lib/supabase/auth-server";
 import { ppToday } from "@/lib/phnomPenhTime";
 import type { FulfillmentStatus } from "@/types/database";
 import { formatCount } from "@/lib/formatNumber";
+import { ALL_PAYMENT_METHODS, type PaymentMethod } from "@/lib/paymentMethods";
 
 export const dynamic = "force-dynamic";
 
@@ -25,6 +26,7 @@ export default async function OrdersPage({
     range?: string;
     unpaid?: string;
     source?: string;
+    payment?: string;
   }>;
 }) {
   const {
@@ -38,8 +40,12 @@ export default async function OrdersPage({
     range = "",
     unpaid: unpaidParam = "",
     source: sourceParam = "",
+    payment: paymentParam = "",
   } = await searchParams;
   const source = sourceParam === "website" || sourceParam === "pos" ? sourceParam : undefined;
+  const paymentMethod = ALL_PAYMENT_METHODS.includes(paymentParam as PaymentMethod)
+    ? (paymentParam as PaymentMethod)
+    : undefined;
   const unpaidOnly = unpaidParam === "1";
   // With no date range and no search, show only the current Cambodia month;
   // other months appear by picking a month/dates, or "All time" (?range=all).
@@ -67,7 +73,7 @@ export default async function OrdersPage({
   // business / date / search filters as the list (but not the status tab), so
   // each shows how many orders in that status are in view.
   const countFor = (s: FulfillmentStatus) =>
-    getOrdersList({ status: s, brandId: brand, source, q, from, to, countOnly: true });
+    getOrdersList({ status: s, brandId: brand, source, paymentMethod, q, from, to, countOnly: true });
   const [
     { rows: orders, total },
     { total: completeCount },
@@ -79,13 +85,13 @@ export default async function OrdersPage({
     brands,
     user,
   ] = await Promise.all([
-    getOrdersList({ status, unpaid: unpaidOnly, brandId: brand, source, q, from, to, page, limit }),
+    getOrdersList({ status, unpaid: unpaidOnly, brandId: brand, source, paymentMethod, q, from, to, page, limit }),
     countFor("complete"),
     countFor("new_order"),
     countFor("delivered"),
     countFor("cancelled"),
     // Every unpaid order of the chosen business, whatever the month.
-    getOrdersList({ unpaid: true, brandId: brand, source, countOnly: true }),
+    getOrdersList({ unpaid: true, brandId: brand, source, paymentMethod, countOnly: true }),
     getOrdersSummary(),
     getBrands(),
     getSessionUser(),
@@ -131,7 +137,7 @@ export default async function OrdersPage({
         total={total}
         page={page}
         limit={limit}
-        filters={{ q, brandId: brand, source: source ?? "", from, to }}
+        filters={{ q, brandId: brand, source: source ?? "", paymentMethod: paymentMethod ?? "", from, to }}
         defaultRange={defaultRange}
         allTime={allTime}
         currentMonth={ppToday().slice(0, 7)}

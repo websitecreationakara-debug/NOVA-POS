@@ -13,6 +13,7 @@ import OrderStatusControl from "@/components/OrderStatusControl";
 import OrderRowMenu from "@/components/OrderRowMenu";
 import WebsiteBadge from "@/components/WebsiteBadge";
 import { formatCount, formatUsd } from "@/lib/formatNumber";
+import { ALL_PAYMENT_METHODS, PAYMENT_METHOD_LABELS } from "@/lib/paymentMethods";
 
 const PAGE_SIZE_OPTIONS = [10, 25, 50];
 
@@ -107,7 +108,7 @@ export default function OrdersTable({
   total: number;
   page: number;
   limit: number;
-  filters: { q: string; brandId: string; source: string; from: string; to: string };
+  filters: { q: string; brandId: string; source: string; paymentMethod: string; from: string; to: string };
   // True when from/to are just the current-month default, not a chosen filter.
   defaultRange?: boolean;
   // "All time" is selected (no date limit), and this month in Cambodia ("YYYY-MM").
@@ -118,7 +119,7 @@ export default function OrdersTable({
 }) {
   const router = useRouter();
   const [search, setSearch] = useState(filters.q);
-  const { brandId, source, from, to } = filters;
+  const { brandId, source, paymentMethod, from, to } = filters;
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [bulkBusy, setBulkBusy] = useState(false);
 
@@ -157,7 +158,12 @@ export default function OrdersTable({
   }, [search, filters.q]);
 
   const hasFilter =
-    search.trim() !== "" || allTime || (!defaultRange && (from !== "" || to !== "")) || brandId !== "" || source !== "";
+    search.trim() !== "" ||
+    allTime ||
+    (!defaultRange && (from !== "" || to !== "")) ||
+    brandId !== "" ||
+    source !== "" ||
+    paymentMethod !== "";
 
   const selectedMonth = wholeMonth(from, to);
   // Month the arrows step from: the chosen month, else the month of "From", else this month.
@@ -272,6 +278,19 @@ export default function OrdersTable({
           <option value="">All orders</option>
           <option value="website">Website orders</option>
           <option value="pos">POS orders</option>
+        </select>
+        <select
+          aria-label="Payment method"
+          value={paymentMethod}
+          onChange={(e) => navigate({ payment: e.target.value })}
+          className="rounded-lg border border-border bg-transparent px-2.5 py-1.5 text-sm text-foreground"
+        >
+          <option value="">All payment methods</option>
+          {ALL_PAYMENT_METHODS.map((m) => (
+            <option key={m} value={m}>
+              {PAYMENT_METHOD_LABELS[m]}
+            </option>
+          ))}
         </select>
         <div className="flex items-center gap-1">
           <button
@@ -443,7 +462,7 @@ export default function OrdersTable({
                     </div>
                     <p className="mt-0.5 truncate text-sm">{o.customerName || "—"}</p>
                     <p className="truncate text-xs text-muted-foreground">
-                      {o.customerPhone || "—"} · {o.brandName}
+                      {o.customerPhone || "—"} · {o.brandName} · {PAYMENT_METHOD_LABELS[o.paymentMethod]}
                     </p>
                   </div>
                   <div onClick={(e) => e.stopPropagation()}>
@@ -493,6 +512,7 @@ export default function OrdersTable({
                 <th className="py-2 pr-4">Customer</th>
                 <th className="hidden py-2 pr-4 lg:table-cell">Phone</th>
                 <th className="py-2 pr-4 text-right">Total</th>
+                <th className="py-2 pr-4">Payment</th>
                 <th className="py-2 pr-4">Status</th>
                 <th className="py-2 pr-4">Date</th>
                 <th className="w-10 py-2"></th>
@@ -503,7 +523,7 @@ export default function OrdersTable({
                 <Fragment key={o.id}>
                 {(i === 0 || dayLabel(paged[i - 1].listAt) !== dayLabel(o.listAt)) && (
                   <tr className="border-b border-border bg-muted/50">
-                    <td colSpan={9} className="border-l-[3px] border-l-brand py-3 pl-3">
+                    <td colSpan={10} className="border-l-[3px] border-l-brand py-3 pl-3">
                       <DayHeader day={dayLabel(o.listAt)} {...(dayStats.get(dayLabel(o.listAt)) ?? { revenue: 0, orders: 0 })} />
                     </td>
                   </tr>
@@ -547,6 +567,7 @@ export default function OrdersTable({
                   </td>
                   <td className="hidden py-2 pr-4 text-muted-foreground lg:table-cell">{o.customerPhone || "—"}</td>
                   <td className="py-2 pr-4 text-right whitespace-nowrap tabular-nums">{formatMoney(o.total)}</td>
+                  <td className="py-2 pr-4 whitespace-nowrap">{PAYMENT_METHOD_LABELS[o.paymentMethod]}</td>
                   <td className="py-2 pr-4 whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
                     {/* key includes the status so a bulk change (which updates
                         the server prop after router.refresh) remounts this with

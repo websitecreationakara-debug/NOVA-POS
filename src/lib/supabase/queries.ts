@@ -882,6 +882,8 @@ export type OrderListRow = {
   isUnpaid: boolean;
   // Placed by the customer on a storefront website (channel "online"), not at the POS.
   isWebsite: boolean;
+  // Untagged orders (payment_method null) are treated as cash, same as reporting.
+  paymentMethod: PaymentMethod;
 };
 
 export type OrdersListParams = {
@@ -891,6 +893,8 @@ export type OrdersListParams = {
   brandId?: string;
   // Where the order was placed: on a storefront website, or at the POS.
   source?: "website" | "pos";
+  // Untagged orders (payment_method null) count as cash, same as reporting.
+  paymentMethod?: PaymentMethod;
   q?: string;
   from?: string; // YYYY-MM-DD, Phnom Penh day
   to?: string; // YYYY-MM-DD, Phnom Penh day
@@ -944,6 +948,10 @@ export async function getOrdersList(
 
   if (status) query = query.eq("fulfillment_status", status);
   if (params.source) query = query.eq("channel", params.source === "website" ? "online" : "pos");
+  // Untagged orders (payment_method null) count as cash everywhere else in the
+  // app (reporting), so the Cash filter has to match those too.
+  if (params.paymentMethod === "cash") query = query.or("payment_method.eq.cash,payment_method.is.null");
+  else if (params.paymentMethod) query = query.eq("payment_method", params.paymentMethod);
   if (params.unpaid) query = query.eq("is_unpaid", true).neq("fulfillment_status", "cancelled");
   // Only orders whose business (the Business column) is the chosen one -- a mixed
   // order shows under its main business, not under every business it touches.
@@ -1003,6 +1011,7 @@ export async function getOrdersList(
     is_unpaid?: boolean;
     channel?: string;
     custom_invoice_number?: string | null;
+    payment_method?: PaymentMethod | null;
     brands: { name: string } | null;
   };
 
@@ -1031,6 +1040,7 @@ export async function getOrdersList(
     settledAt: o.settled_at ?? null,
     isUnpaid: o.is_unpaid ?? false,
     isWebsite: o.channel === "online",
+    paymentMethod: o.payment_method ?? "cash",
   }));
 
   // Date-based invoice numbers (YYYYMM-N): an order's number is its position
