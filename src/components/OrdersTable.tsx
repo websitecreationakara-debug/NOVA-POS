@@ -13,7 +13,7 @@ import OrderStatusControl from "@/components/OrderStatusControl";
 import OrderRowMenu from "@/components/OrderRowMenu";
 import WebsiteBadge from "@/components/WebsiteBadge";
 import { formatCount, formatUsd } from "@/lib/formatNumber";
-import { ALL_PAYMENT_METHODS, PAYMENT_METHOD_LABELS } from "@/lib/paymentMethods";
+import { CHECKOUT_PAYMENT_METHODS, PAYMENT_METHOD_LABELS } from "@/lib/paymentMethods";
 
 const PAGE_SIZE_OPTIONS = [10, 25, 50];
 
@@ -286,7 +286,7 @@ export default function OrdersTable({
           className="rounded-lg border border-border bg-transparent px-2.5 py-1.5 text-sm text-foreground"
         >
           <option value="">All payment methods</option>
-          {ALL_PAYMENT_METHODS.map((m) => (
+          {CHECKOUT_PAYMENT_METHODS.map((m) => (
             <option key={m} value={m}>
               {PAYMENT_METHOD_LABELS[m]}
             </option>
